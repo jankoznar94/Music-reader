@@ -331,12 +331,27 @@ const filteredSongs = computed(() => {
 // Po reloadu se vynuluje.
 const collapsedAuthors = new Set();
 
-// Seskupení not podle autora. Noty bez autora jdou do skupiny "(bez autora)".
+// Autor se extrahuje AUTOMATICKY z názvu ve formátu "Autor - Skladba".
+// Přednost má vyplněné pole author; jinak se parsuje z názevu.
+// Bez autora → kategorie "Ostatní".
+function authorOf(s) {
+  if (s.composer && s.composer.trim()) return s.composer.trim();
+  const n = (s.name || s.fileName || '').trim();
+  const m = n.match(/^(.*?)\s*-\s*(.+)$/);
+  if (m) {
+    const author = m[1].trim();
+    if (author) return author;
+  }
+  return '';
+}
+
+// Seskupení not podle autora. Noty bez autora jdou do skupiny "Ostatní".
 const songGroups = computed(() => {
   const map = new Map();
   for (const s of filteredSongs.value) {
-    const key = (s.composer || '').trim().toLowerCase();
-    const label = (s.composer || '').trim() || '(bez autora)';
+    const author = authorOf(s);
+    const key = author.toLowerCase();
+    const label = author || 'Ostatní';
     if (!map.has(key)) map.set(key, { key, label, items: [] });
     map.get(key).items.push(s);
   }
