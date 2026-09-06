@@ -25,7 +25,7 @@
     </div>
 
     <!-- ===== NOTY ===== -->
-    <div v-if="tab === 'songs'" class="content">
+    <div v-if="tab === 'songs'" class="content" ref="contentEl" @scroll.passive="onScroll">
       <!-- Filtr složek -->
       <div class="folder-filter">
         <button
@@ -204,7 +204,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue';
+import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   dbGetAllSongs, dbSaveSong, dbDeleteSong,
@@ -212,17 +212,22 @@ import {
   dbGetAllFolders, dbSaveFolder, dbDeleteFolder,
 } from '../db.js';
 import { getPageCount, clearPdfCache } from '../pdf.js';
+import { getLibraryState, saveLibraryState } from '../libraryState.js';
 
 const router = useRouter();
+const libState = getLibraryState();
 const songs = ref([]);
 const groups = ref([]);
 const folders = ref([]);
 const loading = ref(true);
 const fileInput = ref(null);
-const search = ref('');
-const sortBy = ref('name');
-const tab = ref('songs');
-const folderFilter = ref(null); // null = vše, 'none' = bez složky, jinak folderId
+const contentEl = ref(null);
+// Výchozí stav přehledu pochází z libraryState (přežije přechod do prohlížeče,
+// po reloadu resetován v main.js)
+const search = ref(libState.search);
+const sortBy = ref(libState.sortBy);
+const tab = ref(libState.tab);
+const folderFilter = ref(libState.folderFilter); // null = vše, 'none' = bez složky, jinak folderId
 
 const addToGroupSong = ref(null);
 const assignFolderSong = ref(null);
@@ -246,6 +251,8 @@ async function loadAll() {
   groups.value = g;
   folders.value = f;
   loading.value = false;
+  // Po vykreslení seznamu obnovit scroll pozici (návrat z prohlížeče)
+  nextTick(() => restoreScroll());
 }
 
 async function onFiles(e) {
@@ -460,7 +467,49 @@ async function confirmDeleteGroup(g) {
   }
 }
 
+// Obnovit scroll pozici po vykreslení seznamu (po návratu z prohlížeče)
+function restoreScroll() {
+  const el = contentEl.value;
+  if (el && libState.scrollReady && tab.value === 'songs') {
+    el.scrollTop = libState.scrollTop;
+  }
+}
+
+// Uložit scroll pozici při scrollování seznamu not
+function onScroll() {
+  const el = contentEl.value;
+  if (el) {
+    libState.scrollTop = el.scrollTop;
+    libState.scrollReady = true;
+  }
+}
+
+async function persistState() {
+  saveLibraryState({
+    tab: tab.value,
+    folderFilter: folderFilter.value,
+    search: search.value,
+    sortBy: sortBy.value,
+  });
+}
+
 onMounted(loadAll);
+
+watch(() => tab.value, () => { nextTick(() => restoreScroll()); persistState(); });
+
+// Změna filtru/hledání/řazení resetuje scroll NA VRCHOL jen v aktuálním zobrazení,
+// ale uložený stav (pro návrat z prohlížeče) NEpřepisujeme.
+watch(() => folderFilter.value, () => {
+  const el = contentEl.value;
+  if (el) { el.scrollTop = 0; libState.scrollTop = 0; }
+  persistState();
+});
+watch(() => search.value, () => {
+  const el = contentEl.value;
+  if (el) { el.scrollTop = 0; libState.scrollTop = 0; }
+  persistState();
+});
+watch(() => sortBy.value, persistState);
 </script>
 
 <style scoped>
