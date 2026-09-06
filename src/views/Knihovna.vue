@@ -678,7 +678,6 @@ watch(() => sortBy.value, persistState);
   background: var(--bg-elev2); border: 1px solid var(--border);
   border-radius: 10px; padding: 12px; color: var(--text); font-size: 1rem;
 }
-.edit-input:focus { outline: none; border-color: var(--accent); }
 
 /* Loading overlay při nahrávání not */
 .upload-overlay {

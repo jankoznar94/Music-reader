@@ -15,6 +15,17 @@
 
 * { box-sizing: border-box; }
 
+/* Jan: žádné hover/focus vizuální efekty ani přechody (mobil-first PWA).
+   Aktivní stav (stisklé) zůstává jako ploché ztmavení — to je jediný feedback. */
+*:focus, *:focus-visible, button:focus, input:focus, a:focus {
+  outline: none !important;
+  border-color: var(--border) !important;
+  box-shadow: none !important;
+}
+* {
+  transition: none !important;
+}
+
 html, body {
   margin: 0;
   padding: 0;
