@@ -62,6 +62,7 @@
             </div>
           </div>
           <div class="song-actions" @click.stop>
+            <button class="icon-btn" @click="openRenameSong(s)" title="Přejmenovat">✏️</button>
             <button class="icon-btn" @click="openAssignFolder(s)" title="Přiřadit do složky">📁</button>
             <button class="icon-btn" @click="openAddToGroup(s)" title="Přidat do skupiny">＋</button>
             <button class="icon-btn danger" @click="confirmDelete(s)" title="Smazat">🗑</button>
@@ -173,18 +174,44 @@
         </div>
       </div>
     </div>
+    <!-- Modal: přejmenovat notu -->
+    <div v-if="renameSong" class="modal-overlay" @click.self="renameSong = null">
+      <div class="modal">
+        <h3>Přejmenovat notu</h3>
+        <input
+          ref="renameInput"
+          v-model="renameName"
+          class="rename-input"
+          type="text"
+          placeholder="Název noty"
+        />
+        <div class="modal-actions">
+          <button class="modal-close" @click="renameSong = null">Zrušit</button>
+          <button class="add" @click="saveRename" :disabled="!renameName.trim()">Uložit</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading overlay při nahrávání not -->
+    <div v-if="uploading" class="upload-overlay">
+      <div class="upload-box">
+        <div class="spinner" />
+        <div class="upload-text">Nahrávám noty…</div>
+        <div v-if="uploadTotal > 0" class="upload-progress">{{ uploadDone }} / {{ uploadTotal }}</div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   dbGetAllSongs, dbSaveSong, dbDeleteSong,
   dbGetAllGroups, dbSaveGroup, dbDeleteGroup,
   dbGetAllFolders, dbSaveFolder, dbDeleteFolder,
 } from '../db.js';
-import { getPageCount } from '../pdf.js';
+import { getPageCount, clearPdfCache } from '../pdf.js';
 
 const router = useRouter();
 const songs = ref([]);
@@ -201,6 +228,15 @@ const addToGroupSong = ref(null);
 const assignFolderSong = ref(null);
 const openGroupDetail = ref(null);
 
+// Přejmenování noty
+const renameSong = ref(null);   // nota k přejmenování
+const renameName = ref('');
+const renameInput = ref(null);
+// Nahrávání
+const uploading = ref(false);
+const uploadDone = ref(0);
+const uploadTotal = ref(0);
+
 function openFile() { fileInput.value.click(); }
 
 async function loadAll() {
@@ -216,10 +252,15 @@ async function onFiles(e) {
   const files = Array.from(e.target.files || []);
   e.target.value = '';
   if (files.length === 0) return;
+  uploading.value = true;
+  uploadDone.value = 0;
+  uploadTotal.value = files.length;
+  // Dočasně vyčistit PDF cache, aby se u každého souboru počítal počet stránek zvlášť
+  clearPdfCache();
   for (const file of files) {
     let pageCount = 1;
     try {
-      const dummy = { id: 'tmp', data: file };
+      const dummy = { id: 'tmp-' + crypto.randomUUID(), data: file };
       pageCount = await getPageCount(dummy);
     } catch (err) {
       console.warn('Nepodařilo se zjistit počet stránek', err);
@@ -236,7 +277,9 @@ async function onFiles(e) {
       createdAt: Date.now(),
     };
     await dbSaveSong(song);
+    uploadDone.value++;
   }
+  uploading.value = false;
   await loadAll();
 }
 
@@ -261,6 +304,22 @@ const filteredSongs = computed(() => {
 
 function openSong(s) {
   router.push({ name: 'Prohlizec', params: { id: s.id } });
+}
+
+function openRenameSong(s) {
+  renameSong.value = s;
+  renameName.value = s.name || s.fileName || '';
+  nextTick(() => renameInput.value && renameInput.value.focus());
+}
+
+async function saveRename() {
+  const s = renameSong.value;
+  const name = renameName.value.trim();
+  if (!s || !name) return;
+  s.name = name;
+  await dbSaveSong(s);
+  renameSong.value = null;
+  await loadAll();
 }
 
 async function confirmDelete(s) {
@@ -484,4 +543,30 @@ onMounted(loadAll);
 .setlist-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .modal-close { background: var(--bg-elev2); border: 1px solid var(--border); }
+
+/* Přejmenování noty */
+.rename-input {
+  width: 100%; box-sizing: border-box; margin-bottom: 14px;
+  background: var(--bg-elev2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px; color: var(--text); font-size: 1rem;
+}
+.rename-input:focus { outline: none; border-color: var(--accent); }
+
+/* Loading overlay při nahrávání not */
+.upload-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center; z-index: 60;
+}
+.upload-box {
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 16px;
+  padding: 28px 36px; display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.spinner {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 3px solid var(--bg-elev2); border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.upload-text { font-weight: 600; }
+.upload-progress { color: var(--text-dim); font-size: 0.9rem; }
 </style>
