@@ -345,7 +345,8 @@ function authorOf(s) {
   return '';
 }
 
-// Seskupení not podle autora. Noty bez autora jdou do skupiny "Ostatní".
+// Seskupení not podle autora. "Ostatní" (bez autora) jde vždy NA KONEC
+// jako výjimka z abecedního řazení.
 const songGroups = computed(() => {
   const map = new Map();
   for (const s of filteredSongs.value) {
@@ -355,7 +356,14 @@ const songGroups = computed(() => {
     if (!map.has(key)) map.set(key, { key, label, items: [] });
     map.get(key).items.push(s);
   }
-  return [...map.values()];
+  const groups = [...map.values()];
+  // Abecedně, ale "Ostatní" (prázdný autor) na konec
+  return groups.sort((a, b) => {
+    const aOther = a.key === '';
+    const bOther = b.key === '';
+    if (aOther !== bOther) return aOther ? 1 : -1;
+    return a.label.localeCompare(b.label, 'cs');
+  });
 });
 
 function isAuthorOpen(key) { return openAuthors.has(key); }

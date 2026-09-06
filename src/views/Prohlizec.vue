@@ -905,7 +905,7 @@ async function deleteJump(j) {
 .ap-color {
   width: 26px; height: 26px; flex: 0 0 auto; min-width: 0; padding: 0;
   border-radius: 50%; box-sizing: border-box;
-  border: 3px solid transparent; cursor: pointer;
+  border: 2px solid var(--border); cursor: pointer;
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
 }
 .ap-color.on { border-color: var(--accent); }
