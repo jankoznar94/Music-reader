@@ -59,7 +59,7 @@
             <span class="author-name">{{ g.label }}</span>
             <span class="author-count">{{ g.items.length }} {{ g.items.length === 1 ? 'nota' : (g.items.length < 5 ? 'noty' : 'not') }}</span>
           </button>
-          <ul v-show="isAuthorOpen(g.key)" class="songlist">
+          <ul v-if="isAuthorOpen(g.key)" class="songlist">
             <li v-for="s in g.items" :key="s.id" class="song" @click="openSong(s)">
               <div class="song-info">
                 <div class="song-name">{{ s.name || s.fileName }}</div>
@@ -221,7 +221,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue';
+import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   dbGetAllSongs, dbSaveSong, dbDeleteSong,
@@ -327,9 +327,9 @@ const filteredSongs = computed(() => {
   return list;
 });
 
-// Sbalené záložky autorů (Set klíčů). Výchozí stav: vše rozbalené, uživatel si sbalí.
-// Po reloadu se vynuluje.
-const collapsedAuthors = new Set();
+// Otevřené záložky autorů (reactive Set — Vue reaguje na add/delete).
+// Výchozí stav: vše ZABALENÉ, uživatel si rozbalí. Po reloadu se vynuluje.
+const openAuthors = reactive(new Set());
 
 // Autor se extrahuje AUTOMATICKY z názvu ve formátu "Autor - Skladba".
 // Přednost má vyplněné pole author; jinak se parsuje z názevu.
@@ -358,10 +358,10 @@ const songGroups = computed(() => {
   return [...map.values()];
 });
 
-function isAuthorOpen(key) { return !collapsedAuthors.has(key); }
+function isAuthorOpen(key) { return openAuthors.has(key); }
 function toggleAuthor(key) {
-  if (collapsedAuthors.has(key)) collapsedAuthors.delete(key);
-  else collapsedAuthors.add(key);
+  if (openAuthors.has(key)) openAuthors.delete(key);
+  else openAuthors.add(key);
 }
 
 function openSong(s) {
