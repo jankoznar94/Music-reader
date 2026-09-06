@@ -57,7 +57,7 @@
           <button class="author-header" @click="toggleAuthor(g.key)">
             <span class="author-caret">{{ isAuthorOpen(g.key) ? '▾' : '▸' }}</span>
             <span class="author-name">{{ g.label }}</span>
-            <span class="author-count">{{ g.items.length }} {{ g.items.length === 1 ? 'nota' : (g.items.length < 5 ? 'noty' : 'not') }}</span>
+            <span class="author-count">{{ g.items.length }} {{ g.items.length === 1 ? 'soubor' : (g.items.length < 5 ? 'soubory' : 'souborů') }}</span>
           </button>
           <ul v-if="isAuthorOpen(g.key)" class="songlist">
             <li v-for="s in g.items" :key="s.id" class="song" @click="openSong(s)">
@@ -92,7 +92,7 @@
         <li v-for="f in folders" :key="f.id" class="group">
           <div class="group-info">
             <div class="group-name">{{ f.name }}</div>
-            <div class="group-meta">{{ folderCount(f.id) }} not</div>
+            <div class="group-meta">{{ folderCount(f.id) }} {{ folderCount(f.id) === 1 ? 'soubor' : (folderCount(f.id) < 5 ? 'soubory' : 'souborů') }}</div>
           </div>
           <div class="song-actions" @click.stop>
             <button class="icon-btn" @click="renameFolder(f)" title="Přejmenovat">✏️</button>
@@ -114,7 +114,7 @@
         <li v-for="g in groups" :key="g.id" class="group" @click="openGroup(g)">
           <div class="group-info">
             <div class="group-name">{{ g.name }}</div>
-            <div class="group-meta">{{ g.songIds.length }} not</div>
+            <div class="group-meta">{{ g.songIds.length }} {{ g.songIds.length === 1 ? 'soubor' : (g.songIds.length < 5 ? 'soubory' : 'souborů') }}</div>
           </div>
           <div class="song-actions" @click.stop>
             <button class="icon-btn" @click="openGroup(g)" title="Otevřít">▶</button>
