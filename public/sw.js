@@ -11,14 +11,17 @@ if (workbox) {
 }
 
 // Reakce na zprávu "SKIP_WAITING" od registerSW() — umožní nové verzi
-// převzít kontrolu okamžitě (jinak čeká na zavření všech karet).
+// převzít kontrolu okamžitě (skipWaiting + clients.claim), takže reload
+// z banneru provede okamžitý přechod na novou verzi.
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
 });
 
-// Jakmile nový SW převezme kontrolu, okamžitě ovládá stránky (bez čekání na reload).
-self.clients.claim();
+// Jakmile nový SW převezme kontrolu (po skipWaiting), okamžitě ovládá stránky.
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
 
 // Veškerá data aplikace (PDF soubory + anotace) žijí v IndexedDB — žádná síť.
