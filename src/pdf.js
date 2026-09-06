@@ -49,7 +49,8 @@ export async function renderPage(song, pageNum, canvas, renderScale = 900) {
   const cssW = (base.width / base.height) * cssH;
 
   // Render v plném rozlišení pro ostrý obraz
-  const viewport = page.getViewport({ scale: cssW });
+  // scale je násobitel vůči základním rozměrům (scale 1): cssW/base.width == cssH/base.height
+  const viewport = page.getViewport({ scale: cssW / base.width });
   canvas.width = Math.max(1, Math.floor(cssW * devicePixelRatio));
   canvas.height = Math.max(1, Math.floor(cssH * devicePixelRatio));
   canvas.style.width = `${cssW}px`;
