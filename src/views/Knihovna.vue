@@ -51,24 +51,33 @@
       <div v-else-if="filteredSongs.length === 0" class="center muted">
         {{ songs.length === 0 ? 'Zatím žádné noty. Nahraj první PDF.' : 'Nic nenalezeno.' }}
       </div>
-      <ul v-else class="songlist">
-        <li v-for="s in filteredSongs" :key="s.id" class="song" @click="openSong(s)">
-          <div class="song-info">
-            <div class="song-name">{{ s.name || s.fileName }}</div>
-            <div v-if="s.composer" class="song-composer">{{ s.composer }}</div>
-            <div class="song-meta">
-              {{ s.pages }} str. · {{ s.groups?.length || 0 }} skupin
-              <span v-if="folderName(s.folderId)" class="song-folder">· {{ folderName(s.folderId) }}</span>
-            </div>
-          </div>
-          <div class="song-actions" @click.stop>
-            <button class="icon-btn" @click="openRenameSong(s)" title="Přejmenovat">✏️</button>
-            <button class="icon-btn" @click="openAssignFolder(s)" title="Přiřadit do složky">📁</button>
-            <button class="icon-btn" @click="openAddToGroup(s)" title="Přidat do skupiny">＋</button>
-            <button class="icon-btn danger" @click="confirmDelete(s)" title="Smazat">🗑</button>
-          </div>
-        </li>
-      </ul>
+      <template v-else>
+        <!-- Seskupení podle autora (rozbalitelné záložky) -->
+        <div v-for="g in songGroups" :key="g.key" class="author-group">
+          <button class="author-header" @click="toggleAuthor(g.key)">
+            <span class="author-caret">{{ isAuthorOpen(g.key) ? '▾' : '▸' }}</span>
+            <span class="author-name">{{ g.label }}</span>
+            <span class="author-count">{{ g.items.length }} {{ g.items.length === 1 ? 'nota' : (g.items.length < 5 ? 'noty' : 'not') }}</span>
+          </button>
+          <ul v-show="isAuthorOpen(g.key)" class="songlist">
+            <li v-for="s in g.items" :key="s.id" class="song" @click="openSong(s)">
+              <div class="song-info">
+                <div class="song-name">{{ s.name || s.fileName }}</div>
+                <div class="song-meta">
+                  {{ s.pages }} str. · {{ s.groups?.length || 0 }} skupin
+                  <span v-if="folderName(s.folderId)" class="song-folder">· {{ folderName(s.folderId) }}</span>
+                </div>
+              </div>
+              <div class="song-actions" @click.stop>
+                <button class="icon-btn" @click="openEditSong(s)" title="Upravit (název, autor)">✏️</button>
+                <button class="icon-btn" @click="openAssignFolder(s)" title="Přiřadit do složky">📁</button>
+                <button class="icon-btn" @click="openAddToGroup(s)" title="Přidat do skupiny">＋</button>
+                <button class="icon-btn danger" @click="confirmDelete(s)" title="Smazat">🗑</button>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </template>
     </div>
 
     <!-- ===== SLOŽKY ===== -->
@@ -174,20 +183,28 @@
         </div>
       </div>
     </div>
-    <!-- Modal: přejmenovat notu -->
-    <div v-if="renameSong" class="modal-overlay" @click.self="renameSong = null">
+    <!-- Modal: upravit notu (název + autor) -->
+    <div v-if="editSong" class="modal-overlay" @click.self="editSong = null">
       <div class="modal">
-        <h3>Přejmenovat notu</h3>
+        <h3>Upravit notu</h3>
+        <label class="edit-label">Název</label>
         <input
-          ref="renameInput"
-          v-model="renameName"
-          class="rename-input"
+          ref="editNameInput"
+          v-model="editName"
+          class="edit-input"
           type="text"
           placeholder="Název noty"
         />
+        <label class="edit-label">Autor</label>
+        <input
+          v-model="editComposer"
+          class="edit-input"
+          type="text"
+          placeholder="Např. Wolfgang Amadeus Mozart"
+        />
         <div class="modal-actions">
-          <button class="modal-close" @click="renameSong = null">Zrušit</button>
-          <button class="add" @click="saveRename" :disabled="!renameName.trim()">Uložit</button>
+          <button class="modal-close" @click="editSong = null">Zrušit</button>
+          <button class="add" @click="saveEdit" :disabled="!editName.trim()">Uložit</button>
         </div>
       </div>
     </div>
@@ -233,10 +250,11 @@ const addToGroupSong = ref(null);
 const assignFolderSong = ref(null);
 const openGroupDetail = ref(null);
 
-// Přejmenování noty
-const renameSong = ref(null);   // nota k přejmenování
-const renameName = ref('');
-const renameInput = ref(null);
+// Editace noty (název + autor)
+const editSong = ref(null);   // nota k editaci
+const editName = ref('');
+const editComposer = ref('');
+const editNameInput = ref(null);
 // Nahrávání
 const uploading = ref(false);
 const uploadDone = ref(0);
@@ -309,23 +327,47 @@ const filteredSongs = computed(() => {
   return list;
 });
 
+// Sbalené záložky autorů (Set klíčů). Výchozí stav: vše rozbalené, uživatel si sbalí.
+// Po reloadu se vynuluje.
+const collapsedAuthors = new Set();
+
+// Seskupení not podle autora. Noty bez autora jdou do skupiny "(bez autora)".
+const songGroups = computed(() => {
+  const map = new Map();
+  for (const s of filteredSongs.value) {
+    const key = (s.composer || '').trim().toLowerCase();
+    const label = (s.composer || '').trim() || '(bez autora)';
+    if (!map.has(key)) map.set(key, { key, label, items: [] });
+    map.get(key).items.push(s);
+  }
+  return [...map.values()];
+});
+
+function isAuthorOpen(key) { return !collapsedAuthors.has(key); }
+function toggleAuthor(key) {
+  if (collapsedAuthors.has(key)) collapsedAuthors.delete(key);
+  else collapsedAuthors.add(key);
+}
+
 function openSong(s) {
   router.push({ name: 'Prohlizec', params: { id: s.id } });
 }
 
-function openRenameSong(s) {
-  renameSong.value = s;
-  renameName.value = s.name || s.fileName || '';
-  nextTick(() => renameInput.value && renameInput.value.focus());
+function openEditSong(s) {
+  editSong.value = s;
+  editName.value = s.name || s.fileName || '';
+  editComposer.value = s.composer || '';
+  nextTick(() => editNameInput.value && editNameInput.value.focus());
 }
 
-async function saveRename() {
-  const s = renameSong.value;
-  const name = renameName.value.trim();
+async function saveEdit() {
+  const s = editSong.value;
+  const name = editName.value.trim();
   if (!s || !name) return;
   s.name = name;
+  s.composer = editComposer.value.trim() || '';
   await dbSaveSong(s);
-  renameSong.value = null;
+  editSong.value = null;
   await loadAll();
 }
 
@@ -545,6 +587,21 @@ watch(() => sortBy.value, persistState);
 .ff-chip.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
 
 .songlist, .grouplist { list-style: none; margin: 0; padding: 0; }
+
+/* Seskupení podle autora */
+.author-group { margin-bottom: 4px; }
+.author-header {
+  width: 100%;
+  display: flex; align-items: center; gap: 10px;
+  background: transparent; border: none; cursor: pointer;
+  padding: 12px 6px; border-radius: 10px;
+  color: var(--text, #eee); text-align: left;
+}
+.author-header:active { background: var(--bg-elev2, #222); }
+.author-caret { color: var(--accent, #e5d7a6); font-size: 1rem; width: 16px; }
+.author-name { font-size: 1.05rem; font-weight: 700; flex: 1; }
+.author-count { color: var(--text-dim, #888); font-size: 0.85rem; }
+.author-group + .author-group { border-top: 1px solid var(--border, #333); padding-top: 2px; }
 .song, .group {
   display: flex; align-items: center; justify-content: space-between;
   background: var(--bg-elev); border: 1px solid var(--border);
@@ -594,13 +651,19 @@ watch(() => sortBy.value, persistState);
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .modal-close { background: var(--bg-elev2); border: 1px solid var(--border); }
 
-/* Přejmenování noty */
-.rename-input {
+/* Editace noty (název + autor) */
+.edit-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin: 0 0 6px;
+}
+.edit-input {
   width: 100%; box-sizing: border-box; margin-bottom: 14px;
   background: var(--bg-elev2); border: 1px solid var(--border);
   border-radius: 10px; padding: 12px; color: var(--text); font-size: 1rem;
 }
-.rename-input:focus { outline: none; border-color: var(--accent); }
+.edit-input:focus { outline: none; border-color: var(--accent); }
 
 /* Loading overlay při nahrávání not */
 .upload-overlay {
