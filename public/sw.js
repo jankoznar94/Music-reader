@@ -10,4 +10,15 @@ if (workbox) {
   console.error('Workbox nebylo načteno.');
 }
 
+// Reakce na zprávu "SKIP_WAITING" od registerSW() — umožní nové verzi
+// převzít kontrolu okamžitě (jinak čeká na zavření všech karet).
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// Jakmile nový SW převezme kontrolu, okamžitě ovládá stránky (bez čekání na reload).
+self.clients.claim();
+
 // Veškerá data aplikace (PDF soubory + anotace) žijí v IndexedDB — žádná síť.

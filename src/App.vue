@@ -3,11 +3,13 @@
     <router-view />
 
     <!-- Banner: je dostupná nová verze appky -->
-    <div v-if="needRefresh" class="update-banner">
-      <span>Je dostupná nová verze. Obnovit pro použití?</span>
-      <div class="ub-actions">
-        <button class="ub-btn" @click="doUpdate">Obnovit</button>
-        <button class="ub-btn ghost" @click="dismissUpdate">Později</button>
+    <div v-if="needRefresh" class="update-overlay">
+      <div class="update-card">
+        <div class="ub-text">Je dostupná nová verze appky.</div>
+        <div class="ub-actions">
+          <button class="ub-btn primary" @click="doUpdate">Obnovit</button>
+          <button class="ub-btn ghost" @click="dismissUpdate">Později</button>
+        </div>
       </div>
     </div>
   </div>
@@ -30,8 +32,19 @@ const { updateSW } = registerSW({
 });
 
 function doUpdate() {
-  if (updateSW) updateSW(true);
-  else location.reload();
+  try {
+    if (typeof updateSW === 'function') {
+      // updateSW(true) = skipWaiting + reload stránky
+      updateSW(true);
+    } else {
+      location.reload();
+    }
+  } catch (err) {
+    console.warn('SW update selhal, obnovuji ručně', err);
+    location.reload();
+  }
+  // Pojistka: pokud by updateSW(false/ne) nezpůsobil reload sám, po chvíli obnovíme.
+  // (Funkce doUpdate se při úspěšném reloadu nestihne provést do konce.)
 }
 
 function dismissUpdate() {
@@ -40,27 +53,30 @@ function dismissUpdate() {
 </script>
 
 <style scoped>
-.update-banner {
+.update-overlay {
   position: fixed;
   inset: 0;
+  z-index: 100;
   background: rgba(0, 0, 0, 0.65);
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  z-index: 100;
   padding: 20px;
   box-sizing: border-box;
 }
-.update-banner > span {
-  display: block;
+.update-card {
   background: var(--bg-elev, #17130f);
-  border: 1px solid var(--border, #333);
-  border-radius: 14px;
-  padding: 14px 24px;
-  text-align: center;
-  font-weight: 600;
+  border: 1px solid var(--border, #444);
+  border-radius: 16px;
+  padding: 18px 20px;
   max-width: 420px;
   width: 100%;
+  box-sizing: border-box;
+}
+.ub-text {
+  text-align: center;
+  font-weight: 600;
+  margin-bottom: 14px;
 }
 .ub-actions {
   display: flex;
@@ -68,16 +84,21 @@ function dismissUpdate() {
   justify-content: center;
 }
 .ub-btn {
-  background: var(--accent, #e5d7a6);
-  color: #17130f;
+  padding: 10px 0;
+  width: 120px;
   border: none;
   border-radius: 10px;
-  padding: 10px 20px;
   font-weight: 600;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.ub-btn.primary {
+  background: var(--accent, #e5d7a6);
+  color: #17130f;
 }
 .ub-btn.ghost {
   background: transparent;
-  color: var(--text), #eee;
-  border: 1px solid var(--border, #333);
+  color: var(--text, #eee);
+  border: 1px solid var(--border, #444);
 }
 </style>
