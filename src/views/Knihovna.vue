@@ -358,7 +358,8 @@ async function assignFolder(folder, song) {
   song.folderId = folder ? folder.id : null;
   await dbSaveSong(song);
   assignFolderSong.value = null;
-  await loadAll();
+  // Nevoláme loadAll() — `song` už je reactive objekt v songs.value, takže se seznam
+  // neobnoví od nuly a zachová se pozice scrollu.
 }
 
 function folderName(id) {
