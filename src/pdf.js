@@ -12,8 +12,10 @@ const _docs = new Map();
 
 async function getDoc(song) {
   if (_docs.has(song.id)) return _docs.get(song.id);
-  const arrayBuffer = await song.data.arrayBuffer();
-  const doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  // Předáme Blob PŘÍMO do pdf.js — ten ho streamuje po částech, takže se
+  // velký PDF nenačítá celý do paměti najednou (arrayBuffer() by to udělal).
+  // To je klíčové pro velká díla (desítky MB), která jinak zamrzají.
+  const doc = await pdfjsLib.getDocument({ data: song.data }).promise;
   _docs.set(song.id, doc);
   return doc;
 }
