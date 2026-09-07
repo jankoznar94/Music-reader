@@ -235,7 +235,7 @@ const tool = ref('pencil');
 const activeStroke = ref(null);
 
 // Rozšířené anotace
-const colors = ['#e5d7a6', '#f2c4b6', '#bcd3b6', '#a8c4e0', '#e5c9a8', '#d9b6d9', '#1a1a1a', '#1a2a4a'];
+const colors = ['#e5d7a6', '#f2c4b6', '#bcd3b6', '#a8c4e0', '#e5c9a8', '#d9b6d9', '#c05a4a', '#1a1a1a', '#1a2a4a'];
 const sizes = [2, 3, 4, 6, 8, 12];
 const annotColor = ref('#e5d7a6'); // aktuální barva pera
 const annotSize = ref(3);          // aktuální velikost pera
@@ -325,12 +325,32 @@ onMounted(async () => {
   computeFit();
   await renderCurrent();
   window.addEventListener('resize', onResize);
+  // Udržet displej zapnutý, dokud je prohlížeč otevřený (jako jiné appky)
+  acquireWakeLock();
 });
 
 onUnmounted(() => {
   window.removeEventListener('resize', onResize);
   disconnectThumbObserver();
+  releaseWakeLock();
 });
+
+// --- Screen Wake Lock: displej nezhasíná, dokud je prohlížeč otevřený ---
+let wakeLock = null;
+async function acquireWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      // Pokud se wake lock ztratí (např. přepnutí karty), zkusit znovu
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  } catch (err) {
+    console.warn('Wake Lock nelze aktivovat', err);
+  }
+}
+function releaseWakeLock() {
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+}
 
 let availW = 800, availH = 1100;
 
