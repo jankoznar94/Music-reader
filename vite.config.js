@@ -12,7 +12,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       workbox: {
         maximumFileSizeToCacheInBytes: 5242880,
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg}'],
         runtimeCaching: [
           {
             urlPattern: ({ request }) => request.mode === 'navigate',
@@ -25,6 +25,7 @@ export default defineConfig({
       },
       injectManifest: {
         maximumFileSizeToCacheInBytes: 5242880,
+        globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg}'],
       },
       manifest: {
         name: "Noty App",
