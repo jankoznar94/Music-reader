@@ -31,7 +31,7 @@ export default defineConfig({
         name: "Noty App",
         short_name: "Noty",
         start_url: "/",
-        id: "/index.html",
+        id: "/noty-app-v2",
         display: "standalone",
         theme_color: "#1a1a1a",
         background_color: "#111111",
