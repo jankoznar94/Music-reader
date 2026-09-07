@@ -3,7 +3,14 @@
     <header class="topbar">
       <h1>Noty</h1>
       <div class="top-actions">
-        <button class="add" @click="openFile">Nahrát PDF</button>
+        <template v-if="!selectMode">
+          <button class="add" @click="openFile">Nahrát PDF</button>
+          <button class="btn" @click="enterSelect">Vybrat</button>
+        </template>
+        <template v-else>
+          <button class="btn" @click="toggleSelectAll">{{ allSelected ? 'Zrušit výběr' : 'Vybrat vše' }}</button>
+          <button class="add" @click="exitSelect">Hotovo</button>
+        </template>
         <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFiles" />
       </div>
     </header>
@@ -60,7 +67,8 @@
             <span class="author-count">{{ g.items.length }} {{ g.items.length === 1 ? 'soubor' : (g.items.length < 5 ? 'soubory' : 'souborů') }}</span>
           </button>
           <ul v-if="isAuthorOpen(g.key)" class="songlist">
-            <li v-for="s in g.items" :key="s.id" class="song" @click="openSong(s)">
+            <li v-for="s in g.items" :key="s.id" class="song" :class="{ sel: isSelected(s.id) }" @click="onSongClick(s)">
+              <span v-if="selectMode" class="check" :class="{ on: isSelected(s.id) }" @click.stop="toggleSelect(s.id)">✓</span>
               <div class="song-info">
                 <div class="song-name">{{ s.name || s.fileName }}</div>
                 <div class="song-meta">
@@ -69,15 +77,27 @@
                 </div>
               </div>
               <div class="song-actions" @click.stop>
-                <button class="icon-btn" @click="openEditSong(s)" title="Upravit (název, autor)">✏️</button>
-                <button class="icon-btn" @click="openAssignFolder(s)" title="Přiřadit do složky">📁</button>
-                <button class="icon-btn" @click="openAddToGroup(s)" title="Přidat do skupiny">＋</button>
-                <button class="icon-btn danger" @click="confirmDelete(s)" title="Smazat">🗑</button>
+                <template v-if="!selectMode">
+                  <button class="icon-btn" @click="openEditSong(s)" title="Upravit (název, autor)">✏️</button>
+                  <button class="icon-btn" @click="openAssignFolder(s)" title="Přiřadit do složky">📁</button>
+                  <button class="icon-btn" @click="openAddToGroup(s)" title="Přidat do skupiny">＋</button>
+                  <button class="icon-btn danger" @click="confirmDelete(s)" title="Smazat">🗑</button>
+                </template>
               </div>
             </li>
           </ul>
         </div>
       </template>
+    </div>
+
+    <!-- Akční lišta pro hromadný výběr -->
+    <div v-if="selectMode" class="bulk-bar">
+      <span class="bulk-count">{{ selectedIds.size }} vybráno</span>
+      <div class="bulk-actions">
+        <button class="bulk-btn" @click="openBulkFolder" :disabled="selectedIds.size === 0">📁 Složka</button>
+        <button class="bulk-btn" @click="openBulkGroup" :disabled="selectedIds.size === 0">＋ Skupina</button>
+        <button class="bulk-btn danger" @click="confirmBulkDelete" :disabled="selectedIds.size === 0">🗑 Smazat</button>
+      </div>
     </div>
 
     <!-- ===== SLOŽKY ===== -->
@@ -165,6 +185,41 @@
       </div>
     </div>
 
+    <!-- Modal: hromadně přiřadit do složky -->
+    <div v-if="bulkFolderOpen" class="modal-overlay" @click.self="bulkFolderOpen = false">
+      <div class="modal">
+        <h3>Přesunout {{ selectedIds.size }} {{ selectedIds.size === 1 ? 'soubor' : (selectedIds.size < 5 ? 'soubory' : 'souborů') }} do složky</h3>
+        <div v-if="folders.length === 0" class="muted">Zatím žádné složky. Vytvoř ji v záložce Složky.</div>
+        <div v-else class="modal-list">
+          <button
+            v-for="f in folders"
+            :key="f.id"
+            class="modal-item"
+            @click="bulkAssignFolder(f)"
+          >{{ f.name }}</button>
+          <button class="modal-item" @click="bulkAssignFolder(null)">Bez složky</button>
+        </div>
+        <button class="modal-close" @click="bulkFolderOpen = false">Zavřít</button>
+      </div>
+    </div>
+
+    <!-- Modal: hromadně přidat do skupiny -->
+    <div v-if="bulkGroupOpen" class="modal-overlay" @click.self="bulkGroupOpen = false">
+      <div class="modal">
+        <h3>Přidat {{ selectedIds.size }} {{ selectedIds.size === 1 ? 'soubor' : (selectedIds.size < 5 ? 'soubory' : 'souborů') }} do skupiny</h3>
+        <div v-if="groups.length === 0" class="muted">Zatím žádné skupiny. Vytvoř ji v záložce Skupiny.</div>
+        <div v-else class="modal-list">
+          <button
+            v-for="g in groups"
+            :key="g.id"
+            class="modal-item"
+            @click="bulkAddToGroup(g)"
+          >{{ g.name }}</button>
+        </div>
+        <button class="modal-close" @click="bulkGroupOpen = false">Zavřít</button>
+      </div>
+    </div>
+
     <!-- Modal: detail skupiny (setlist) -->
     <div v-if="openGroupDetail" class="modal-overlay" @click.self="openGroupDetail = null">
       <div class="modal wide">
@@ -249,6 +304,12 @@ const folderFilter = ref(libState.folderFilter); // null = vše, 'none' = bez sl
 const addToGroupSong = ref(null);
 const assignFolderSong = ref(null);
 const openGroupDetail = ref(null);
+
+// Hromadný výběr
+const selectMode = ref(false);
+const selectedIds = reactive(new Set());
+const bulkFolderOpen = ref(false);
+const bulkGroupOpen = ref(false);
 
 // Editace noty (název + autor)
 const editSong = ref(null);   // nota k editaci
@@ -374,6 +435,82 @@ function toggleAuthor(key) {
 
 function openSong(s) {
   router.push({ name: 'Prohlizec', params: { id: s.id } });
+}
+
+// --- Hromadný výběr ---
+function enterSelect() {
+  selectMode.value = true;
+  selectedIds.clear();
+}
+function exitSelect() {
+  selectMode.value = false;
+  selectedIds.clear();
+  bulkFolderOpen.value = false;
+  bulkGroupOpen.value = false;
+}
+function isSelected(id) { return selectedIds.has(id); }
+function toggleSelect(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+}
+const allSelected = computed(() =>
+  filteredSongs.value.length > 0 && filteredSongs.value.every(s => selectedIds.has(s.id))
+);
+function toggleSelectAll() {
+  if (allSelected.value) {
+    for (const s of filteredSongs.value) selectedIds.delete(s.id);
+  } else {
+    for (const s of filteredSongs.value) selectedIds.add(s.id);
+  }
+}
+function onSongClick(s) {
+  if (selectMode.value) toggleSelect(s.id);
+  else openSong(s);
+}
+function selectedSongs() {
+  return songs.value.filter(s => selectedIds.has(s.id));
+}
+function openBulkFolder() { bulkFolderOpen.value = true; }
+function openBulkGroup() { bulkGroupOpen.value = true; }
+
+async function bulkAssignFolder(folder) {
+  const sel = selectedSongs();
+  for (const s of sel) {
+    s.folderId = folder ? folder.id : null;
+    await dbSaveSong(s);
+  }
+  bulkFolderOpen.value = false;
+  // In-place mutace — seznam se aktualizuje sám, scroll zůstává
+}
+
+async function bulkAddToGroup(g) {
+  const sel = selectedSongs();
+  for (const s of sel) {
+    if (!(s.groups || []).includes(g.id)) {
+      s.groups = [...(s.groups || []), g.id];
+      g.songIds = [...g.songIds, s.id];
+      await dbSaveSong(s);
+    }
+  }
+  await dbSaveGroup(g);
+  bulkGroupOpen.value = false;
+}
+
+async function confirmBulkDelete() {
+  const sel = selectedSongs();
+  if (sel.length === 0) return;
+  if (!confirm(`Smazat ${sel.length} ${sel.length === 1 ? 'soubor' : (sel.length < 5 ? 'soubory' : 'souborů')}?`)) return;
+  for (const s of sel) {
+    await dbDeleteSong(s.id);
+    for (const g of groups.value) {
+      if (g.songIds.includes(s.id)) {
+        g.songIds = g.songIds.filter(x => x !== s.id);
+        await dbSaveGroup(g);
+      }
+    }
+  }
+  exitSelect();
+  await loadAll();
 }
 
 function openEditSong(s) {
@@ -648,6 +785,31 @@ watch(() => sortBy.value, persistState);
 
 .group-actions { padding: 4px 0 12px; }
 .add { background: var(--accent); color: #17130f; border: none; font-weight: 600; }
+.btn { background: var(--bg-elev2); border: 1px solid var(--border); color: var(--text); font-weight: 600; }
+
+/* Hromadný výběr */
+.check {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--border); background: var(--bg-elev2);
+  color: transparent; font-size: 0.9rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.check.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
+.song.sel { border-color: var(--accent); background: var(--bg-elev); }
+.bulk-bar {
+  position: sticky; bottom: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--bg-elev); border-top: 1px solid var(--border);
+  padding: 10px 12px;
+}
+.bulk-count { color: var(--text-dim); font-size: 0.9rem; white-space: nowrap; }
+.bulk-actions { display: flex; gap: 8px; }
+.bulk-btn {
+  background: var(--bg-elev2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 10px; padding: 10px 12px; font-weight: 600;
+}
+.bulk-btn.danger { color: var(--danger); }
+.bulk-btn:disabled { opacity: 0.3; pointer-events: none; }
 
 /* Modaly */
 .modal-overlay {
