@@ -90,16 +90,6 @@
       </template>
     </div>
 
-    <!-- Akční lišta pro hromadný výběr -->
-    <div v-if="selectMode" class="bulk-bar">
-      <span class="bulk-count">{{ selectedIds.size }} vybráno</span>
-      <div class="bulk-actions">
-        <button class="bulk-btn" @click="openBulkFolder" :disabled="selectedIds.size === 0">📁 Složka</button>
-        <button class="bulk-btn" @click="openBulkGroup" :disabled="selectedIds.size === 0">＋ Skupina</button>
-        <button class="bulk-btn danger" @click="confirmBulkDelete" :disabled="selectedIds.size === 0">🗑 Smazat</button>
-      </div>
-    </div>
-
     <!-- ===== SLOŽKY ===== -->
     <div v-else-if="tab === 'folders'" class="content">
       <div class="group-actions">
@@ -142,6 +132,16 @@
           </div>
         </li>
       </ul>
+    </div>
+
+    <!-- Akční lišta pro hromadný výběr (mimo řetězec v-if/v-else záložek) -->
+    <div v-if="selectMode" class="bulk-bar">
+      <span class="bulk-count">{{ selectedIds.size }} vybráno</span>
+      <div class="bulk-actions">
+        <button class="bulk-btn" @click="openBulkFolder" :disabled="selectedIds.size === 0">📁 Složka</button>
+        <button class="bulk-btn" @click="openBulkGroup" :disabled="selectedIds.size === 0">＋ Skupina</button>
+        <button class="bulk-btn danger" @click="confirmBulkDelete" :disabled="selectedIds.size === 0">🗑 Smazat</button>
+      </div>
     </div>
 
     <!-- Modal: přidat do skupiny -->
