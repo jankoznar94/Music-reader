@@ -741,9 +741,9 @@ function redoAnnot() {
   saveAnnotations();
 }
 
-// zoom
-function zoomIn() { zoom.value = Math.min(zoom.value * 1.15, 2.5); }
-function zoomOut() { zoom.value = Math.max(zoom.value / 1.15, 1); }
+// zoom — vždy po 5 % (sčítání, ne násobení → pravidelné a symetrické kroky)
+function zoomIn() { zoom.value = Math.min(zoom.value + 0.05, 2.5); }
+function zoomOut() { zoom.value = Math.max(zoom.value - 0.05, 1); }
 function resetView() { zoom.value = 1.15; panX.value = 0; panY.value = 0; }
 
 // save
