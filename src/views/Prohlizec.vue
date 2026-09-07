@@ -257,6 +257,10 @@ const sliderOpen = ref(false);    // zobrazení slideru
 const thumbs = reactive(new Map()); // pageIdx -> dataURL miniatury
 const thumbPromises = new Map();    // pageIdx -> Promise (probíhající render miniatury)
 let thumbObserver = null;           // IntersectionObserver pro lazy-load miniatur
+let thumbDebounce = null;           // debounce pro rychlé tažení sliderem
+let thumbQueue = [];                // fronta stránek čekajících na render miniatury
+let thumbActive = 0;                // počet právě renderovaných miniatur
+const THUMB_MAX_CONCURRENT = 2;     // max souběžných renderů miniatur
 
 // Skoky (Da Capo / VIDE) — per skladba
 const jumps = ref([]);            // [{id, fromPage, toPage, label}]
@@ -434,6 +438,10 @@ function toggleSlider() {
     });
   } else {
     disconnectThumbObserver();
+    // Při zavření slideru zrušit čekající miniatury (rychlé tažení na konec
+    // by jinak nechalo ve frontě stovky stránek, které se pak zbytečně renderují)
+    if (thumbDebounce) { clearTimeout(thumbDebounce); thumbDebounce = null; }
+    thumbQueue = [];
   }
 }
 // Lazy-load miniatur: načte se, když se miniatura přiblíží do viewportu pásu
@@ -456,12 +464,17 @@ function setupThumbObserver(strip) {
 function disconnectThumbObserver() {
   if (thumbObserver) { thumbObserver.disconnect(); thumbObserver = null; }
 }
-// Slidování → živý náhled (hodnota + miniatura), bez navigace
+// Slidování → živý náhled (hodnota + miniatura), bez navigace.
+// Debounce: při rychlém tažení se renderuje jen POSLEDNÍ pozice, ne každá mezilehlá.
 function onSliderInput(e) {
   const v = Math.round(Number(e.target.value));
   pageSlider.value = v;
-  ensureThumb(v);
   scrollThumbIntoView(v);
+  if (thumbDebounce) clearTimeout(thumbDebounce);
+  thumbDebounce = setTimeout(() => {
+    thumbDebounce = null;
+    ensureThumb(v);
+  }, 120);
 }
 // Puštění slideru → skočit na přesně trefenou stránku (change střílí s finální hodnotou)
 async function onSliderChange(e) {
@@ -477,14 +490,31 @@ function scrollThumbIntoView(idx) {
   const item = strip.children[idx];
   if (item) item.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
-// Zajistit miniaturu stránky (render do malého canvasu → dataURL)
+// Zajistit miniaturu stránky (render do malého canvasu → dataURL).
+// Fronta s omezením souběžnosti — při rychlém tažení sliderem se nespustí
+// stovky renderů najednou (to dřív zahltilo paměť a shodilo appku).
 function ensureThumb(i) {
   if (i < 0 || i >= totalPages.value) return;
   if (thumbs.has(i)) return;
   if (thumbPromises.has(i)) return;
-  const p = renderThumb(i).then(() => thumbPromises.delete(i));
-  thumbPromises.set(i, p);
+  if (thumbQueue.includes(i)) return;
+  thumbQueue.push(i);
+  pumpThumbQueue();
 }
+
+function pumpThumbQueue() {
+  while (thumbActive < THUMB_MAX_CONCURRENT && thumbQueue.length > 0) {
+    const i = thumbQueue.shift();
+    thumbActive++;
+    const p = renderThumb(i).finally(() => {
+      thumbActive--;
+      thumbPromises.delete(i);
+      pumpThumbQueue();
+    });
+    thumbPromises.set(i, p);
+  }
+}
+
 async function renderThumb(i) {
   const c = document.createElement('canvas');
   // Miniatura ~ 120px na šířku
@@ -512,6 +542,8 @@ async function switchSong(idx, toEnd) {
   // vyčistit cache a anotace
   cached.clear(); preRendered.clear(); renderPromises.clear();
   thumbs.clear(); thumbPromises.clear(); sliderOpen.value = false; disconnectThumbObserver();
+  if (thumbDebounce) { clearTimeout(thumbDebounce); thumbDebounce = null; }
+  thumbQueue = [];
   const saved = await dbGetAnnotations(s.id);
   annotations.value.items = (saved && Array.isArray(saved.items)) ? saved.items : [];
   totalPages.value = await getPageCount(song);
