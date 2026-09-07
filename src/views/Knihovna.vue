@@ -95,7 +95,6 @@
       <span class="bulk-count">{{ selectedIds.size }} vybráno</span>
       <div class="bulk-actions">
         <button class="bulk-btn" @click="openBulkFolder" :disabled="selectedIds.size === 0">📁 Složka</button>
-        <button class="bulk-btn" @click="openBulkGroup" :disabled="selectedIds.size === 0">＋ Skupina</button>
         <button class="bulk-btn danger" @click="confirmBulkDelete" :disabled="selectedIds.size === 0">🗑 Smazat</button>
       </div>
     </div>
@@ -203,23 +202,6 @@
       </div>
     </div>
 
-    <!-- Modal: hromadně přidat do skupiny -->
-    <div v-if="bulkGroupOpen" class="modal-overlay" @click.self="bulkGroupOpen = false">
-      <div class="modal">
-        <h3>Přidat {{ selectedIds.size }} {{ selectedIds.size === 1 ? 'soubor' : (selectedIds.size < 5 ? 'soubory' : 'souborů') }} do skupiny</h3>
-        <div v-if="groups.length === 0" class="muted">Zatím žádné skupiny. Vytvoř ji v záložce Skupiny.</div>
-        <div v-else class="modal-list">
-          <button
-            v-for="g in groups"
-            :key="g.id"
-            class="modal-item"
-            @click="bulkAddToGroup(g)"
-          >{{ g.name }}</button>
-        </div>
-        <button class="modal-close" @click="bulkGroupOpen = false">Zavřít</button>
-      </div>
-    </div>
-
     <!-- Modal: detail skupiny (setlist) -->
     <div v-if="openGroupDetail" class="modal-overlay" @click.self="openGroupDetail = null">
       <div class="modal wide">
@@ -309,7 +291,6 @@ const openGroupDetail = ref(null);
 const selectMode = ref(false);
 const selectedIds = reactive(new Set());
 const bulkFolderOpen = ref(false);
-const bulkGroupOpen = ref(false);
 
 // Editace noty (název + autor)
 const editSong = ref(null);   // nota k editaci
@@ -446,7 +427,6 @@ function exitSelect() {
   selectMode.value = false;
   selectedIds.clear();
   bulkFolderOpen.value = false;
-  bulkGroupOpen.value = false;
 }
 function isSelected(id) { return selectedIds.has(id); }
 function toggleSelect(id) {
@@ -471,7 +451,6 @@ function selectedSongs() {
   return songs.value.filter(s => selectedIds.has(s.id));
 }
 function openBulkFolder() { bulkFolderOpen.value = true; }
-function openBulkGroup() { bulkGroupOpen.value = true; }
 
 async function bulkAssignFolder(folder) {
   const sel = selectedSongs();
@@ -481,19 +460,6 @@ async function bulkAssignFolder(folder) {
   }
   bulkFolderOpen.value = false;
   // In-place mutace — seznam se aktualizuje sám, scroll zůstává
-}
-
-async function bulkAddToGroup(g) {
-  const sel = selectedSongs();
-  for (const s of sel) {
-    if (!(s.groups || []).includes(g.id)) {
-      s.groups = [...(s.groups || []), g.id];
-      g.songIds = [...g.songIds, s.id];
-      await dbSaveSong(s);
-    }
-  }
-  await dbSaveGroup(g);
-  bulkGroupOpen.value = false;
 }
 
 async function confirmBulkDelete() {
