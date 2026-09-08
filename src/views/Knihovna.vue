@@ -1,5 +1,5 @@
 <template>
-  <div class="library">
+  <div class="library" :class="{ 'has-bulk': selectedIds.size > 0 }">
     <header class="topbar">
       <h1>Noty</h1>
       <div class="top-actions">
@@ -781,11 +781,13 @@ watch(() => sortBy.value, persistState);
 .check.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
 .song.sel { border-color: var(--accent); background: var(--bg-elev); }
 .bulk-bar {
-  position: sticky; bottom: 0; z-index: 20;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   background: var(--bg-elev); border-top: 1px solid var(--border);
   padding: 10px 12px;
 }
+/* Odsazení obsahu dole, aby hromadné akce nikdy nepřekryly poslední soubor */
+.library.has-bulk .content { padding-bottom: 76px; }
 .bulk-count { color: var(--text-dim); font-size: 0.9rem; white-space: nowrap; }
 .bulk-actions { display: flex; gap: 8px; }
 .bulk-btn {
