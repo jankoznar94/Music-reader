@@ -749,7 +749,7 @@ watch(() => sortBy.value, persistState);
   border-radius: var(--radius); padding: 14px; margin-bottom: 10px; cursor: pointer;
 }
 .song:active, .group:active { background: var(--bg-elev2); }
-.song-info, .group-info { min-width: 0; }
+.song-info, .group-info { min-width: 0; flex: 1; }
 .song-name, .group-name { font-size: 1.05rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song-composer { color: var(--text-dim); font-size: 0.9rem; margin-top: 2px; }
 .song-meta, .group-meta { color: var(--text-dim); font-size: 0.8rem; margin-top: 2px; }

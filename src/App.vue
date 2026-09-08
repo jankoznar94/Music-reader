@@ -15,8 +15,8 @@ import { registerSW } from 'virtual:pwa-register';
 // Trvalé tlačítko aktualizace (registerType: 'prompt'):
 // - tlačítko je vidět pořád (pravý dolní roh)
 // - na kliknutí zavolá registration.update() → prohlížeč zkontroluje nový SW
-// - pokud je nová verze, pošle SKIP_WAITING a stránka se obnoví SAMA
-//   (controllerchange listener → reload), bez nutnosti vypínat/zapínat appku
+// - pokud je nová verze, pošle SKIP_WAITING přímo novému workeru a stránka se
+//   obnoví SAMA (controllerchange listener → reload), bez vypínání/zapínání appky
 const checking = ref(false);
 let registration = null;
 let refreshing = false; // prevence vícenásobného reloadu
@@ -31,8 +31,7 @@ const { updateSW } = registerSW({
   },
 });
 
-// Robustní obnova po aktivaci nového SW — funguje i v standalone PWA režimu
-// (z ikony na ploše), kde interní reload pluginu nemusí spolehlivě odpálit.
+// Robustní obnova po aktivaci nového SW — funguje i v standalone PWA režimu.
 // Registrujeme listener PŘED odesláním SKIP_WAITING (jako v CFSB).
 function setupReloadOnActivate() {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -42,31 +41,36 @@ function setupReloadOnActivate() {
   });
 }
 
+// Počká, dokud se nový worker nedostane do stavu 'installed' (připraven k aktivaci)
+function waitForInstalled(worker) {
+  return new Promise((resolve) => {
+    if (worker.state === 'installed') return resolve();
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'installed') resolve();
+    });
+  });
+}
+
 async function checkAndApply() {
   if (checking.value) return;
   checking.value = true;
   try {
+    if (!registration) return;
     // 1. Vynutit kontrolu nové verze
-    if (registration) await registration.update();
-    // 2. Pokud je nová verze připravená (waiting), aplikovat ji
-    if (registration && registration.waiting) {
-      setupReloadOnActivate();
-      updateSW(true); // skipWaiting → nový SW převezme kontrolu → reload
+    await registration.update();
+    // 2. Najít nový worker (waiting = už stažený, installing = právě se stahuje)
+    let newWorker = registration.waiting || registration.installing;
+    if (!newWorker) {
+      console.log('Aplikace je aktuální.');
       return;
     }
-    // 3. Pokud se právě instaluje, počkat na dokončení a pak aplikovat
-    if (registration && registration.installing) {
-      const w = registration.installing;
-      w.addEventListener('statechange', () => {
-        if (w.state === 'installed' && navigator.serviceWorker.controller) {
-          setupReloadOnActivate();
-          updateSW(true);
-        }
-      });
-      return;
+    // 3. Pokud se právě instaluje, počkat na dokončení
+    if (newWorker.state === 'installing') {
+      await waitForInstalled(newWorker);
     }
-    // 4. Žádná nová verze
-    console.log('Aplikace je aktuální.');
+    // 4. Aktivovat: poslat SKIP_WAITING přímo novému workeru
+    setupReloadOnActivate();
+    newWorker.postMessage({ type: 'SKIP_WAITING' });
   } catch (err) {
     console.warn('Kontrola aktualizace selhala', err);
   } finally {
