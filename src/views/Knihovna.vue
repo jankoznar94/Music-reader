@@ -3,14 +3,8 @@
     <header class="topbar">
       <h1>Noty</h1>
       <div class="top-actions">
-        <template v-if="!selectMode">
-          <button class="add" @click="openFile">Nahrát PDF</button>
-          <button class="btn" @click="enterSelect">Vybrat</button>
-        </template>
-        <template v-else>
-          <button class="btn" @click="toggleSelectAll">{{ allSelected ? 'Zrušit výběr' : 'Vybrat vše' }}</button>
-          <button class="add" @click="exitSelect">Hotovo</button>
-        </template>
+        <button class="add" @click="openFile">Nahrát PDF</button>
+        <button class="btn" @click="toggleSelectAll">{{ allSelected ? 'Zrušit výběr' : 'Vybrat vše' }}</button>
         <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFiles" />
       </div>
     </header>
@@ -68,7 +62,7 @@
           </button>
           <ul v-if="isAuthorOpen(g.key)" class="songlist">
             <li v-for="s in g.items" :key="s.id" class="song" :class="{ sel: isSelected(s.id) }" @click="onSongClick(s)">
-              <span v-if="selectMode" class="check" :class="{ on: isSelected(s.id) }" @click.stop="toggleSelect(s.id)">✓</span>
+              <span class="check" :class="{ on: isSelected(s.id) }" @click.stop="toggleSelect(s.id)">✓</span>
               <div class="song-info">
                 <div class="song-name">{{ s.name || s.fileName }}</div>
                 <div class="song-meta">
@@ -77,12 +71,10 @@
                 </div>
               </div>
               <div class="song-actions" @click.stop>
-                <template v-if="!selectMode">
-                  <button class="icon-btn" @click="openEditSong(s)" title="Upravit (název, autor)">✏️</button>
-                  <button class="icon-btn" @click="openAssignFolder(s)" title="Přiřadit do složky">📁</button>
-                  <button class="icon-btn" @click="openAddToGroup(s)" title="Přidat do skupiny">＋</button>
-                  <button class="icon-btn danger" @click="confirmDelete(s)" title="Smazat">🗑</button>
-                </template>
+                <button class="icon-btn" @click="openEditSong(s)" title="Upravit (název, autor)">✏️</button>
+                <button class="icon-btn" @click="openAssignFolder(s)" title="Přiřadit do složky">📁</button>
+                <button class="icon-btn" @click="openAddToGroup(s)" title="Přidat do skupiny">＋</button>
+                <button class="icon-btn danger" @click="confirmDelete(s)" title="Smazat">🗑</button>
               </div>
             </li>
           </ul>
@@ -135,12 +127,12 @@
     </div>
 
     <!-- Akční lišta pro hromadný výběr (mimo řetězec v-if/v-else záložek) -->
-    <div v-if="selectMode" class="bulk-bar">
+    <div v-if="selectedIds.size > 0" class="bulk-bar">
       <span class="bulk-count">{{ selectedIds.size }} vybráno</span>
       <div class="bulk-actions">
-        <button class="bulk-btn" @click="openBulkFolder" :disabled="selectedIds.size === 0">📁 Složka</button>
-        <button class="bulk-btn" @click="openBulkGroup" :disabled="selectedIds.size === 0">＋ Skupina</button>
-        <button class="bulk-btn danger" @click="confirmBulkDelete" :disabled="selectedIds.size === 0">🗑 Smazat</button>
+        <button class="bulk-btn" @click="openBulkFolder">📁 Složka</button>
+        <button class="bulk-btn" @click="openBulkGroup">＋ Skupina</button>
+        <button class="bulk-btn danger" @click="confirmBulkDelete">🗑 Smazat</button>
       </div>
     </div>
 
@@ -306,7 +298,6 @@ const assignFolderSong = ref(null);
 const openGroupDetail = ref(null);
 
 // Hromadný výběr
-const selectMode = ref(false);
 const selectedIds = reactive(new Set());
 const bulkFolderOpen = ref(false);
 const bulkGroupOpen = ref(false);
@@ -438,16 +429,6 @@ function openSong(s) {
 }
 
 // --- Hromadný výběr ---
-function enterSelect() {
-  selectMode.value = true;
-  selectedIds.clear();
-}
-function exitSelect() {
-  selectMode.value = false;
-  selectedIds.clear();
-  bulkFolderOpen.value = false;
-  bulkGroupOpen.value = false;
-}
 function isSelected(id) { return selectedIds.has(id); }
 function toggleSelect(id) {
   if (selectedIds.has(id)) selectedIds.delete(id);
@@ -464,8 +445,7 @@ function toggleSelectAll() {
   }
 }
 function onSongClick(s) {
-  if (selectMode.value) toggleSelect(s.id);
-  else openSong(s);
+  openSong(s); // kliknutí na skladbu (mimo checkbox) otevře PDF
 }
 function selectedSongs() {
   return songs.value.filter(s => selectedIds.has(s.id));
@@ -509,10 +489,11 @@ async function confirmBulkDelete() {
       }
     }
   }
-  exitSelect();
+  selectedIds.clear();
+  bulkFolderOpen.value = false;
+  bulkGroupOpen.value = false;
   await loadAll();
 }
-
 function openEditSong(s) {
   editSong.value = s;
   editName.value = s.name || s.fileName || '';
