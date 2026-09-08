@@ -697,6 +697,9 @@ watch(() => folderFilter.value, () => {
   const el = contentEl.value;
   if (el) { el.scrollTop = 0; libState.scrollTop = 0; }
   persistState();
+  // Přepnutí složky vyčistí hromadný výběr — „Vybrat vše" platí jen pro
+  // aktuální složku, aby se výběr nekumuloval napříč složkami.
+  selectedIds.clear();
 });
 watch(() => search.value, () => {
   const el = contentEl.value;
