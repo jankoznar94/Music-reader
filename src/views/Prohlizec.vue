@@ -442,12 +442,25 @@ function getOrCreateCacheCanvas(i, w, h) {
 
 function onResize() { computeFit(); renderCurrent(); }
 
-async function gotoPage(i) {
+// Vyčistí viditelný canvas — při přechodu na novou stránku se nezobrazuje stará
+function clearCanvas() {
+  const c = canvasEl.value;
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+}
+
+function gotoPage(i) {
   if (i < 0 || i >= totalPages.value || i === currentPage.value) return;
   currentPage.value = i;
   pageSlider.value = i;
   panX.value = 0; panY.value = 0; // nová stránka = bez posunu
-  await renderCurrent();
+  // Okamžitá navigace: vyčistit canvas (nezobrazovat starou stránku) a
+  // spustit render na pozadí. NEčekáme na dokončení — při rychlém listování
+  // by se každý tap zablokoval. Token v renderCurrent zajistí, že se vykreslí
+  // jen ta poslední požadovaná stránka.
+  clearCanvas();
+  renderCurrent();
 }
 
 // --- Slider stránek + miniatury ---
