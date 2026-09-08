@@ -281,6 +281,7 @@ const cached = reactive(new Map());      // pageIdx -> canvas
 const preRendered = reactive(new Set()); // pageIdx, které jsou hotové
 const renderPromises = new Map();        // pageIdx -> Promise (probíhající render)
 const docMap = new Map();                 // songId -> offscreen doc cache (od pdf.js)
+let renderToken = 0;                      // generační token: zruší zastaralé rendery při rychlém listování
 
 const songName = computed(() => song.name || song.fileName || '');
 
@@ -365,7 +366,11 @@ function computeFit() {
 async function renderCurrent() {
   const doc = song.data;
   if (!doc) return;
-  const dim = await getPageWidthHeight(song, currentPage.value + 1);
+  // Nárok na tuto generaci renderu — při rychlém listování se starší render zruší
+  const myToken = ++renderToken;
+  const page = currentPage.value;
+  const dim = await getPageWidthHeight(song, page + 1);
+  if (myToken !== renderToken) return; // mezitím se listovalo dál
   const ar = dim.width / dim.height;
   // Fit na šířku: vyplnit šířku, výška se může oříznout
   const w = availW;
@@ -373,28 +378,35 @@ async function renderCurrent() {
   cssW.value = Math.round(w);
   cssH.value = Math.round(h);
   await nextTick();
-  // Pokud je stránka přednačtená ve cache (dpr× rozlišení), zkopírujeme scalovaně; jinak render
-  if (preRendered.has(currentPage.value) && cached.has(currentPage.value)) {
-    const cache = cached.get(currentPage.value);
-    const ctx = canvasEl.value.getContext('2d');
-    const dpr = window.devicePixelRatio || 1;
-    canvasEl.value.width = Math.round(cssW.value * dpr);
-    canvasEl.value.height = Math.round(cssH.value * dpr);
-    canvasEl.value.style.width = cssW.value + 'px';
-    canvasEl.value.style.height = cssH.value + 'px';
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(cache, 0, 0, canvasEl.value.width, canvasEl.value.height);
-  } else {
-    // Pokud render právě probíhá, počkáme na něj (jinak bychom kopírovali prázdný canvas)
-    const pending = renderPromises.get(currentPage.value);
+  if (myToken !== renderToken) return;
+  // Render vždy do offscreen canvasu, pak zkopírovat na viditelný.
+  // Dva souběžné rendery tak nikdy nepíšou do stejného canvasu.
+  const off = getOrCreateCacheCanvas(page, w, h);
+  if (!preRendered.has(page)) {
+    const pending = renderPromises.get(page);
     if (pending) {
       await pending;
-      // po dokončení zkusit znovu (nyní je v cache)
-      return renderCurrent();
+      if (myToken !== renderToken) return;
+    } else {
+      const p = renderPage(song, page + 1, off, h).then(() => {
+        preRendered.add(page);
+        renderPromises.delete(page);
+      });
+      renderPromises.set(page, p);
+      await p;
+      if (myToken !== renderToken) return;
     }
-    await renderPage(song, currentPage.value + 1, canvasEl.value, cssH.value);
   }
-  prefetchSiblings(currentPage.value);
+  // Zkopírovat offscreen canvas na viditelný (scalovaně podle dpr)
+  const ctx = canvasEl.value.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  canvasEl.value.width = Math.round(cssW.value * dpr);
+  canvasEl.value.height = Math.round(cssH.value * dpr);
+  canvasEl.value.style.width = cssW.value + 'px';
+  canvasEl.value.style.height = cssH.value + 'px';
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(off, 0, 0, canvasEl.value.width, canvasEl.value.height);
+  prefetchSiblings(page);
 }
 
 // Přednačtení sousedních stránek do offscreen cache, aby listování nečekalo
