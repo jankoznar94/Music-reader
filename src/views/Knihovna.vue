@@ -937,9 +937,9 @@ async function checkAndApply() {
 .upload-text { font-weight: 600; }
 .upload-progress { color: var(--text-dim); font-size: 0.9rem; }
 
-/* Tlačítko aktualizace v topbaru — kompaktní, jen ikona */
+/* Tlačítko aktualizace v topbaru — kompaktní, jen ikona, stejně vysoké jako ostatní */
 .update-btn {
-  width: 40px; height: 40px; padding: 0;
+  width: 46px; padding: 12px 0;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
