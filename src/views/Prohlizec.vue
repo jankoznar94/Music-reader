@@ -56,6 +56,12 @@
       <span>{{ currentPage + 1 }} / {{ totalPages }}</span>
     </div>
 
+    <!-- Loading overlay při prvním načtení / přechodu mezi skladbami -->
+    <div v-if="loading" class="viewer-loading">
+      <div class="spinner" />
+      <div class="loading-text">Načítám noty…</div>
+    </div>
+
     <!-- Přepínání skladeb ve skupině (setlist) -->
     <div v-if="group" class="nav-strip">
       <button class="nav-btn" @click="prevSong" :disabled="groupIndex <= 0" title="Předchozí skladba">
@@ -226,6 +232,7 @@ const song = reactive({ data: null, name: '', fileName: '', id: props.id });
 
 const totalPages = ref(0);
 const currentPage = ref(0); // 0-based
+const loading = ref(true);  // loading overlay při prvním načtení / přechodu mezi skladbami
 const zoom = ref(1.0);     // výchozí zoom 100 % (1 = fit výšce)
 const panX = ref(0);        // posun stránky (dvouprstý pan)
 const panY = ref(0);
@@ -325,6 +332,7 @@ onMounted(async () => {
   // Velikost stránky aby se vešla na výšku
   computeFit();
   await renderCurrent();
+  loading.value = false; // první stránka vykreslena → skrýt loading
   window.addEventListener('resize', onResize);
   // Udržet displej zapnutý, dokud je prohlížeč otevřený (jako jiné appky)
   acquireWakeLock();
@@ -583,17 +591,19 @@ async function switchSong(idx, toEnd) {
   song.id = s.id; song.data = s.data; song.name = s.name; song.fileName = s.fileName;
   groupIndex.value = idx;
   panX.value = 0; panY.value = 0;
-  zoom.value = 1.15;
+  zoom.value = 1.0;
   // vyčistit cache a anotace
   cached.clear(); preRendered.clear(); renderPromises.clear();
   thumbs.clear(); thumbPromises.clear(); sliderOpen.value = false; disconnectThumbObserver();
   if (thumbDebounce) { clearTimeout(thumbDebounce); thumbDebounce = null; }
   thumbQueue = [];
+  loading.value = true; // loading overlay při přechodu mezi skladbami
   const saved = await dbGetAnnotations(s.id);
   annotations.value.items = (saved && Array.isArray(saved.items)) ? saved.items : [];
   totalPages.value = await getPageCount(song);
   currentPage.value = toEnd ? totalPages.value - 1 : 0;
   await renderCurrent();
+  loading.value = false;
 }
 
 // Plynulý přechod: na poslední stránce dopředu → další skladba, na první dozadu → předchozí
@@ -994,4 +1004,19 @@ async function deleteJump(j) {
 }
 .ap-size span { border-radius: 50%; background: var(--text); display: block; flex: 0 0 auto; }
 .ap-size.on { border-color: var(--accent); }
+
+/* Loading overlay při prvním načtení / přechodu mezi skladbami */
+.viewer-loading {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  background: var(--bg);
+  z-index: 30;
+}
+.viewer-loading .spinner {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 3px solid var(--bg-elev2); border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text { color: var(--text-dim); font-size: 0.95rem; }
 </style>
