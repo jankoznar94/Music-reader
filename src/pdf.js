@@ -13,13 +13,14 @@ const _docs = new Map();
 
 async function getDoc(song) {
   if (_docs.has(song.id)) return _docs.get(song.id);
-  // Předáme Blob PŘÍMO do pdf.js — ten ho streamuje po částech, takže se
-  // velký PDF nenačítá celý do paměti najednou (arrayBuffer() by to udělal).
-  // To je klíčové pro velká díla (desítky MB), která jinak zamrzají.
-  // Pozor: song.data bývá Vue reactive proxy obalující Blob — pdf.js ji
-  // nerozpozná ("Invalid PDF binary data"), proto ji rozbalíme přes toRaw().
+  // song.data je Blob uložený v IndexedDB. Pozor: v Prohlížeči bývá obalený
+  // Vue reactive proxy — tu pdf.js nerozpozná, proto ji rozbalíme přes toRaw().
+  // pdf.js v `data` NEakceptuje Blob (jen TypedArray/string/array-like), takže
+  // Blob převedeme na ArrayBuffer. (Pozn.: streamování Blobu přímo do pdf.js
+  // nefunguje — pdf.js Blob v data nepodporuje.)
   const blob = toRaw(song.data);
-  const doc = await pdfjsLib.getDocument({ data: blob }).promise;
+  const arrayBuffer = await blob.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   _docs.set(song.id, doc);
   return doc;
 }
