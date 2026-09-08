@@ -9,7 +9,7 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'public',
       filename: 'sw-v2.js',
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       workbox: {
         maximumFileSizeToCacheInBytes: 5242880,
         globPatterns: ['**/*.{js,mjs,css,html,ico,svg}'],
