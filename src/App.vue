@@ -15,12 +15,13 @@ import { registerSW } from 'virtual:pwa-register';
 // Trvalé tlačítko aktualizace (registerType: 'prompt'):
 // - tlačítko je vidět pořád (pravý dolní roh)
 // - na kliknutí zavolá registration.update() → prohlížeč zkontroluje nový SW
-// - pokud je nová verze, pošle SKIP_WAITING a stránka se obnoví
+// - pokud je nová verze, pošle SKIP_WAITING a stránka se obnoví SAMA
+//   (controllerchange listener → reload), bez nutnosti vypínat/zapínat appku
 const checking = ref(false);
 let registration = null;
-let updateSW = null;
+let refreshing = false; // prevence vícenásobného reloadu
 
-const { updateSW: us } = registerSW({
+const { updateSW } = registerSW({
   immediate: true,
   onOfflineReady() {
     console.log('Noty App připravena pro offline použití.');
@@ -29,7 +30,17 @@ const { updateSW: us } = registerSW({
     registration = reg;
   },
 });
-updateSW = us;
+
+// Robustní obnova po aktivaci nového SW — funguje i v standalone PWA režimu
+// (z ikony na ploše), kde interní reload pluginu nemusí spolehlivě odpálit.
+// Registrujeme listener PŘED odesláním SKIP_WAITING (jako v CFSB).
+function setupReloadOnActivate() {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+}
 
 async function checkAndApply() {
   if (checking.value) return;
@@ -39,7 +50,8 @@ async function checkAndApply() {
     if (registration) await registration.update();
     // 2. Pokud je nová verze připravená (waiting), aplikovat ji
     if (registration && registration.waiting) {
-      updateSW(true); // skipWaiting → okamžité převzetí + reload
+      setupReloadOnActivate();
+      updateSW(true); // skipWaiting → nový SW převezme kontrolu → reload
       return;
     }
     // 3. Pokud se právě instaluje, počkat na dokončení a pak aplikovat
@@ -47,6 +59,7 @@ async function checkAndApply() {
       const w = registration.installing;
       w.addEventListener('statechange', () => {
         if (w.state === 'installed' && navigator.serviceWorker.controller) {
+          setupReloadOnActivate();
           updateSW(true);
         }
       });
