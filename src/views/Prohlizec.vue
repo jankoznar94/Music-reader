@@ -226,7 +226,7 @@ const song = reactive({ data: null, name: '', fileName: '', id: props.id });
 
 const totalPages = ref(0);
 const currentPage = ref(0); // 0-based
-const zoom = ref(1.15);     // výchozí zoom 115 % (1 = fit výšce)
+const zoom = ref(1.0);     // výchozí zoom 100 % (1 = fit výšce)
 const panX = ref(0);        // posun stránky (dvouprstý pan)
 const panY = ref(0);
 
