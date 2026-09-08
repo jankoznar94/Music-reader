@@ -442,6 +442,8 @@ function toggleSelectAll() {
     for (const s of filteredSongs.value) selectedIds.delete(s.id);
   } else {
     for (const s of filteredSongs.value) selectedIds.add(s.id);
+    // Otevřít všechny collapsy autorů, aby byl výběr vidět
+    for (const g of songGroups.value) openAuthors.add(g.key);
   }
 }
 function onSongClick(s) {
