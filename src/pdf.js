@@ -1,5 +1,6 @@
 // src/pdf.js — obal nad pdf.js (renderování stránek do canvasu)
 import * as pdfjsLib from 'pdfjs-dist';
+import { toRaw } from 'vue';
 
 // Worker pro pdf.js
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -15,7 +16,10 @@ async function getDoc(song) {
   // Předáme Blob PŘÍMO do pdf.js — ten ho streamuje po částech, takže se
   // velký PDF nenačítá celý do paměti najednou (arrayBuffer() by to udělal).
   // To je klíčové pro velká díla (desítky MB), která jinak zamrzají.
-  const doc = await pdfjsLib.getDocument({ data: song.data }).promise;
+  // Pozor: song.data bývá Vue reactive proxy obalující Blob — pdf.js ji
+  // nerozpozná ("Invalid PDF binary data"), proto ji rozbalíme přes toRaw().
+  const blob = toRaw(song.data);
+  const doc = await pdfjsLib.getDocument({ data: blob }).promise;
   _docs.set(song.id, doc);
   return doc;
 }
