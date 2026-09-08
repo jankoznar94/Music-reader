@@ -5,11 +5,15 @@
     <button class="update-fab" @click="checkAndApply" title="Zkontrolovat novou verzi aplikace">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
     </button>
+    <!-- Toast zpráva -->
+    <transition name="toast">
+      <div v-if="toast" class="toast">{{ toast }}</div>
+    </transition>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { registerSW } from 'virtual:pwa-register';
 
 // Trvalé tlačítko aktualizace (registerType: 'prompt'):
@@ -17,7 +21,10 @@ import { registerSW } from 'virtual:pwa-register';
 // - na kliknutí zavolá registration.update() → prohlížeč zkontroluje nový SW
 // - pokud je nová verze, pošle SKIP_WAITING přímo novému workeru a stránka se
 //   obnoví SAMA (controllerchange listener → reload), bez vypínání/zapínání appky
+// - po aktualizaci se zobrazí toast "Aktualizace proběhla", jinak "Verze je aktuální"
 const checking = ref(false);
+const toast = ref('');
+let toastTimer = null;
 let registration = null;
 let refreshing = false; // prevence vícenásobného reloadu
 
@@ -29,6 +36,20 @@ const { updateSW } = registerSW({
   onRegisteredSW(_swUrl, reg) {
     registration = reg;
   },
+});
+
+function showToast(msg) {
+  toast.value = msg;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.value = ''; }, 2500);
+}
+
+// Po reloadu po aktualizaci zobrazit potvrzení (flag uložený před reloadem)
+onMounted(() => {
+  if (sessionStorage.getItem('noty-updated') === '1') {
+    sessionStorage.removeItem('noty-updated');
+    showToast('Aktualizace proběhla úspěšně.');
+  }
 });
 
 // Robustní obnova po aktivaci nového SW — funguje i v standalone PWA režimu.
@@ -61,7 +82,7 @@ async function checkAndApply() {
     // 2. Najít nový worker (waiting = už stažený, installing = právě se stahuje)
     let newWorker = registration.waiting || registration.installing;
     if (!newWorker) {
-      console.log('Aplikace je aktuální.');
+      showToast('Verze je aktuální.');
       return;
     }
     // 3. Pokud se právě instaluje, počkat na dokončení
@@ -69,10 +90,12 @@ async function checkAndApply() {
       await waitForInstalled(newWorker);
     }
     // 4. Aktivovat: poslat SKIP_WAITING přímo novému workeru
+    sessionStorage.setItem('noty-updated', '1'); // potvrzení po reloadu
     setupReloadOnActivate();
     newWorker.postMessage({ type: 'SKIP_WAITING' });
   } catch (err) {
     console.warn('Kontrola aktualizace selhala', err);
+    showToast('Kontrola aktualizace selhala.');
   } finally {
     checking.value = false;
   }
@@ -100,4 +123,22 @@ async function checkAndApply() {
   padding: 0;
 }
 .update-fab:active { background: var(--bg-elev); }
+
+/* Toast zpráva — plochá, teplé tmavé barvy, bez glow */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 80px;
+  transform: translateX(-50%);
+  z-index: 200;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 12px 20px;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+.toast-enter-active, .toast-leave-active { transition: opacity 0.2s; }
+.toast-enter-from, .toast-leave-to { opacity: 0; }
 </style>
