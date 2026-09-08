@@ -774,6 +774,7 @@ watch(() => sortBy.value, persistState);
   border: 2px solid var(--border); background: var(--bg-elev2);
   color: transparent; font-size: 0.9rem; font-weight: 700;
   display: flex; align-items: center; justify-content: center;
+  margin-right: 15px;
 }
 .check.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
 .song.sel { border-color: var(--accent); background: var(--bg-elev); }
