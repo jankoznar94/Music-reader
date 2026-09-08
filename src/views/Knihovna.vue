@@ -332,6 +332,9 @@ async function loadAll() {
   loading.value = false;
   // Po vykreslení seznamu obnovit scroll pozici (návrat z prohlížeče)
   nextTick(() => restoreScroll());
+  // Obnovit hromadný výběr a rozbalené záložky autorů (návrat z prohlížeče)
+  restoreSelection();
+  restoreAuthors();
 }
 
 async function onFiles(e) {
@@ -434,6 +437,11 @@ function toggleAuthor(key) {
 }
 
 function openSong(s) {
+  // Uložit stav přehledu (výběr, rozbalení, scroll), aby se po návratu z PDF obnovil
+  libState.selectedIds = [...selectedIds];
+  libState.openAuthors = [...openAuthors];
+  libState.scrollTop = contentEl.value ? contentEl.value.scrollTop : 0;
+  libState.scrollReady = true;
   router.push({ name: 'Prohlizec', params: { id: s.id } });
 }
 
@@ -666,6 +674,20 @@ function restoreScroll() {
   const el = contentEl.value;
   if (el && libState.scrollReady && tab.value === 'songs') {
     el.scrollTop = libState.scrollTop;
+  }
+}
+
+// Obnovit hromadný výběr po návratu z prohlížeče
+function restoreSelection() {
+  if (Array.isArray(libState.selectedIds) && libState.selectedIds.length) {
+    for (const id of libState.selectedIds) selectedIds.add(id);
+  }
+}
+
+// Obnovit rozbalené záložky autorů po návratu z prohlížeče
+function restoreAuthors() {
+  if (Array.isArray(libState.openAuthors) && libState.openAuthors.length) {
+    for (const key of libState.openAuthors) openAuthors.add(key);
   }
 }
 

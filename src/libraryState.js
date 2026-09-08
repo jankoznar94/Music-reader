@@ -8,6 +8,8 @@ const state = {
   sortBy: 'name',
   scrollTop: 0,       // pozice scrollu seznamu (v px)
   scrollReady: false, // zda bylo scroll uloženo pro daný "zážitek"
+  selectedIds: [],    // označené skladby (hromadný výběr) — pole ID
+  openAuthors: [],    // rozbalené záložky autorů — pole klíčů
 };
 
 export function saveLibraryState(partial) {
@@ -21,6 +23,8 @@ export function resetLibraryState() {
   state.sortBy = 'name';
   state.scrollTop = 0;
   state.scrollReady = false;
+  state.selectedIds = [];
+  state.openAuthors = [];
 }
 
 export function getLibraryState() {
