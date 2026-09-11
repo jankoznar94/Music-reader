@@ -403,7 +403,7 @@ onMounted(async () => {
   loading.value = false; // první stránka vykreslena → skrýt loading
   window.addEventListener('resize', onResize);
   // Udržet displej zapnutý, dokud je prohlížeč otevřený (jako jiné appky)
-  acquireWakeLock();
+  setupWakeLock();
 });
 
 onUnmounted(() => {
@@ -414,18 +414,36 @@ onUnmounted(() => {
 
 // --- Screen Wake Lock: displej nezhasíná, dokud je prohlížeč otevřený ---
 let wakeLock = null;
+let wakeTimer = null;
+let wakeVisibleHandler = null;
 async function acquireWakeLock() {
   try {
     if ('wakeLock' in navigator) {
       wakeLock = await navigator.wakeLock.request('screen');
-      // Pokud se wake lock ztratí (např. přepnutí karty), zkusit znovu
-      wakeLock.addEventListener('release', () => { wakeLock = null; });
+      // Znovu vyžádat, když se lock ztratí (OS/prohlížeč ho časem uvolňuje) —
+      // jinak se displej po chvíli začne zase stmívat.
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+        // Pokud je viewer stále otevřený, okamžitě vyžádáme znovu
+        acquireWakeLock();
+      });
     }
   } catch (err) {
     console.warn('Wake Lock nelze aktivovat', err);
   }
 }
+function setupWakeLock() {
+  acquireWakeLock();
+  // Prohlížeč může lock uvolnit i bez události (např. při ztrátě aktivity),
+  // proto periodicky znovu vyžádáme a při návratu do karty taky.
+  window.clearInterval(wakeTimer);
+  wakeTimer = setInterval(() => { if (!wakeLock) acquireWakeLock(); }, 10000);
+  wakeVisibleHandler = () => { if (document.visibilityState === 'visible') acquireWakeLock(); };
+  document.addEventListener('visibilitychange', wakeVisibleHandler);
+}
 function releaseWakeLock() {
+  if (wakeTimer) { window.clearInterval(wakeTimer); wakeTimer = null; }
+  if (wakeVisibleHandler) { document.removeEventListener('visibilitychange', wakeVisibleHandler); wakeVisibleHandler = null; }
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
 }
 
