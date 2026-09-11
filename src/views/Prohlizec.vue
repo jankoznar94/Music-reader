@@ -158,7 +158,6 @@
       >
         <span class="bk-num">{{ b.page + 1 }}</span>
         <span v-if="b.label" class="bk-label">{{ b.label }}</span>
-        <span class="bk-del" @click.stop="deleteBookmark(b)" title="Smazat záložku">✕</span>
       </button>
     </div>
 
@@ -1070,8 +1069,6 @@ async function deleteBookmark(b) {
   font-size: 0.8rem; font-weight: 700;
 }
 .bk-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bk-del { color: var(--text-dim); font-size: 0.9rem; padding: 0 2px; cursor: pointer; }
-.bk-del:active { color: var(--text); }
 
 .jp-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .jp-moves { display: flex; align-items: center; gap: 0; }
