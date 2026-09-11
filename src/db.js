@@ -6,9 +6,10 @@
 //   'groups'      -> id, name, songIds: [ordered], createdAt  (skupiny = setlisty)
 //   'folders'     -> id, name, createdAt  (složky = kategorizace, skladba patří do právě jedné)
 //   'jumps'       -> songId -> { songId, items: [{id, fromPage, toPage, label}] }  (Da Capo / VIDE skoky)
+//   'bookmarks'   -> songId -> { songId, items: [{id, page, label}] }  (záložky — konkrétní stránky)
 
 const DB_NAME = 'noty-app';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let _dbPromise = null;
 
@@ -39,6 +40,10 @@ function openDb() {
       if (!db.objectStoreNames.contains('jumps')) {
         // Skoky (Da Capo / VIDE), keyPath = songId
         db.createObjectStore('jumps', { keyPath: 'songId' });
+      }
+      if (!db.objectStoreNames.contains('bookmarks')) {
+        // Záložky (konkrétní stránky), keyPath = songId
+        db.createObjectStore('bookmarks', { keyPath: 'songId' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -167,4 +172,13 @@ export function dbSaveJumps(jumps) {
 
 export function dbGetJumps(songId) {
   return tx('jumps', 'readonly', (s) => s.get(songId));
+}
+
+// --- Záložky (konkrétní stránky) ---
+export function dbSaveBookmarks(bookmarks) {
+  return tx('bookmarks', 'readwrite', (s) => s.put(cloneForDb(bookmarks)));
+}
+
+export function dbGetBookmarks(songId) {
+  return tx('bookmarks', 'readonly', (s) => s.get(songId));
 }

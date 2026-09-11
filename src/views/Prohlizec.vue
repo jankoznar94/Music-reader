@@ -108,6 +108,35 @@
       <button class="jp-close" @click="toggleJumpMode">Zavřít</button>
     </div>
 
+    <!-- Panel pro přidání záložky -->
+    <div v-if="bookmarkMode" class="jump-panel">
+      <div class="jp-title">Nová záložka</div>
+      <div class="jp-row">
+        <span class="jp-cur">Stránka {{ currentPage + 1 }}</span>
+      </div>
+      <div class="jp-row">
+        <input v-model="bookmarkLabel" class="jp-input" placeholder="Text záložky (např. Coda)" />
+        <button class="jp-btn primary" @click="saveBookmark">Uložit</button>
+      </div>
+      <button class="jp-close" @click="bookmarkMode = false; bookmarkLabel = ''">Zavřít</button>
+    </div>
+
+    <!-- Záložky — vždy viditelná lišta u spodní hrany -->
+    <div v-if="bookmarks.length" class="bookmark-strip">
+      <button
+        v-for="b in bookmarks"
+        :key="b.id"
+        class="bookmark-btn"
+        :class="{ on: b.page === currentPage }"
+        @click="goBookmark(b)"
+        :title="'Záložka na str. ' + (b.page + 1)"
+      >
+        <span class="bk-num">{{ b.page + 1 }}</span>
+        <span v-if="b.label" class="bk-label">{{ b.label }}</span>
+        <span class="bk-del" @click.stop="deleteBookmark(b)" title="Smazat záložku">✕</span>
+      </button>
+    </div>
+
     <!-- Slider stránek s miniaturami -->
     <div v-if="sliderOpen" class="slider-panel">
       <div class="thumb-strip" ref="thumbStripEl">
@@ -140,6 +169,7 @@
     <!-- Plovoucí ovládací tlačítka (pravý okraj) — zobrazí se na povel (tap na střed) -->
     <div class="fab-col" v-if="controlsVisible || annotMode">
       <button class="fab" @click="toggleAnnot" :class="{ on: annotMode }" title="Anotace / listování">✏️</button>
+      <button class="fab" @click="openBookmark" :class="{ on: bookmarkMode }" title="Přidat záložku na tuto stránku">🔖</button>
       <button class="fab" @click="toggleJumpMode" :class="{ on: jumpMode }" title="Vytvořit skok (Da Capo / VIDE)">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
       </button>
@@ -185,6 +215,11 @@
         </button>
         <button v-if="hasAnnotations" class="ap-tool" @click="clearAnnots" title="Smazat všechny anotace">🗑️</button>
       </div>
+      <!-- Řádek 5: jen pero (palm-rejection) -->
+      <div class="ap-row">
+        <button class="ap-tool pen-only" @click="penOnly = !penOnly" :class="{ on: penOnly }" title="Kreslit jen perem (ignorovat dotyk rukou)">🖊️</button>
+        <span class="ap-pen-label" @click="penOnly = !penOnly">Jen pero</span>
+      </div>
     </div>
 
     <!-- Plovoucí zoom (levý okraj) — zobrazí se na povel (tap na střed) -->
@@ -210,7 +245,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
-import { dbGetSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps } from '../db.js';
+import { dbGetSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks } from '../db.js';
 import { renderPage, getPageWidthHeight, getPageCount } from '../pdf.js';
 
 const props = defineProps({ id: { type: String, required: true } });
@@ -274,6 +309,12 @@ const jumpStart = ref(null);      // výchozí stránka (0-based) nebo null
 const jumpEnd = ref(null);        // cílová stránka (0-based) nebo null
 const jumpLabel = ref('');        // text tlačítka
 
+// Záložky (konkrétní stránky) — per skladba
+const bookmarks = ref([]);        // [{id, page, label}]
+const bookmarkMode = ref(false);  // režim přidávání záložky
+const bookmarkLabel = ref('');    // text záložky (volitelný)
+const penOnly = ref(false);       // v anotaci kreslit jen perem (ignorovat dotyk prstem/rukou)
+
 // Rozměry a stránka
 
 const pageItems = computed(() => annotations.value.items.filter(i => i.page === currentPage.value));
@@ -326,6 +367,10 @@ onMounted(async () => {
   // Načíst skoky (Da Capo / VIDE)
   const savedJumps = await dbGetJumps(props.id);
   if (savedJumps && Array.isArray(savedJumps.items)) jumps.value = savedJumps.items;
+
+  // Načíst záložky (konkrétní stránky)
+  const savedBookmarks = await dbGetBookmarks(props.id);
+  if (savedBookmarks && Array.isArray(savedBookmarks.items)) bookmarks.value = savedBookmarks.items;
 
   // Velikost stránky aby se vešla na výšku
   computeFit();
@@ -717,6 +762,10 @@ function toLayerCoords(e) {
 
 function onLayerDown(e) {
   if (!annotMode.value) return;
+  // Pen-only mód: ignorovat dotyk prstem/rukou (palm-rejection), kreslit jen stylusem
+  if (penOnly.value && e.pointerType !== 'pen') return;
+  if (_activePointerId !== null) return; // už kreslí jiný tah (např. druhá ruka)
+  _activePointerId = e.pointerId;
   const p = toLayerCoords(e);
   const w = tool.value === 'highlighter' ? annotSize.value * 2 : annotSize.value;
   activeStroke.value = {
@@ -730,8 +779,10 @@ function onLayerDown(e) {
   _prev = p;
 }
 let _prev = null;
+let _activePointerId = null;
 function onLayerMove(e) {
   if (!activeStroke.value) return;
+  if (_activePointerId !== e.pointerId) return; // jiný tah (druhá ruka) — nekreslit
   const p = toLayerCoords(e);
   const prev = _prev;
   if (!prev || Math.abs(p.x - prev.x) > 1 || Math.abs(p.y - prev.y) > 1) {
@@ -740,6 +791,8 @@ function onLayerMove(e) {
 }
 function onLayerUp(e) {
   if (!activeStroke.value) return;
+  if (_activePointerId !== e.pointerId) return;
+  _activePointerId = null;
   // Maličká/rychá poznámka: tah s pouhým 1 bodem je při kreslení prakticky neviditelný
   // a užívala se s tím, že se nic nezaznamená. Přidáme drobnou stopu podél směru tahu.
   if (activeStroke.value.points.length < 2) {
@@ -832,6 +885,33 @@ async function deleteJump(j) {
     await dbSaveJumps({ songId: song.id, items: jumps.value });
   }
 }
+
+// --- Záložky (konkrétní stránky) ---
+function openBookmark() {
+  bookmarkMode.value = true;
+  bookmarkLabel.value = '';
+}
+async function saveBookmark() {
+  if (bookmarks.value.some(b => b.page === currentPage.value)) {
+    openBookmark();
+    return;
+  }
+  const label = bookmarkLabel.value.trim();
+  bookmarks.value.push({ id: crypto.randomUUID(), page: currentPage.value, label });
+  bookmarks.value.sort((a, b) => a.page - b.page);
+  await dbSaveBookmarks({ songId: song.id, items: bookmarks.value });
+  bookmarkMode.value = false;
+  bookmarkLabel.value = '';
+}
+async function goBookmark(b) {
+  await gotoPage(b.page);
+}
+async function deleteBookmark(b) {
+  if (confirm(`Smazat záložku „${b.label || 'str. ' + (b.page + 1)}"?`)) {
+    bookmarks.value = bookmarks.value.filter(x => x.id !== b.id);
+    await dbSaveBookmarks({ songId: song.id, items: bookmarks.value });
+  }
+}
 </script>
 
 <style scoped>
@@ -876,19 +956,20 @@ async function deleteJump(j) {
   min-width: 44px; text-align: center; padding: 0 4px;
 }
 
-/* Skoky (Da Capo / VIDE) */
+/* Skoky (Da Capo / VIDE) — vpravo, pod tlačítkem Jump menu, výrazně barevné */
 .jump-strip {
-  position: absolute; bottom: 24px; left: 16px;
-  display: flex; flex-wrap: wrap; gap: 8px; z-index: 20;
-  max-width: 60vw;
+  position: absolute; right: 16px; top: calc(50% + 67px);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 20;
+  pointer-events: none;
 }
 .jump-btn {
-  background: var(--bg-elev); border: 1px solid var(--border);
-  border-radius: 20px; padding: 8px 16px; font-size: 0.9rem; font-weight: 600;
-  color: var(--text); cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
-  touch-action: manipulation;
+  background: var(--accent); border: 1px solid var(--accent);
+  border-radius: 24px; padding: 12px 22px; font-size: 1rem; font-weight: 700;
+  color: #17130f; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  touch-action: manipulation; pointer-events: auto;
 }
-.jump-btn:active { background: var(--bg-elev2); }
+.jump-btn:active { background: var(--bg-elev2); border-color: var(--border); color: var(--text); }
 
 .jump-panel {
   position: absolute; bottom: 92px; left: 16px;
@@ -911,6 +992,37 @@ async function deleteJump(j) {
   border-radius: 10px; padding: 8px 10px; color: var(--text); font-size: 0.9rem;
 }
 .jp-close { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 10px; padding: 8px; color: var(--text); cursor: pointer; }
+.jp-cur { color: var(--text); font-size: 0.9rem; font-weight: 600; }
+
+/* Záložky — vždy viditelná lišta u spodní hrany */
+.bookmark-strip {
+  position: absolute; left: 16px; right: 16px; bottom: 10px;
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  justify-content: flex-start; z-index: 22;
+  pointer-events: none;
+}
+.bookmark-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 50%; padding: 8px 14px;
+  font-size: 0.92rem; font-weight: 600; color: var(--text);
+  cursor: pointer; touch-action: manipulation; pointer-events: auto;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.4);
+}
+.bookmark-btn.on { border-color: var(--accent); background: var(--bg-elev2); }
+.bookmark-btn:active { background: var(--bg-elev2); }
+.bk-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 4px;
+  background: var(--accent); color: #17130f; border-radius: 50%;
+  font-size: 0.8rem; font-weight: 700;
+}
+.bk-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-del { color: var(--text-dim); font-size: 0.9rem; padding: 0 2px; cursor: pointer; }
+.bk-del:active { color: var(--text); }
+
+.ap-pen-label { color: var(--text-dim); font-size: 0.85rem; cursor: pointer; }
+.ap-tool.pen-only.on { border-color: var(--accent); }
 
 /* Slider stránek s miniaturami — přes celou šířku */
 .slider-panel {
