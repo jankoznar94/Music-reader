@@ -756,10 +756,14 @@ function mid(a, b) {
   return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
 }
 
-// Tap: okraje → listování, střed → zobrazit/skrýt ovládací prvky (jen mimo anotaci a tlačítka)
+// Tap: okraje → listování, střed → zobrazit/skrýt ovládací prvky (jen mimo anotaci, tlačítka a formuláře)
 function onTap(e) {
   if (annotMode.value) return;
-  if (e.target.closest('button')) return; // plovoucí tlačítka necháme bez stránkování
+  // Plovoucí tlačítka, panely a vstupy necháme bez stránkování (input ve správci záložek
+  // by jinak spadl do okrajové zóny a skočil na předchozí stránku).
+  if (e.target.closest('button')) return;
+  if (e.target.closest('input, textarea, select')) return;
+  if (e.target.closest('.jump-panel, .slider-panel')) return;
   const el = viewerEl.value;
   if (!el) return;
   const x = e.clientX - el.getBoundingClientRect().left;
