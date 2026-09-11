@@ -1014,17 +1014,18 @@ async function deleteBookmark(b) {
 .annot-layer .hl { mix-blend-mode: multiply; opacity: 0.9; }
 
 .page-ind {
-  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 20px;
   padding: 6px 14px; font-size: 0.9rem; color: var(--text-dim);
   display: flex; gap: 8px; align-items: center; max-width: 60vw; white-space: nowrap;
+  z-index: 23;
 }
 .ind-song { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 
 /* Přepínání not ve skupině */
 .nav-strip {
-  position: absolute; bottom: 24px; right: 16px;
-  display: flex; align-items: center; gap: 10px; z-index: 20;
+  position: fixed; bottom: 24px; right: 16px;
+  display: flex; align-items: center; gap: 10px; z-index: 24;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 28px;
   padding: 6px 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
 }
@@ -1043,8 +1044,8 @@ async function deleteBookmark(b) {
 
 /* Skoky (Da Capo / VIDE) — vpravo, pod tlačítkem Jump menu, výrazně barevné */
 .jump-strip {
-  position: absolute; right: 16px; top: calc(50% + 67px);
-  display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 20;
+  position: fixed; right: 16px; top: calc(50% + 67px);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 24;
   pointer-events: none;
 }
 .jump-btn {
@@ -1182,9 +1183,10 @@ async function deleteBookmark(b) {
 .fab.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
 .fab-col.left .zoom-val { color: var(--text-dim); font-size: 0.85rem; text-align: center; width: 52px; height: 52px; display: flex; align-items: center; justify-content: center; }
 .fab.back {
-  position: absolute; top: 14px; left: 16px;
+  position: fixed; top: 14px; left: 16px;
   width: 48px; height: 48px; border-radius: 50%;
   padding: 0; display: flex; align-items: center; justify-content: center;
+  z-index: 23;
 }
 
 /* Plovoucí panel anotací — řádky, zarovnáno doleva */
