@@ -13,13 +13,15 @@
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 /* Jan: žádné hover/focus vizuální efekty ani přechody (mobil-first PWA).
-   Aktivní stav (stisklé) zůstává jako ploché ztmavení — to je jediný feedback. */
+   Aktivní stav (stisklé) zůstává jako ploché ztmavení — to je jediný feedback.
+   POZOR: border-color se zde NESMÍ přepisovat — přebil by .on stav (vybraná
+   položka v paletě), který se spoléhá na accent border. Focus ring se řeší
+   výhradně přes outline. */
 *:focus, *:focus-visible, button:focus, input:focus, a:focus {
   outline: none !important;
-  border-color: var(--border) !important;
   box-shadow: none !important;
 }
 * {
@@ -39,6 +41,15 @@ html, body {
   height: 100dvh;
   display: flex;
   flex-direction: column;
+}
+
+/* Natáhnout router-view (jediné dítě #app) na plnou výšku, aby měl .viewer
+   fixní referenci pro absolutní kotvy (zpět nahoře, záložky/skupiny dole).
+   Bez flex:1 roste obsah a kotvy se navzájem posouvají (přetlačují). */
+#app > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
 }
 
 /* Velké dotykové prvky — žádné hover stavy (mobil-first PWA) */
