@@ -240,10 +240,10 @@ const tool = ref('pencil');
 const activeStroke = ref(null);
 
 // Rozšířené anotace
-const colors = ['#e5d7a6', '#f2c4b6', '#bcd3b6', '#a8c4e0', '#e5c9a8', '#d9b6d9', '#c05a4a', '#1a1a1a', '#1a2a4a'];
+const colors = ['#1a1a1a', '#c05a4a', '#e5d7a6', '#f2c4b6', '#bcd3b6', '#a8c4e0', '#e5c9a8', '#d9b6d9', '#1a2a4a'];
 const sizes = [2, 3, 4, 6, 8, 12];
-const annotColor = ref('#e5d7a6'); // aktuální barva pera
-const annotSize = ref(3);          // aktuální velikost pera
+const annotColor = ref('#1a1a1a'); // aktuální barva pera
+const annotSize = ref(2);          // aktuální velikost pera (výchozí = nejmenší)
 const history = ref([]);           // undo stack (kopie předchozích stavů items)
 const redoStack = ref([]);         // redo stack
 const canUndo = computed(() => history.value.length > 0);
