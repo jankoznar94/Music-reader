@@ -17,13 +17,11 @@
         :class="{ active: annotMode }"
         :width="cssW"
         :height="cssH"
-        @touchstart.passive="onLayerDown($event)"
-        @touchmove.passive="onLayerMove($event)"
-        @touchend.passive="onLayerUp"
-        @mousedown.prevent="onLayerDown($event)"
-        @mousemove="onLayerMove($event)"
-        @mouseup="onLayerUp"
-        @mouseleave="onLayerUp"
+        @pointerdown.prevent="onLayerDown($event)"
+        @pointermove.prevent="onLayerMove($event)"
+        @pointerup.prevent="onLayerUp"
+        @pointercancel.prevent="onLayerUp"
+        @pointerleave.prevent="onLayerUp"
       >
         <!-- Překreslené anotace aktuální stránky -->
         <g v-for="it in pageItems" :key="it.id">
@@ -730,7 +728,6 @@ function onLayerDown(e) {
     points: [p],
   };
   _prev = p;
-  e.preventDefault && e.preventDefault();
 }
 let _prev = null;
 function onLayerMove(e) {
@@ -741,8 +738,14 @@ function onLayerMove(e) {
     activeStroke.value.points.push(p); _prev = p;
   }
 }
-function onLayerUp() {
+function onLayerUp(e) {
   if (!activeStroke.value) return;
+  // Maličká/rychá poznámka: tah s pouhým 1 bodem je při kreslení prakticky neviditelný
+  // a užívala se s tím, že se nic nezaznamená. Přidáme drobnou stopu podél směru tahu.
+  if (activeStroke.value.points.length < 2) {
+    const p = toLayerCoords(e);
+    activeStroke.value.points.push(p);
+  }
   pushHistory();
   annotations.value.items.push(activeStroke.value);
   activeStroke.value = null;
