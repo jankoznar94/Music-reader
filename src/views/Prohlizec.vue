@@ -108,17 +108,30 @@
       <button class="jp-close" @click="toggleJumpMode">Zavřít</button>
     </div>
 
-    <!-- Panel pro přidání záložky -->
+    <!-- Panel pro vytváření/úpravu záložky -->
     <div v-if="bookmarkMode" class="jump-panel">
-      <div class="jp-title">Nová záložka</div>
+      <div class="jp-title">{{ bookmarkEditing ? 'Upravit záložku' : 'Nová záložka' }}</div>
       <div class="jp-row">
-        <span class="jp-cur">Stránka {{ currentPage + 1 }}</span>
+        <span class="jp-cur">{{ bookmarkEditing ? 'Stránka ' + ((bookmarks.find(x => x.id === bookmarkEditing) || {}).page + 1) : 'Stránka ' + (currentPage + 1) }}</span>
       </div>
       <div class="jp-row">
         <input v-model="bookmarkLabel" class="jp-input" placeholder="Text záložky (např. Coda)" />
-        <button class="jp-btn primary" @click="saveBookmark">Uložit</button>
+        <button class="jp-btn primary" @click="saveBookmark">{{ bookmarkEditing ? 'Uložit' : 'Přidat' }}</button>
       </div>
-      <button class="jp-close" @click="bookmarkMode = false; bookmarkLabel = ''">Zavřít</button>
+
+      <!-- Seznam existujících záložek (editace + řazení + smazání) -->
+      <div v-if="bookmarks.length" class="jp-list">
+        <div class="jp-subtitle">Záložky</div>
+        <div v-for="(b, idx) in bookmarks" :key="b.id" class="jp-item">
+          <button class="jp-move" @click="moveBookmark(b, -1)" :disabled="idx === 0" title="Přesunout nahoru">↑</button>
+          <button class="jp-move" @click="moveBookmark(b, 1)" :disabled="idx === bookmarks.length - 1" title="Přesunout dolů">↓</button>
+          <span class="jp-item-label">str. {{ b.page + 1 }}<template v-if="b.label"> · {{ b.label }}</template></span>
+          <button class="jp-edit" @click="startEditBookmark(b)" title="Upravit">✎</button>
+          <button class="jp-del" @click="deleteBookmark(b)" title="Smazat">🗑</button>
+        </div>
+      </div>
+
+      <button class="jp-close" @click="bookmarkMode = false; bookmarkLabel = ''; bookmarkEditing = null">Zavřít</button>
     </div>
 
     <!-- Záložky — vždy viditelná lišta u spodní hrany -->
@@ -127,7 +140,7 @@
         v-for="b in bookmarks"
         :key="b.id"
         class="bookmark-btn"
-        :class="{ on: b.page === currentPage }"
+        :class="{ on: b.page === currentPage, circle: !b.label }"
         @click="goBookmark(b)"
         :title="'Záložka na str. ' + (b.page + 1)"
       >
@@ -313,6 +326,7 @@ const jumpLabel = ref('');        // text tlačítka
 const bookmarks = ref([]);        // [{id, page, label}]
 const bookmarkMode = ref(false);  // režim přidávání záložky
 const bookmarkLabel = ref('');    // text záložky (volitelný)
+const bookmarkEditing = ref(null); // id záložky, kterou upravujeme (null = nová)
 const penOnly = ref(true);        // v anotaci kreslit jen perem (ignorovat dotyk prstem/rukou) — výchozí zapnuto
 
 // Rozměry a stránka
@@ -896,18 +910,32 @@ function openBookmark() {
   bookmarkMode.value = true;
   annotMode.value = false; // jiný panel → vypnout anotaci
   bookmarkLabel.value = '';
+  bookmarkEditing.value = null;
 }
 async function saveBookmark() {
-  if (bookmarks.value.some(b => b.page === currentPage.value)) {
-    openBookmark();
-    return;
-  }
   const label = bookmarkLabel.value.trim();
-  bookmarks.value.push({ id: crypto.randomUUID(), page: currentPage.value, label });
-  bookmarks.value.sort((a, b) => a.page - b.page);
-  await dbSaveBookmarks({ songId: song.id, items: bookmarks.value });
+  if (bookmarkEditing.value) {
+    const b = bookmarks.value.find(x => x.id === bookmarkEditing.value);
+    if (b) b.label = label; // úprava: jen text, stránka zůstává
+  } else {
+    if (bookmarks.value.some(x => x.page === currentPage.value)) { openBookmark(); return; }
+    bookmarks.value.push({ id: crypto.randomUUID(), page: currentPage.value, label });
+  }
+  await dbSaveBookmarks({ songId: song.id, items: bookmarks.value }); // ruční pořadí
   bookmarkMode.value = false;
   bookmarkLabel.value = '';
+  bookmarkEditing.value = null;
+}
+function startEditBookmark(b) {
+  bookmarkEditing.value = b.id;
+  bookmarkLabel.value = b.label || '';
+}
+function moveBookmark(b, dir) {
+  const i = bookmarks.value.findIndex(x => x.id === b.id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= bookmarks.value.length) return;
+  [bookmarks.value[i], bookmarks.value[j]] = [bookmarks.value[j], bookmarks.value[i]];
+  dbSaveBookmarks({ songId: song.id, items: bookmarks.value });
 }
 async function goBookmark(b) {
   await gotoPage(b.page);
@@ -1010,22 +1038,37 @@ async function deleteBookmark(b) {
 .bookmark-btn {
   display: inline-flex; align-items: center; gap: 6px;
   background: var(--bg-elev); border: 1px solid var(--border);
-  border-radius: 50%; padding: 8px 14px;
+  border-radius: 20px; padding: 6px 12px;
   font-size: 0.92rem; font-weight: 600; color: var(--text);
   cursor: pointer; touch-action: manipulation; pointer-events: auto;
   box-shadow: 0 3px 12px rgba(0,0,0,0.4);
+}
+.bookmark-btn.circle {
+  border-radius: 50%;
+  width: 38px; height: 38px; padding: 0;
+  justify-content: center;
 }
 .bookmark-btn.on { border-color: var(--accent); background: var(--bg-elev2); }
 .bookmark-btn:active { background: var(--bg-elev2); }
 .bk-num {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 20px; height: 20px; padding: 0 4px;
+  min-width: 22px; height: 22px; padding: 0 4px;
   background: var(--accent); color: #17130f; border-radius: 50%;
   font-size: 0.8rem; font-weight: 700;
 }
 .bk-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bk-del { color: var(--text-dim); font-size: 0.9rem; padding: 0 2px; cursor: pointer; }
 .bk-del:active { color: var(--text); }
+
+.jp-move, .jp-edit {
+  width: 28px; height: 28px; flex: 0 0 auto; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg-elev);
+  color: var(--text); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 0.9rem;
+}
+.jp-move { width: 32px; }
+.jp-move:disabled { opacity: 0.35; pointer-events: none; }
+.jp-edit { color: var(--accent); }
 
 .ap-pen-label { color: var(--text-dim); font-size: 0.85rem; cursor: pointer; }
 .ap-tool.pen-only.on { border-color: var(--accent); }
