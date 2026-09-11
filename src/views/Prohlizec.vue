@@ -30,6 +30,7 @@
             fill="none"
             :stroke="it.color"
             :stroke-width="it.width"
+            :opacity="it.opacity"
             stroke-linecap="round"
             stroke-linejoin="round"
             :class="{ hl: it.tool === 'highlighter' }"
@@ -42,6 +43,7 @@
           fill="none"
           :stroke="activeStroke.color"
           :stroke-width="activeStroke.width"
+          :opacity="activeStroke.opacity"
           stroke-linecap="round"
           stroke-linejoin="round"
         />
@@ -229,6 +231,18 @@
           :title="'Velikost ' + s"
         ><span :style="{ width: s + 'px', height: s + 'px' }"></span></button>
       </div>
+      <!-- Řádek 3b: krytí (průhlednost tužky) -->
+      <div class="ap-row op-row">
+        <span class="ap-op-label">Krytí</span>
+        <input
+          type="range"
+          class="ap-opacity"
+          min="10" max="100" step="5"
+          :value="annotOpacity"
+          @input="annotOpacity = Number($event.target.value)"
+        />
+        <span class="ap-op-val">{{ annotOpacity }}%</span>
+      </div>
       <!-- Řádek 4: akce -->
       <div class="ap-row">
         <button class="ap-tool" @click="undoAnnot" title="Zpět" :disabled="!canUndo">
@@ -303,6 +317,7 @@ const colors = ['#1a1a1a', '#c05a4a', '#e5d7a6', '#f2c4b6', '#bcd3b6', '#a8c4e0'
 const sizes = [2, 3, 4, 6, 8, 12];
 const annotColor = ref('#1a1a1a'); // aktuální barva pera
 const annotSize = ref(2);          // aktuální velikost pera (výchozí = nejmenší)
+const annotOpacity = ref(100);     // aktuální opacity tahu v % (100 = plné krytí)
 const history = ref([]);           // undo stack (kopie předchozích stavů items)
 const redoStack = ref([]);         // redo stack
 const canUndo = computed(() => history.value.length > 0);
@@ -824,6 +839,7 @@ function onLayerDown(e) {
     page: currentPage.value,
     tool: tool.value,
     color: tool.value === 'highlighter' ? annotColor.value + '55' : annotColor.value,
+    opacity: tool.value === 'highlighter' ? 1 : annotOpacity.value / 100, // tužka má proměnnou průhlednost
     width: w,
     points: [p],
   };
@@ -1177,6 +1193,10 @@ async function deleteBookmark(b) {
   z-index: 25; max-width: 94vw;
 }
 .ap-row { display: flex; align-items: center; gap: 6px; }
+.op-row { width: 100%; gap: 8px; }
+.ap-op-label { font-size: 0.8rem; color: var(--text-dim); white-space: nowrap; }
+.ap-opacity { flex: 1; min-width: 0; accent-color: var(--accent); height: 4px; }
+.ap-op-val { font-size: 0.8rem; color: var(--text-dim); min-width: 32px; text-align: right; }
 .ap-tool {
   width: 34px; height: 34px; flex: 0 0 auto; min-width: 0; padding: 0;
   border-radius: 50%; box-sizing: border-box;
