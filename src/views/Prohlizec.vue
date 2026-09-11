@@ -1000,7 +1000,8 @@ async function deleteBookmark(b) {
 <style scoped>
 .viewer {
   flex: 1; position: relative; overflow: hidden;
-  height: 100%; /* deterministická výška → absolutní kotvy (záložky dole, zpět nahoře) kotví proti celé ploše */
+  height: 100dvh; /* přesně výška obrazovky → absolutní overlay kotvy (zpět nahoře, záložky dole) kotví proti viewportu, ne proti výšce plátna */
+  min-height: 0;
   background: var(--bg); display: flex; align-items: center; justify-content: center;
   touch-action: pan-x pan-y;
 }
