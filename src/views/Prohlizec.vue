@@ -313,7 +313,7 @@ const jumpLabel = ref('');        // text tlačítka
 const bookmarks = ref([]);        // [{id, page, label}]
 const bookmarkMode = ref(false);  // režim přidávání záložky
 const bookmarkLabel = ref('');    // text záložky (volitelný)
-const penOnly = ref(false);       // v anotaci kreslit jen perem (ignorovat dotyk prstem/rukou)
+const penOnly = ref(true);        // v anotaci kreslit jen perem (ignorovat dotyk prstem/rukou) — výchozí zapnuto
 
 // Rozměry a stránka
 
@@ -518,6 +518,7 @@ function gotoPage(i) {
 function toggleSlider() {
   sliderOpen.value = !sliderOpen.value;
   if (sliderOpen.value) {
+    annotMode.value = false; // jiný panel → vypnout anotaci
     pageSlider.value = currentPage.value;
     // Přednačíst miniatury okolí aktuální stránky
     for (let i = Math.max(0, currentPage.value - 3); i <= Math.min(totalPages.value - 1, currentPage.value + 3); i++) {
@@ -745,8 +746,11 @@ function onTap(e) {
 }
 
 // --- Anotace ---
-function toggleAnnot() { annotMode.value = !annotMode.value; }
-function setTool(t) { tool.value = t; annotMode.value = true; }
+function toggleAnnot() {
+  annotMode.value = !annotMode.value;
+  if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; } // jiné panely zavřít
+}
+function setTool(t) { tool.value = t; annotMode.value = true; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; }
 
 function toLayerCoords(e) {
   const svg = layerSvgEl.value;
@@ -855,6 +859,7 @@ function goBack() { router.push('/'); }
 // --- Skoky (Da Capo / VIDE) ---
 function toggleJumpMode() {
   jumpMode.value = !jumpMode.value;
+  if (jumpMode.value) annotMode.value = false; // jiný panel → vypnout anotaci
   if (!jumpMode.value) { jumpStart.value = null; jumpEnd.value = null; jumpLabel.value = ''; }
 }
 // Krok 1: označit výchozí stránku (kde skok začíná)
@@ -889,6 +894,7 @@ async function deleteJump(j) {
 // --- Záložky (konkrétní stránky) ---
 function openBookmark() {
   bookmarkMode.value = true;
+  annotMode.value = false; // jiný panel → vypnout anotaci
   bookmarkLabel.value = '';
 }
 async function saveBookmark() {
