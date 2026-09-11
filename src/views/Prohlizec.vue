@@ -1079,9 +1079,11 @@ async function deleteBookmark(b) {
 .jp-close { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 10px; padding: 8px; color: var(--text); cursor: pointer; }
 .jp-cur { color: var(--text); font-size: 0.9rem; font-weight: 600; }
 
-/* Záložky — vždy viditelná lišta u spodní hrany */
+/* Záložky — vždy viditelná lišta u spodní hrany, overlay nad plátnem.
+   position: fixed → kotví proti viewportu (obrazovce), ne proti výšce plátna,
+   takže se nemůže dostat pod obraz, ať je canvas jakkoli velký. */
 .bookmark-strip {
-  position: absolute; left: 16px; right: 16px; bottom: 10px;
+  position: fixed; left: 16px; right: 16px; bottom: 12px;
   display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
   justify-content: flex-start; z-index: 22;
   pointer-events: none;
