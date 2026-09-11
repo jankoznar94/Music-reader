@@ -123,11 +123,23 @@
       <div v-if="bookmarks.length" class="jp-list">
         <div class="jp-subtitle">Záložky</div>
         <div v-for="(b, idx) in bookmarks" :key="b.id" class="jp-item">
-          <button class="jp-move" @click="moveBookmark(b, -1)" :disabled="idx === 0" title="Přesunout nahoru">↑</button>
-          <button class="jp-move" @click="moveBookmark(b, 1)" :disabled="idx === bookmarks.length - 1" title="Přesunout dolů">↓</button>
-          <span class="jp-item-label">str. {{ b.page + 1 }}<template v-if="b.label"> · {{ b.label }}</template></span>
-          <button class="jp-edit" @click="startEditBookmark(b)" title="Upravit">✎</button>
-          <button class="jp-del" @click="deleteBookmark(b)" title="Smazat">🗑</button>
+          <span class="jp-item-label" :class="{ dim: !b.label }">str. {{ b.page + 1 }}<template v-if="b.label"> · {{ b.label }}</template></span>
+          <span class="jp-actions">
+            <button class="jp-icon" @click="startEditBookmark(b)" title="Upravit">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+            </button>
+            <button class="jp-icon del" @click="deleteBookmark(b)" title="Smazat">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            </button>
+          </span>
+          <span class="jp-moves">
+            <button class="jp-icon" @click="moveBookmark(b, -1)" :disabled="idx === 0" title="Přesunout nahoru">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+            </button>
+            <button class="jp-icon" @click="moveBookmark(b, 1)" :disabled="idx === bookmarks.length - 1" title="Přesunout dolů">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
+            </button>
+          </span>
         </div>
       </div>
 
@@ -1060,15 +1072,17 @@ async function deleteBookmark(b) {
 .bk-del { color: var(--text-dim); font-size: 0.9rem; padding: 0 2px; cursor: pointer; }
 .bk-del:active { color: var(--text); }
 
-.jp-move, .jp-edit {
-  width: 28px; height: 28px; flex: 0 0 auto; border-radius: 50%;
-  border: 1px solid var(--border); background: var(--bg-elev);
-  color: var(--text); display: flex; align-items: center; justify-content: center;
-  cursor: pointer; font-size: 0.9rem;
+.jp-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.jp-moves { display: flex; align-items: center; gap: 0; }
+.jp-icon {
+  width: 32px; height: 32px; flex: 0 0 auto; padding: 0;
+  background: transparent; border: none; border-radius: 50%;
+  color: var(--text-dim); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: manipulation;
 }
-.jp-move { width: 32px; }
-.jp-move:disabled { opacity: 0.35; pointer-events: none; }
-.jp-edit { color: var(--accent); }
+.jp-icon:active { color: var(--text); }
+.jp-icon.del:active { color: var(--danger); }
+.jp-icon:disabled { opacity: 0.3; pointer-events: none; }
 
 .ap-pen-label { color: var(--text-dim); font-size: 0.85rem; cursor: pointer; }
 .ap-tool.pen-only.on { border-color: var(--accent); }
