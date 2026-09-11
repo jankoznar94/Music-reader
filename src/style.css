@@ -43,15 +43,6 @@ html, body {
   flex-direction: column;
 }
 
-/* Natáhnout router-view (jediné dítě #app) na plnou výšku, aby měl .viewer
-   fixní referenci pro absolutní kotvy (zpět nahoře, záložky/skupiny dole).
-   Bez flex:1 roste obsah a kotvy se navzájem posouvají (přetlačují). */
-#app > * {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: 100%;
-}
-
 /* Velké dotykové prvky — žádné hover stavy (mobil-first PWA) */
 button {
   font-family: inherit;
