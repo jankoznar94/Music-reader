@@ -82,6 +82,27 @@
           <circle v-else :cx="activeItem.x" :cy="activeItem.y" r="6"
             fill="none" :stroke="activeItem.color" stroke-width="2" />
         </g>
+
+        <!-- Live preview při sběru bodů zobáčku — kam uživatel klikl, než se klín vykreslí -->
+        <g v-if="wedgePoints.length" class="wedge-preview">
+          <line
+            v-if="wedgePoints.length >= 2"
+            :x1="wedgePoints[0].x" :y1="wedgePoints[0].y"
+            :x2="wedgePoints[1].x" :y2="wedgePoints[1].y"
+            :stroke="annotColor" :stroke-width="annotSize" stroke-linecap="round"
+            :opacity="0.5"
+          />
+          <circle
+            v-for="(pt, i) in wedgePoints" :key="i"
+            :cx="pt.x" :cy="pt.y" r="9"
+            fill="none" :stroke="annotColor" stroke-width="2.5"
+          />
+          <circle
+            v-for="(pt, i) in wedgePoints" :key="'c'+i"
+            :cx="pt.x" :cy="pt.y" r="3.5"
+            :fill="annotColor"
+          />
+        </g>
       </svg>
     </div>
 
@@ -1700,6 +1721,8 @@ async function deleteBookmark(b) {
   border: 3px solid var(--bg-elev2); border-top-color: var(--accent);
   animation: spin 0.9s linear infinite;
 }
+/* Live preview bodů zobáčku — kroužky nesmí blokovat klikání na plátno */
+.wedge-preview { pointer-events: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-text { color: var(--text-dim); font-size: 0.95rem; }
 </style>
