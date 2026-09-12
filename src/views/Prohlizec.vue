@@ -104,6 +104,15 @@
           />
         </g>
 
+        <!-- Kolečko gumy — ukazuje, kam míříš a jaký rozsah guma promaže -->
+        <circle
+          v-if="tool === 'eraser' && activeItem && activeItem.points && activeItem.points.length"
+          :cx="activeItem.points[activeItem.points.length - 1].x"
+          :cy="activeItem.points[activeItem.points.length - 1].y"
+          :r="(activeItem.width || 4) / 2 + 3"
+          class="eraser-cursor"
+        />
+
         <!-- Označení vybraného prvku v režimu Upravit (ruka) — plochý čárkovaný rámeček -->
         <g v-if="editingAnnot && selectedBox" class="annot-selected">
           <rect
@@ -1080,13 +1089,14 @@ function onLayerDown(e) {
     return;
   }
 
-  // Guma: jako tah, ale po uvolnění se anotace přes které přejede smažou
+  // Guma: jako tah, ale po uvolnění se anotace přes které přejede smažou.
+  // Šířka kopíruje vybranou velikost tužky (stejně jako tužka).
   if (tool.value === 'eraser') {
     activeItem.value = {
       id: crypto.randomUUID(), page: currentPage.value,
       tool: 'eraser', color: 'none',
       opacity: 1,
-      width: Math.max(8, annotSize.value * 4),
+      width: Math.max(4, annotSize.value),
       points: [p],
     };
     _prev = p;
@@ -1874,6 +1884,14 @@ async function deleteBookmark(b) {
 }
 /* Live preview bodů zobáčku — kroužky nesmí blokovat klikání na plátno */
 .wedge-preview { pointer-events: none; }
+/* Kolečko gumy — ploché, nesmí blokovat klikání; zviditelní rozsah gumy na plátně */
+.eraser-cursor {
+  pointer-events: none;
+  fill: rgba(255,255,255,0.18);
+  stroke: var(--accent, #d8a657);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-text { color: var(--text-dim); font-size: 0.95rem; }
 </style>
