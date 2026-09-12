@@ -560,6 +560,12 @@ let renderToken = 0;                      // generační token: zruší zastaral
 const songName = computed(() => song.name || song.fileName || '');
 
 function pathD(it) {
+  // 1-bodový díl (zbytek tahu rozdělený gumou) se vykreslí jako tečka
+  if (it.points.length === 1) {
+    const p = it.points[0];
+    const r = Math.max(1.5, (it.width || 2) / 2);
+    return `M${p.x - r},${p.y} a${r},${r} 0 1,0 ${r * 2},0 a${r},${r} 0 1,0 ${-r * 2},0`;
+  }
   return it.points.map((p, i) => (i === 0 ? `M${p.x},${p.y}` : `L${p.x},${p.y}`)).join(' ');
 }
 
@@ -1442,9 +1448,9 @@ function segOnUnder(fine, r, it) {
 
 // Guma na tahu (tužka/zvýrazňovač): vhodí jen BODY čáry, které jsou uvnitř
 // poloměru r od dráhy gumy (fine), a zbylé sousedící body rozdělí na souvislé
-// kusy. Bodové mazání = přesný úzký pruh přesně v rozsahu kolečka; NEsmaže
-// celý segment čáry mimo kolečko (to dělal segment-segment a proto mazal víc).
-// Vrací pole nových itemů (0 = vše pryč, null = nenávist není kontakt).
+// kusy. Zachovává i kusy s 1 bodem (vykreslí se jako tečka), takže krátký tah
+// protnutý gumou se nikdy celý nevypustí — guma smaže jen to, co protne.
+// Vrací pole nových itemů (0 = celý tah pryč, null = kousek není kontakt).
 function eraseStrokeOnSeg(it, fine, r) {
   const orig = (it.points || []);
   if (!orig.length) return null;
@@ -1460,7 +1466,8 @@ function eraseStrokeOnSeg(it, fine, r) {
   }
   if (keep.length === orig.length) return null;   // nedotklo se
   if (keep.length === 0) return [];                 // celý tah pryč
-  // rozdělit zbylé body na souvislé podsahy (sousedící body ≤2px k sobě)
+  // rozdělit zbylé body na souvislé podsahy (sousedící body ≤1.7px k sobě;
+  // izolované body zůstanou jako samostatné kusy a vykreslí se jako tečky)
   const out = [];
   let cur = [];
   for (let i = 0; i < keep.length; i++) {
@@ -1468,12 +1475,12 @@ function eraseStrokeOnSeg(it, fine, r) {
     else cur = [keep[i]];
     const next = keep[i + 1];
     const last = cur[cur.length - 1];
-    if (i === keep.length - 1 || !next || Math.hypot(next.x - last.x, next.y - last.y) > 2) {
-      if (cur.length >= 2) out.push(mkStroke(it, cur.slice()));
+    if (i === keep.length - 1 || !next || Math.hypot(next.x - last.x, next.y - last.y) > 1.8) {
+      out.push(mkStroke(it, cur.slice()));   // i 1-bodový kus zachovej (tečka)
       cur = [];
     }
   }
-  return out.length ? out : [];
+  return out;
 }
 function mkStroke(it, pts) {
   return {
