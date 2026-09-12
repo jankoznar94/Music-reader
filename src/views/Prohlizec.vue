@@ -252,8 +252,9 @@
         <div class="ap-row">
           <button class="ap-tool" @click="setTool('pencil')" :class="{ on: tool === 'pencil' }" title="Tužka">✏️</button>
           <button class="ap-tool" @click="setTool('highlighter')" :class="{ on: tool === 'highlighter' }" title="Zvýraznění">🖍️</button>
+          <button class="ap-tool" @click="setTool('eraser')" :class="{ on: tool === 'eraser' }" title="Guma (maže anotace, přes které přejede)">🧽</button>
           <button class="ap-tool" @click="setTool('text')" :class="{ on: tool === 'text' }" title="Text (klávesnice)">T</button>
-          <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf...)">𝆏</button>
+          <button class="ap-tool" @click="setTool('edit')" :class="{ on: tool === 'edit' }" title="Upravit / přesunout text či dynamiku">✋</button>
         </div>
       </div>
 
@@ -261,9 +262,9 @@
       <div class="ap-cat">
         <div class="ap-cat-label">Značky</div>
         <div class="ap-row">
-          <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (táhni na délku)">&lt;</button>
-          <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (táhni na délku)">&gt;</button>
-          <button class="ap-tool" @click="tool = 'edit'" :class="{ on: tool === 'edit' }" title="Upravit / přesunout text či dynamiku">✋</button>
+          <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (3 body)">&lt;</button>
+          <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (3 body)">&gt;</button>
+          <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf...)">𝆏</button>
         </div>
       </div>
 
@@ -314,7 +315,8 @@
           <button class="ap-tool" @click="redoAnnot" title="Dopředu" :disabled="!canRedo">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
           </button>
-          <button v-if="hasAnnotations" class="ap-tool" @click="clearAnnots" title="Smazat všechny anotace">🗑️</button>
+          <button v-if="hasAnnotations" class="ap-tool" @click="clearAnnots" title="Smazat všechny anotace (celá skladba)">🗑️</button>
+          <button v-if="hasPageItems" class="ap-tool" @click="clearPageAnnots" title="Smazat anotace na této stránce">🗑️<span class="ap-delpage">str.</span></button>
           <button class="ap-tool pen-only" @click="penOnly = !penOnly" :class="{ on: penOnly }" title="Kreslit jen perem (ignorovat dotyk rukou)">🖊️</button>
           <span class="ap-pen-label" @click="penOnly = !penOnly">Jen pero</span>
         </div>
@@ -443,6 +445,7 @@ const redoStack = ref([]);         // redo stack
 const canUndo = computed(() => history.value.length > 0);
 const canRedo = computed(() => redoStack.value.length > 0);
 const hasAnnotations = computed(() => annotations.value.items.length > 0);
+const hasPageItems = computed(() => annotations.value.items.some(x => x.page === currentPage.value));
 const controlsVisible = ref(false); // ovládací tlačítka (zoom/anotace) — zobrazí se na tap na střed
 
 const cssW = ref(800);
@@ -1009,6 +1012,19 @@ function onLayerDown(e) {
     return;
   }
 
+  // Guma: jako tah, ale po uvolnění se anotace přes které přejede smažou
+  if (tool.value === 'eraser') {
+    activeItem.value = {
+      id: crypto.randomUUID(), page: currentPage.value,
+      tool: 'eraser', color: 'none',
+      opacity: 1,
+      width: Math.max(8, annotSize.value * 4),
+      points: [p],
+    };
+    _prev = p;
+    return;
+  }
+
   // Tužka / zvýraznění: tah s body
   activeItem.value = {
     id: crypto.randomUUID(), page: currentPage.value,
@@ -1074,6 +1090,23 @@ function onLayerUp(e) {
   _activePointerId = null;
   const it = activeItem.value;
 
+  // Guma: smazat anotace, přes které tah prošel
+  if (tool.value === 'eraser') {
+    const pts = it.points || [];
+    const eraserW = it.width || 16;
+    const before = annotations.value.items.length;
+    annotations.value.items = annotations.value.items.filter(x => {
+      if (x.page !== currentPage.value) return true;
+      return !strokeUnder(pts, eraserW, x);
+    });
+    activeItem.value = null;
+    if (annotations.value.items.length !== before) {
+      pushHistory();
+      saveAnnotations();
+    }
+    return;
+  }
+
   // Text / dynamika: místo uvolnění → otevřít textový vstup (pending)
   if (tool.value === 'text' || tool.value === 'dynamic') {
     it.pending = true;
@@ -1097,6 +1130,18 @@ function clearAnnots() {
   if (confirm('Smazat všechny anotace?')) {
     pushHistory();
     annotations.value.items = [];
+    saveAnnotations();
+  }
+}
+
+// Smazat anotace jen na aktuální stránce
+function clearPageAnnots() {
+  const page = currentPage.value;
+  const count = annotations.value.items.filter(x => x.page === page).length;
+  if (count === 0) return;
+  if (confirm(`Smazat ${count} anotace na této stránce?`)) {
+    pushHistory();
+    annotations.value.items = annotations.value.items.filter(x => x.page !== page);
     saveAnnotations();
   }
 }
@@ -1172,6 +1217,39 @@ function pushHistory() {
   history.value.push(JSON.parse(JSON.stringify(annotations.value.items)));
   if (history.value.length > 50) history.value.shift();
   redoStack.value = []; // nový tah vymaže redo
+}
+
+// Vzdálenost bodu od úsečky
+function distToSeg(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * dx + (py - y1) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+// Je guma (polyčára pts o šířce w) v kontaktu s anotací it?
+function strokeUnder(pts, w, it) {
+  // Tah / klín: body či ramena anotace
+  const seg = [];
+  if (it.points && it.points.length) seg.push(...it.points);
+  if (it.x1 != null) seg.push({ x: it.x1, y: it.y1 }, { x: it.x2, y: it.y2 }, { x: it.x3, y: it.y3 });
+  if (seg.length) {
+    for (const pt of seg) {
+      for (let i = 0; i < pts.length - 1; i++) {
+        if (distToSeg(pt.x, pt.y, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y) < w) return true;
+      }
+    }
+    return false;
+  }
+  // Text / dynamika: střed (x,y)
+  if (it.x != null) {
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (distToSeg(it.x, it.y, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y) < w) return true;
+    }
+  }
+  return false;
 }
 function undoAnnot() {
   if (history.value.length === 0) return;
@@ -1377,9 +1455,14 @@ async function deleteBookmark(b) {
   overflow-x: auto; overflow-y: hidden;    /* jediný řádek, při přetečení horizontální scroll */
   scrollbar-width: none;                   /* skrýt scrollbar (Firefox) */
   -ms-overflow-style: none;                /* (IE) */
-  padding-bottom: 2px;
+  padding: 8px 12px;
   pointer-events: auto;                     /* lišta musí reagovat, aby šla horizontálně scrollovat */
   touch-action: pan-x pan-y;                /* vertikální tah projde na stránku, horizontální scrolluje lištu */
+  background: rgba(28,25,23,0.85);          /* podbarvení panelu záložek */
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  backdrop-filter: blur(2px);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.5);
 }
 .bookmark-strip::-webkit-scrollbar { display: none; }  /* skrýt scrollbar (Chrome/Safari) */
 .bookmark-btn {
@@ -1388,7 +1471,6 @@ async function deleteBookmark(b) {
   border-radius: 20px; padding: 6px 12px;
   font-size: 0.92rem; font-weight: 600; color: var(--text);
   cursor: pointer; touch-action: manipulation; pointer-events: auto;
-  box-shadow: 0 3px 12px rgba(0,0,0,0.4);
 }
 .bookmark-btn.circle {
   border-radius: 50%;
@@ -1539,8 +1621,9 @@ async function deleteBookmark(b) {
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
 .ap-size span { font-size: 0.9rem; color: var(--text); line-height: 1; }
-.ap-size.on span { color: #17130f; }
+.ap-size.on span { color: #fff; }
 .ap-size.on { border-color: var(--accent); }
+.ap-delpage { font-size: 0.55rem; font-weight: 700; margin-left: 1px; }
 
 /* Pásmo úprav vybrané textové/dynamické anotace */
 .edit-bar {
