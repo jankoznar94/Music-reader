@@ -116,8 +116,8 @@
       </svg>
     </div>
 
-    <!-- Indikátor stránky + názvu noty -->
-    <div class="page-ind">
+    <!-- Indikátor stránky + názvu noty (schovaný při úpravě prvku, ať nepřekáží) -->
+    <div v-if="!editingId" class="page-ind">
       <span v-if="group" class="ind-song">{{ songName }} · {{ groupIndex + 1 }}/{{ groupSongs.length }}</span>
       <span>{{ currentPage + 1 }} / {{ totalPages }}</span>
     </div>
@@ -1109,6 +1109,7 @@ let _activePointerId = null;
 let _dragAnnot = null;   // prvek přetahovaný v režimu Upravit (ruka)
 let _dragFrom = null;    // výchozí bod přetažení (x,y)
 let _dragSnap = null;    // snapshot geometrie prvku na začátku přetažení
+let _eraserHistoryPushed = false; // aby guma uložila history jen jednou za tah
 function isStroke(it) {
   return it && (it.tool === 'pencil' || it.tool === 'highlighter');
 }
@@ -1149,6 +1150,27 @@ function onLayerMove(e) {
     _prev = p;
     return;
   }
+  // Guma: okamžitá zpětná vazba jako u tužky — přidá bod a hned maže,
+  // co právě protíná. History se uloží PŘED prvním smazáním (opravuje undo).
+  if (tool.value === 'eraser') {
+    if (!prev || Math.abs(p.x - prev.x) > 1 || Math.abs(p.y - prev.y) > 1) {
+      activeItem.value.points.push(p); _prev = p;
+    }
+    const pts = activeItem.value.points;
+    const eraserW = activeItem.value.width || 16;
+    let removed = false;
+    annotations.value.items = annotations.value.items.filter(x => {
+      if (x.page !== currentPage.value) return true;
+      const under = strokeUnder(pts, eraserW, x);
+      if (under) removed = true;
+      return !under;
+    });
+    if (removed) {
+      if (!_eraserHistoryPushed) { pushHistory(); _eraserHistoryPushed = true; }
+      saveAnnotations();
+    }
+    return;
+  }
   // Tužka / zvýraznění: přidat body
   if (!prev || Math.abs(p.x - prev.x) > 1 || Math.abs(p.y - prev.y) > 1) {
     activeItem.value.points.push(p); _prev = p;
@@ -1170,20 +1192,12 @@ function onLayerUp(e) {
   _activePointerId = null;
   const it = activeItem.value;
 
-  // Guma: smazat anotace, přes které tah prošel
+  // Guma: okamžité mazání už běží v onLayerMove; tady jen ukončíme tah
   if (tool.value === 'eraser') {
-    const pts = it.points || [];
-    const eraserW = it.width || 16;
-    const before = annotations.value.items.length;
-    annotations.value.items = annotations.value.items.filter(x => {
-      if (x.page !== currentPage.value) return true;
-      return !strokeUnder(pts, eraserW, x);
-    });
     activeItem.value = null;
-    if (annotations.value.items.length !== before) {
-      pushHistory();
-      saveAnnotations();
-    }
+    _activePointerId = null;
+    _prev = null;
+    _eraserHistoryPushed = false;   // reset pro další gumovací tah
     return;
   }
 
@@ -1738,7 +1752,7 @@ async function deleteBookmark(b) {
 
 /* Pásmo úprav vybrané textové/dynamické anotace */
 .edit-bar {
-  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+  position: fixed; left: 50%; top: 14px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 8px;
   background: var(--bg-elev); border: 2px solid var(--accent); border-radius: 32px;
   padding: 8px 14px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
