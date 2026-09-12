@@ -1057,6 +1057,76 @@ function toLayerCoords(e) {
   };
 }
 
+/**
+ * CHYTRÝ ŘÁDEK pro zvýrazňovač: po tapu vlevo rozbor pixelů canvasu najde
+ * svislé okolí doteku (notovou osnovu daného hlasu) na základě hustoty inkoustu.
+ * Vrací {top, bottom} v CSS px (canvas souřadnice), nebo null.
+ */
+function computeRowBand(tapY) {
+  const c = canvasEl.value;
+  if (!c || !c.width) return null;
+  const rect = c.getBoundingClientRect();
+  if (!rect.width) return null;
+  // CSS px → pixel rozlišení canvasu
+  const dpr = c.width / rect.width;
+  const cssWp = c.width;
+  const ctx = c.getContext('2d');
+  if (!ctx) return null;
+
+  // Levá zóna: x od 8 % do 22 % šířky (za okrajem, kde začíná sazba osnovy)
+  const x1 = Math.max(0, Math.floor(cssWp * 0.08));
+  const x2 = Math.min(cssWp, Math.ceil(cssWp * 0.22));
+  const h = c.height;
+  const step = Math.max(1, Math.round(dpr * 0.5));
+  const tapYP = tapY * dpr;
+
+  // Načti pixelová data levého pruhu (x1..x2, celá výška)
+  const imgData = ctx.getImageData(x1, 0, x2 - x1, c.height);
+  const data = imgData.data;
+  const bandW = x2 - x1;
+
+  // Profil temnoty po řádcích (průměr přes levou zónu)
+  const rows = [];
+  for (let y = 0; y < c.height; y += step) {
+    let dark = 0;
+    for (let x = 0; x < bandW; x += step) {
+      const i = (y * bandW + x) * 4;
+      if (data[i] < 160 && data[i + 1] < 160 && data[i + 2] < 160) dark++;
+    }
+    rows.push(dark);
+  }
+  const samplesPerLine = Math.max(1, Math.ceil((x2 - x1) / step));
+
+  // Tap musí být na řádku — najdi nejbližší lokální shluk inkoustu v okolí ±80px
+  const searchTop = Math.max(0, Math.round((tapYP - 80 * dpr) / step));
+  const searchBot = Math.min(rows.length, Math.round((tapYP + 80 * dpr) / step));
+  let bestY = tapYP, bestScore = -1;
+  for (let r = searchTop; r < searchBot; r++) {
+    if ((rows[r] || 0) > bestScore) { bestScore = rows[r]; bestY = r * step; }
+  }
+  if (bestScore < samplesPerLine * 0.12) return null;   // prázdná zóna — ne v osnově
+
+  // Nahoru → horní okraj (první "prázdný" řádek)
+  let top = bestY;
+  for (let y = bestY; y >= 0; y -= step) {
+    if ((rows[Math.round(y / step)] || 0) < samplesPerLine * 0.05) { top = y + step; break; }
+    top = y;
+  }
+  // Dolů → dolní okraj
+  let bottom = bestY;
+  for (let y = bestY; y < c.height; y += step) {
+    if ((rows[Math.round(y / step)] || 0) < samplesPerLine * 0.05) { bottom = y - step; break; }
+    bottom = y;
+  }
+  // Ochranný pruh navíc (noty přesahují pět linek)
+  const pad = Math.round(6 * dpr);
+  top = Math.max(0, top - pad);
+  bottom = Math.min(c.height, bottom + pad);
+  if (bottom - top < 20 * dpr) return null;
+
+  return { top: top / dpr, bottom: bottom / dpr };
+}
+
 function onLayerDown(e) {
   if (!annotMode.value) return;
   // Pen-only mód: ignorovat dotyk prstem/rukou (palm-rejection), kreslit jen stylusem
@@ -1125,6 +1195,24 @@ function onLayerDown(e) {
   // Levá vertikála z prvního bodu, horní/dolní horizontála z 1.+2., pravá vertikála z 3.
   if (tool.value === 'highlighter') {
     _activePointerId = null;   // guard by jinak zablokoval 2. a 3. klik
+    // CHYTRÝ ŘÁDEK: jediný tap v levé zóně (≤10 % šířky) → rozbor pixelů najde
+    // výšku notové osnovy daného hlasu a obdélník jde přes celou šířku stránky.
+    if (hlPoints.value.length === 0 && p.x <= cssW.value * 0.1) {
+      const band = computeRowBand(p.y);
+      if (band) {
+        const it = {
+          id: crypto.randomUUID(), page: currentPage.value,
+          tool: 'highlighter', color: annotColor.value + '80',
+          opacity: 1, width: Math.max(1, Math.round(annotSize.value)),
+          x1: 0, y1: band.top, x2: cssW.value, y2: band.bottom,
+        };
+        pushHistory();
+        annotations.value.items.push(it);
+        saveAnnotations();
+      }
+      _prev = p;
+      return;
+    }
     hlPoints.value.push({ x: p.x, y: p.y });
     if (hlPoints.value.length === 3) {
       const [a, b, c] = hlPoints.value;
