@@ -743,6 +743,8 @@ let _pinchDist = null;
 let _pinchMid = null; // střed dvou prstů (pro pan)
 function onTouchStart(e) {
   if (annotMode.value) return; // v anotaci swipe nekreslí listování
+  // Tah na liště záložek (horizontální scroll) nekreslí jako swipe stránky
+  if (e.target && e.target.closest && e.target.closest('.bookmark-strip')) return;
   if (e.touches.length === 2) {
     _pinchDist = dist(e.touches[0], e.touches[1]);
     _pinchMid = mid(e.touches[0], e.touches[1]);
