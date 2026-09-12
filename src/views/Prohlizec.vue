@@ -1171,12 +1171,23 @@ function onLayerMove(e) {
   // mazání je plynulé a přesně v poloměru kolečka — ne trhané, nepřemazává.
   if (tool.value === 'eraser') {
     const hadPrev = !!prev;
+    // NASTAV _prev VŽDY (i když je posun menší než 1px)! Bug: předtím se
+    // při posunu<1px _prev NEaktualizoval, ale seg se konstruoval z něj →
+    // guma se opakovaně dívala na starý segment a mazala desítky bodů
+    // mimo rozsah kolečka.
+    let effectivePrev = prev;
     if (!hadPrev || Math.abs(p.x - prev.x) > 1 || Math.abs(p.y - prev.y) > 1) {
-      activeItem.value.points.push(p); _prev = p;
+      activeItem.value.points.push(p);
+      _prev = p;
+      effectivePrev = prev;
+    } else {
+      // posun < 1px — segment je nulový, nemazat
+      _prev = p;
+      effectivePrev = null;
     }
-    // jen poslední segment (prev → p) = nový kus dráhy pro tento snímek
-    const seg = hadPrev
-      ? [{ x: prev.x, y: prev.y }, { x: p.x, y: p.y }]
+    // jen poslední segment (effectivePrev → p) = nový kus dráhy pro tento snímek
+    const seg = effectivePrev
+      ? [{ x: effectivePrev.x, y: effectivePrev.y }, { x: p.x, y: p.y }]
       : [{ x: p.x, y: p.y }];
     // jemně subdividovat, aby rychlý pohyb neroztrhal stopu a nevynechal mezery
     const fine = [];
