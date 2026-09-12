@@ -112,6 +112,27 @@
           />
         </g>
 
+        <!-- Live preview bodů zvýrazňovače — kam uživatel klikl + náhled boxu -->
+        <g v-if="tool === 'highlighter' && hlPoints.length" class="wedge-preview">
+          <rect
+            v-if="hlPoints.length >= 2"
+            :x="hlPoints[0].x" :y="Math.min(hlPoints[0].y, hlPoints[1].y)"
+            :width="(hlPoints.length >= 3 ? hlPoints[2].x : hlPoints[0].x + 60) - hlPoints[0].x"
+            :height="Math.abs(hlPoints[1].y - hlPoints[0].y)"
+            :fill="annotColor" opacity="0.3" :stroke="annotColor" stroke-width="1.5" stroke-dasharray="4 3"
+          />
+          <circle
+            v-for="(pt, i) in hlPoints" :key="'o'+i"
+            :cx="pt.x" :cy="pt.y" r="9"
+            fill="none" :stroke="annotColor" stroke-width="2.5"
+          />
+          <circle
+            v-for="(pt, i) in hlPoints" :key="'f'+i"
+            :cx="pt.x" :cy="pt.y" r="3.5"
+            :fill="annotColor"
+          />
+        </g>
+
         <!-- Kolečko gumy — ukazuje, kam míříš a jaký rozsah guma promaže -->
         <circle
           v-if="tool === 'eraser' && activeItem && activeItem.points && activeItem.points.length"
