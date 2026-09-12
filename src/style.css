@@ -32,6 +32,7 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
+  overflow: hidden; /* stránka jako taková se nesmí scrollovat — prohlížeč je overlay na pevné výšce image */
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -41,6 +42,7 @@ html, body {
   height: 100dvh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* Velké dotykové prvky — žádné hover stavy (mobil-first PWA) */
