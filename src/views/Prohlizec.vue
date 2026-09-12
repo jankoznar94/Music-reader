@@ -1158,15 +1158,31 @@ function onLayerMove(e) {
     }
     const pts = activeItem.value.points;
     const eraserW = activeItem.value.width || 16;
-    let removed = false;
-    annotations.value.items = annotations.value.items.filter(x => {
-      if (x.page !== currentPage.value) return true;
+    let changed = false;
+    const items = annotations.value.items;
+    const next = [];
+    for (const x of items) {
+      if (x.page !== currentPage.value) { next.push(x); continue; }
+      // Tah (tužka/zvýrazňovač): rozdělit gumou, ne smazat celý prvek
+      if (isStroke(x)) {
+        const parts = eraserDivide(x, pts, eraserW);
+        if (parts === null) { next.push(x); continue; }
+        changed = true;
+        next.push(...parts); // 0 dílů = celý tah smazán
+        continue;
+      }
+      // Klín / text / dynamika: klasicky smazat, když se dotkneš
       const under = strokeUnder(pts, eraserW, x);
-      if (under) removed = true;
-      return !under;
-    });
-    if (removed) {
+      if (under) { changed = true; continue; }
+      next.push(x);
+    }
+    // History se ukládá JEŠTĚ PŘED přiřazením nové podoby — jinak by undo
+    // vracelo už rozdělený stav, ne originál (proto undo nefungoval).
+    if (changed) {
       if (!_eraserHistoryPushed) { pushHistory(); _eraserHistoryPushed = true; }
+    }
+    annotations.value.items = next;
+    if (changed) {
       saveAnnotations();
     }
     return;
@@ -1371,6 +1387,50 @@ function strokeUnder(pts, w, it) {
     }
   }
   return false;
+}
+
+// Vrátí indexy bodů tahu (it.points), které jsou POD gumou (polyčára pts o šířce w)
+function strokeUnderIndices(pts, w, it) {
+  const out = new Set();
+  const orig = (it.points || []);
+  for (let i = 0; i < orig.length; i++) {
+    const pt = orig[i];
+    for (let j = 0; j < pts.length - 1; j++) {
+      if (distToSeg(pt.x, pt.y, pts[j].x, pts[j].y, pts[j + 1].x, pts[j + 1].y) < w) {
+        out.add(i); break;
+      }
+    }
+  }
+  return out;
+}
+
+// Guma na tahu (tužka/zvýrazňovač): NEsmazat celý prvek, ale ROZDĚLIT ho gumou —
+// body pod gumou se vyhodí a zbylé souvislé úseky se stanou samostatnými tahy.
+// Vrací pole nových itemů (0 = vše smazáno, null = guma se tahu nedotkla).
+function eraserDivide(it, pts, w) {
+  const orig = (it.points || []);
+  if (orig.length < 2) return (strokeUnder(pts, w, it) ? [] : null);
+  const removed = strokeUnderIndices(pts, w, it);
+  if (removed.size === 0) return null;      // nedotýká se
+  if (removed.size >= orig.length) return []; // celý tah pryč
+  // rozděl body do souvislých úseků (oddělených gumou)
+  const chunks = [];
+  let cur = [];
+  for (let i = 0; i < orig.length; i++) {
+    if (removed.has(i)) { if (cur.length) { chunks.push(cur); cur = []; } }
+    else cur.push(i);
+  }
+  if (cur.length) chunks.push(cur);
+  const out = [];
+  for (const ci of chunks) {
+    if (ci.length < 2) continue; // osamocený bod nemá smysl
+    out.push({
+      id: crypto.randomUUID(), page: it.page,
+      tool: it.tool, color: it.color, opacity: it.opacity, width: it.width,
+      points: ci.map(i => ({ x: orig[i].x, y: orig[i].y })),
+    });
+  }
+  return out.length ? out : [];
 }
 function undoAnnot() {
   if (history.value.length === 0) return;
