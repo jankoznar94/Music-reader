@@ -973,6 +973,9 @@ function onLayerDown(e) {
 
   // Klín (crescendo / decrescendo): sbírání 3 bodů klepnutím → vygeneruje zobák.
   if (tool.value === 'crescendo' || tool.value === 'decrescendo') {
+    // Reset pointeru ZA KAŽDÝ klik — guard na začátku by jinak zablokoval
+    // 2. a 3. bod (pointer zůstal „aktivní" z předchozího kliku).
+    _activePointerId = null;
     wedgePoints.value.push({ x: p.x, y: p.y });
     if (wedgePoints.value.length === 3) {
       const [a, b, c] = wedgePoints.value;
