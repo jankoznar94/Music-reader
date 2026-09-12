@@ -414,7 +414,7 @@ const activeItem = ref(null);
 const colors = ['#1a1a1a', '#c05a4a', '#e5d7a6', '#f2c4b6', '#bcd3b6', '#a8c4e0', '#e5c9a8', '#d9b6d9', '#1a2a4a'];
 const sizes = [1, 2, 3, 4, 6, 8, 12];
 const annotColor = ref('#1a1a1a'); // aktuální barva pera
-const annotSize = ref(2);          // aktuální velikost pera (výchozí = nejmenší)
+const annotSize = ref(1);          // aktuální velikost pera (výchozí = nejmenší 1)
 const annotOpacity = ref(100);     // aktuální opacity tahu v % (100 = plné krytí)
 const annotCollapsed = ref(false); // anotační panel sbalený (jen přepínač)
 const editingAnnotationId = ref(null); // id anotace (text/dynamika), jejíž text se právě edituje
@@ -988,7 +988,7 @@ function onLayerDown(e) {
         id: crypto.randomUUID(), page: currentPage.value,
         tool: tool.value, color: annotColor.value,
         opacity: annotOpacity.value / 100,
-        width: Math.max(2, Math.round(annotSize.value)),
+        width: Math.max(1, Math.round(annotSize.value)), // tloušťka zobáčku = vybraná velikost tužky
         x1: tip.x,
         // Hrot vertikálně na střed mezi konci ramen (konce jsou už vodorovně
         // nad sebou z předchozí úpravy → hrot tak sedí přímo doprostřed).
