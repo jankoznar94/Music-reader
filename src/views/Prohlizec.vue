@@ -1564,13 +1564,17 @@ async function deleteBookmark(b) {
   z-index: 23;
 }
 
-/* Plovoucí panel anotací — větší, kategorizovaný, overlay nad plátnem */
+/* Plovoucí panel anotací — větší, kategorizovaný. position:absolute → kotví jen
+   k .viewer (fixed by pokrýval celý viewport a blokoval kreslení). Max-height s
+   interním scrollením, aby panel nepřekrýval celou kreslící plochu. */
 .annot-panel {
-  position: fixed; bottom: 88px; left: 16px;
+  position: absolute; bottom: 88px; left: 16px;
   display: flex; flex-direction: column; align-items: stretch; gap: 12px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 18px;
   padding: 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
   z-index: 26; max-width: 96vw; min-width: 220px;
+  max-height: calc(100dvh - 120px);
+  overflow-y: auto;
 }
 .ap-header {
   display: flex; align-items: center; justify-content: space-between;
