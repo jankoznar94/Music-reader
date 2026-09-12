@@ -994,6 +994,9 @@ function onLayerDown(e) {
       annotations.value.items.push(it);
       saveAnnotations();
     }
+    // Reset pointer, aby další klik (další bod/klín) prošel guardem
+    // (_activePointerId by jinak zůstal nastavený z prvního kliknutí a blokoval).
+    _activePointerId = null;
     _prev = p;
     return;
   }
