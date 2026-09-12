@@ -202,6 +202,15 @@
 
     <!-- Plovoucí panel anotací (jen v anotačním režimu) -->
     <div v-if="annotMode" class="annot-panel">
+      <!-- Řádek 0: sbalit/rozbalit -- aby se dalo psát podél spodního okraje -->
+      <div class="ap-row toggle-row">
+        <button class="ap-collapse" @click="annotCollapsed = !annotCollapsed" :title="annotCollapsed ? 'Rozbalit' : 'Sbalit'">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path v-if="!annotCollapsed" d="M6 9l6 6 6-6"/><path v-else d="M6 15l6-6 6 6"/></svg>
+        </button>
+        <span class="ap-collapse-label">{{ annotCollapsed ? 'Rozbalit' : 'Sbalit' }}</span>
+      </div>
+
+      <template v-if="!annotCollapsed">
       <!-- Řádek 1: typ nástroje -->
       <div class="ap-row">
         <button class="ap-tool" @click="setTool('pencil')" :class="{ on: tool === 'pencil' }" title="Tužka">✏️</button>
@@ -257,6 +266,7 @@
         <button class="ap-tool pen-only" @click="penOnly = !penOnly" :class="{ on: penOnly }" title="Kreslit jen perem (ignorovat dotyk rukou)">🖊️</button>
         <span class="ap-pen-label" @click="penOnly = !penOnly">Jen pero</span>
       </div>
+      </template>
     </div>
 
     <!-- Plovoucí zoom (levý okraj) — zobrazí se na povel (tap na střed) -->
@@ -317,6 +327,7 @@ const sizes = [2, 3, 4, 6, 8, 12];
 const annotColor = ref('#1a1a1a'); // aktuální barva pera
 const annotSize = ref(2);          // aktuální velikost pera (výchozí = nejmenší)
 const annotOpacity = ref(100);     // aktuální opacity tahu v % (100 = plné krytí)
+const annotCollapsed = ref(false); // anotační panel sbalený (jen přepínač)
 const history = ref([]);           // undo stack (kopie předchozích stavů items)
 const redoStack = ref([]);         // redo stack
 const canUndo = computed(() => history.value.length > 0);
@@ -1192,6 +1203,15 @@ async function deleteBookmark(b) {
   z-index: 25; max-width: 94vw;
 }
 .ap-row { display: flex; align-items: center; gap: 6px; }
+.toggle-row { width: 100%; }
+.ap-collapse {
+  width: 28px; height: 28px; flex: 0 0 auto; padding: 0;
+  background: transparent; border: none; border-radius: 50%;
+  color: var(--text-dim); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: manipulation;
+}
+.ap-collapse:active { color: var(--text); }
+.ap-collapse-label { font-size: 0.85rem; color: var(--text-dim); cursor: pointer; }
 .op-row { width: 100%; gap: 8px; }
 .ap-op-label { font-size: 0.8rem; color: var(--text-dim); white-space: nowrap; }
 .ap-opacity { flex: 1; min-width: 0; accent-color: var(--accent); height: 4px; }
