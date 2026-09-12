@@ -6,7 +6,8 @@
         <button class="add" @click="openFile">Nahrát PDF</button>
         <button class="btn" @click="toggleSelectAll">{{ allSelected ? 'Zrušit výběr' : 'Vybrat vše' }}</button>
         <button class="btn update-btn" @click="checkAndApply" title="Zkontrolovat novou verzi aplikace">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+          <span v-if="checking" class="update-spinner" />
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
         </button>
         <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFiles" />
       </div>
@@ -479,6 +480,7 @@ async function bulkAssignFolder(folder) {
     await dbSaveSong(s);
   }
   bulkFolderOpen.value = false;
+  selectedIds.clear();
   // In-place mutace — seznam se aktualizuje sám, scroll zůstává
 }
 
@@ -493,6 +495,7 @@ async function bulkAddToGroup(g) {
   }
   await dbSaveGroup(g);
   bulkGroupOpen.value = false;
+  selectedIds.clear();
 }
 
 async function confirmBulkDelete() {
@@ -968,6 +971,16 @@ async function checkAndApply() {
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
+
+/* Načítací spinner — zobrazí se, dokud běží kontrola/stahování nové verze */
+.update-spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: update-spin 0.8s linear infinite;
+  box-sizing: border-box;
+}
+@keyframes update-spin { to { transform: rotate(360deg); } }
 
 /* Toast zpráva — plochá, teplé tmavé barvy, bez glow */
 .toast {
