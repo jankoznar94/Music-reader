@@ -1167,7 +1167,8 @@ function onLayerMove(e) {
       activeItem.value.points.push(p); _prev = p;
     }
     const pts = activeItem.value.points;
-    const eraserW = activeItem.value.width || 16;
+    // průměr gumy → poloměr (guma maže přesně v poloměru, jak ukazuje kolečko)
+    const eraserR = (activeItem.value.width || 4) / 2;
     let changed = false;
     const items = annotations.value.items;
     const next = [];
@@ -1175,14 +1176,14 @@ function onLayerMove(e) {
       if (x.page !== currentPage.value) { next.push(x); continue; }
       // Tah (tužka/zvýrazňovač): rozdělit gumou, ne smazat celý prvek
       if (isStroke(x)) {
-        const parts = eraserDivide(x, pts, eraserW);
+        const parts = eraserDivide(x, pts, eraserR);
         if (parts === null) { next.push(x); continue; }
         changed = true;
         next.push(...parts); // 0 dílů = celý tah smazán
         continue;
       }
       // Klín / text / dynamika: klasicky smazat, když se dotkneš
-      const under = strokeUnder(pts, eraserW, x);
+      const under = strokeUnder(pts, eraserR, x);
       if (under) { changed = true; continue; }
       next.push(x);
     }
