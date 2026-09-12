@@ -215,7 +215,8 @@
     </div>
 
     <!-- Záložky — vždy viditelná lišta u spodní hrany -->
-    <div v-if="bookmarks.length" class="bookmark-strip">
+    <!-- Lišta záložek — skrytá, když se upravuje vybraný prvek (edit-bar by s ní splýval) -->
+    <div v-if="bookmarks.length && !editingId" class="bookmark-strip">
       <button
         v-for="b in bookmarks"
         :key="b.id"
@@ -363,7 +364,7 @@
       <button class="eb-btn" @click="resizeAnnot(editingAnnot, -1)" title="Zmenšit">−</button>
       <span class="eb-val">{{ editingAnnot ? Math.round(editingAnnot.size) : 0 }}</span>
       <button class="eb-btn" @click="resizeAnnot(editingAnnot, 1)" title="Zvětšit">+</button>
-      <button class="eb-btn" @click="endEdit" title="Hotovo">✓</button>
+      <button class="eb-btn done" @click="endEdit" title="Hotovo">✓</button>
       <button class="eb-btn" @click="deleteEditing" title="Smazat">🗑</button>
     </div>
 
@@ -1739,7 +1740,7 @@ async function deleteBookmark(b) {
 .edit-bar {
   position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 8px;
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 32px;
+  background: var(--bg-elev); border: 2px solid var(--accent); border-radius: 32px;
   padding: 8px 14px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
   z-index: 27; max-width: 96vw;
 }
@@ -1752,6 +1753,7 @@ async function deleteBookmark(b) {
   color: var(--text); font-size: 1rem; cursor: pointer;
   display: flex; align-items: center; justify-content: center; touch-action: manipulation;
 }
+.eb-btn.done { background: var(--accent); border-color: var(--accent); color: #17130f; font-weight: 700; }
 
 /* Sběr bodů zobáčku — hint lišta */
 .wedge-overlay {
