@@ -990,7 +990,9 @@ function onLayerDown(e) {
         opacity: annotOpacity.value / 100,
         width: Math.max(2, Math.round(annotSize.value)),
         x1: tip.x, y1: tip.y, x2: r1.x, y2: r1.y,
-        x3: r2.x, y3: r2.y,
+        // Konce ramen vodorovně nad sebou: X druhého ramene bere z prvního (symetrický klín),
+        // Y z kliknutí, takže ramena jsou vždy přímo nad sebou bez ohledu na přesnost kliknutí.
+        x3: r1.x, y3: r2.y,
       };
       wedgePoints.value = [];
       pushHistory();

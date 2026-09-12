@@ -789,12 +789,31 @@ async function checkAndApply() {
   try {
     if (!registration) return;
     await registration.update();
+
+    // Po `update()` začne nový SW instalovat assety asynchronně (až o pár ms
+    // později vyjede `updatefound`). Čtení workeru IHNED po update() čte na
+    // začátku stahování ještě null → spinner by okamžitě zmizel. Proto počkáme,
+    // dokud se nový worker vůbec neobjeví.
     let newWorker = registration.waiting || registration.installing;
+    if (!newWorker) {
+      newWorker = await new Promise((resolve) => {
+        const done = (w) => { cleanup(); resolve(w || null); };
+        const cleanup = () => {
+          registration.removeEventListener('updatefound', onFound);
+          clearTimeout(timer);
+        };
+        const onFound = () => done(registration.installing);
+        registration.addEventListener('updatefound', onFound);
+        const timer = setTimeout(() => done(registration.installing), 15000);
+      });
+    }
     if (!newWorker) {
       showToast('Verze je aktuální.');
       return;
     }
     if (newWorker.state === 'installing') {
+      // checking zůstává true, dokud sestor nedoinstaluje (state -> 'installed'),
+      // takže spinner je vidět po CELOU dobu stahování nových assetů.
       await waitForInstalled(newWorker);
     }
     sessionStorage.setItem('noty-updated', '1');
