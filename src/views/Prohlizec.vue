@@ -1419,6 +1419,16 @@ function distToPoly(px, py, poly) {
   return best;
 }
 
+// Vzdálenost dvou úseček (segment-segment distance)
+function distSegSeg(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y) {
+  // minimum ze 4 distToSeg (bod na jedné úsečce k druhé) stačí pro náš účel
+  const d1 = distToSeg(a1x, a1y, b1x, b1y, b2x, b2y);
+  const d2 = distToSeg(a2x, a2y, b1x, b1y, b2x, b2y);
+  const d3 = distToSeg(b1x, b1y, a1x, a1y, a2x, a2y);
+  const d4 = distToSeg(b2x, b2y, a1x, a1y, a2x, a2y);
+  return Math.min(d1, d2, d3, d4);
+}
+
 // Dotkne se guma (fine-segment o poloměru r) prvku it? (klín/text/dynamika)
 function segOnUnder(fine, r, it) {
   const pts = [];
@@ -1430,37 +1440,40 @@ function segOnUnder(fine, r, it) {
   return false;
 }
 
-// Guma na tahu (tužka/zvýrazňovač): odstraní jen body tahu, které kolidují
-// s novým úsekem dráhy (fine, poloměr r), a rozdělí tah na souvislé kusy.
+// Guma na tahu (tužka/zvýrazňovač): vyřadí ty úsečky tahu, které jsou blíž než r
+// k dráze gumy (fine), a rozdělí tah na zbylé souvislé kusy. Segment-segment test,
+// takže nezáleží na řídkosti bodů čáry — guma maže přesně to, co fyzicky protne.
 // Vrací pole nových itemů (0 = vše pryč, null = není kontakt).
 function eraseStrokeOnSeg(it, fine, r) {
   const orig = (it.points || []);
-  if (!orig.length) return null;
-  // vyřadit body, které jsou gumou pod novým úsekem
-  const keep = [];
-  for (const pt of orig) {
-    if (distToPoly(pt.x, pt.y, fine) < r) continue; // tento bod gumuješ
-    keep.push(pt);
-  }
-  if (keep.length === orig.length) return null;      // nedotklo se
-  if (keep.length === 0) return [];                    // celý tah pryč
-  // rozdělit zbylé body na souvislé podsahy (jednodušší, plynulejší)
-  const out = [];
-  let cur = [];
-  for (let i = 0; i < keep.length; i++) {
-    // pokud sousedí (v původním tahu), patří k sobě
-    if (cur.length) cur.push(keep[i]);
-    else cur = [keep[i]];
-    // konec segmentu = nový prvek
-    if (i === keep.length - 1 || !adjacent(keep[i], keep[i + 1], 6)) {
-      if (cur.length >= 2) out.push(mkStroke(it, cur));
-      cur = [];
+  if (orig.length < 2) return null;
+  // označit body, které budou smazány (úsečka z nich vycházející/u nich končící je pod gumou)
+  const removed = new Set();
+  for (let i = 0; i < orig.length - 1; i++) {
+    const a = orig[i], b = orig[i + 1];
+    let contact = false;
+    for (let j = 0; j < fine.length - 1; j++) {
+      const f1 = fine[j], f2 = fine[j + 1];
+      if (distSegSeg(a.x, a.y, b.x, b.y, f1.x, f1.y, f2.x, f2.y) <= r) { contact = true; break; }
     }
+    if (contact) { removed.add(i); removed.add(i + 1); }
+  }
+  if (removed.size === 0) return null;   // nedotklo se
+  if (removed.size >= orig.length) return []; // celý tah pryč
+  // rozdělit zbylé body na souvislé podsahy
+  const chunks = [];
+  let cur = [];
+  for (let i = 0; i < orig.length; i++) {
+    if (removed.has(i)) { if (cur.length) { chunks.push(cur); cur = []; } }
+    else cur.push(i);
+  }
+  if (cur.length) chunks.push(cur);
+  const out = [];
+  for (const ci of chunks) {
+    if (ci.length < 2) continue;
+    out.push(mkStroke(it, ci.map(i => orig[i])));
   }
   return out.length ? out : [];
-}
-function adjacent(a, b, tol) {
-  return Math.hypot(a.x - b.x, a.y - b.y) <= tol;
 }
 function mkStroke(it, pts) {
   return {
