@@ -1113,7 +1113,7 @@ function onLayerDown(e) {
   activeItem.value = {
     id: crypto.randomUUID(), page: currentPage.value,
     tool: tool.value,
-    color: pen ? annotColor.value + '55' : annotColor.value,
+    color: pen ? annotColor.value + '80' : annotColor.value,   // '80'=50% alfa: výraznější, noty se stále prosvítají
     opacity: pen ? 1 : annotOpacity.value / 100,
     width: w,
     points: [p],
