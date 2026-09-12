@@ -103,6 +103,16 @@
             :fill="annotColor"
           />
         </g>
+
+        <!-- Označení vybraného prvku v režimu Upravit (ruka) — plochý čárkovaný rámeček -->
+        <g v-if="editingAnnot && selectedBox" class="annot-selected">
+          <rect
+            :x="selectedBox.x" :y="selectedBox.y"
+            :width="selectedBox.w" :height="selectedBox.h"
+            fill="none" stroke="var(--accent,#d8a657)" stroke-width="1.5"
+            stroke-dasharray="6 4" rx="5"
+          />
+        </g>
       </svg>
     </div>
 
@@ -444,6 +454,30 @@ const editingId = ref(null);        // id vybrané textové/dynamické anotace p
 const editingAnnot = computed(() =>
   editingId.value ? annotations.value.items.find(x => x.id === editingId.value) || null : null
 );
+// Ohraničující rámeček vybraného prvku (režim Upravit/ruka) — pro vizuální označení
+const selectedBox = computed(() => {
+  const it = editingAnnot.value;
+  if (!it) return null;
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  if (it.tool === 'text' || it.tool === 'dynamic') {
+    if (it.x != null && it.y != null) {
+      const s = it.size || 20;
+      x1 = it.x; y1 = it.y - s; x2 = it.x + (it.text ? it.text.length * s * 0.6 : s); y2 = it.y;
+    }
+  } else if (isStroke(it)) {
+    for (const p of (it.points || [])) {
+      if (p.x < x1) x1 = p.x; if (p.y < y1) y1 = p.y;
+      if (p.x > x2) x2 = p.x; if (p.y > y2) y2 = p.y;
+    }
+  } else if (it.tool === 'crescendo' || it.tool === 'decrescendo') {
+    const xs = [it.x1, it.x2, it.x3], ys = [it.y1, it.y2, it.y3];
+    x1 = Math.min(...xs); x2 = Math.max(...xs);
+    y1 = Math.min(...ys); y2 = Math.max(...ys);
+  }
+  if (x2 < x1 || y2 < y1) return null;
+  const pad = 8;
+  return { x: x1 - pad, y: y1 - pad, w: (x2 - x1) + pad * 2, h: (y2 - y1) + pad * 2 };
+});
 const editingTypeLabel = computed(() =>
   editingAnnot.value ? (editingAnnot.value.tool === 'dynamic' ? 'Dynamika' : 'Text') : ''
 );
@@ -975,13 +1009,15 @@ function onLayerDown(e) {
   _activePointerId = e.pointerId;
   const p = toLayerCoords(e);
 
-  // Režim "Upravit": vybrat text/dynamiku na daném místě a připravit k přetažení
+  // Režim "Upravit": vybrat prvek na daném místě a připravit k přetažení
   if (tool.value === 'edit') {
     const hit = pageHits(p);
     if (hit) {
       editingId.value = hit.id;
       _dragAnnot = hit;
-      _dragOffset = { x: p.x - hit.x, y: p.y - hit.y };
+      _dragFrom = { x: p.x, y: p.y };
+      // Snapshot geometrie, aby se celý prvek přesunul jedním delta posunem
+      _dragSnap = JSON.parse(JSON.stringify(hit));
     } else {
       editingId.value = null;
     }
@@ -1069,8 +1105,9 @@ function onLayerDown(e) {
 }
 let _prev = null;
 let _activePointerId = null;
-let _dragAnnot = null;   // text/dynamická anotace přetahovaná v režimu Upravit
-let _dragOffset = null;  // odstup od středu (x,y)
+let _dragAnnot = null;   // prvek přetahovaný v režimu Upravit (ruka)
+let _dragFrom = null;    // výchozí bod přetažení (x,y)
+let _dragSnap = null;    // snapshot geometrie prvku na začátku přetažení
 function isStroke(it) {
   return it && (it.tool === 'pencil' || it.tool === 'highlighter');
 }
@@ -1081,12 +1118,23 @@ function isFreehand() {
   return tool.value === 'pencil' || tool.value === 'highlighter';
 }
 function onLayerMove(e) {
-  // Režim "Upravit": přetahování vybrané textové/dynamické anotace
+  // Režim "Upravit": přetahování vybraného prvku (text, dynamika, tah, klín)
   if (tool.value === 'edit' && _dragAnnot) {
     if (_activePointerId !== e.pointerId) return;
     const p = toLayerCoords(e);
-    _dragAnnot.x = p.x - _dragOffset.x;
-    _dragAnnot.y = p.y - _dragOffset.y;
+    const dx = p.x - _dragFrom.x;
+    const dy = p.y - _dragFrom.y;
+    const it = _dragAnnot;
+    const s = _dragSnap;
+    if (it.tool === 'text' || it.tool === 'dynamic') {
+      it.x = s.x + dx; it.y = s.y + dy;
+    } else if (isStroke(it)) {
+      it.points = s.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
+    } else if (it.tool === 'crescendo' || it.tool === 'decrescendo') {
+      it.x1 = s.x1 + dx; it.y1 = s.y1 + dy;
+      it.x2 = s.x2 + dx; it.y2 = s.y2 + dy;
+      it.x3 = s.x3 + dx; it.y3 = s.y3 + dy;
+    }
     _prev = p;
     return;
   }
@@ -1111,7 +1159,7 @@ function onLayerUp(e) {
     if (_dragAnnot && _activePointerId === e.pointerId) {
       saveAnnotations();
     }
-    _dragAnnot = null; _dragOffset = null;
+    _dragAnnot = null; _dragFrom = null; _dragSnap = null;
     _activePointerId = null;
     _prev = null;
     return;
@@ -1211,14 +1259,41 @@ function cancelTextAnnot() {
 }
 
 // --- Režim "Upravit" — výběr, přetažení, změna velikosti textu/dynamiky ---
+// Vrátí ohraničující box prvku (plocha, kam lze kliknout pro výběr rukou), nebo null
+function itemBox(it) {
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  const pad = 10;
+  if (it.tool === 'text' || it.tool === 'dynamic') {
+    if (it.x == null || it.y == null) return null;
+    const s = it.size || 20;
+    x1 = it.x; y1 = it.y - s;
+    x2 = it.x + (it.text ? Math.max(s, it.text.length * s * 0.6) : s); y2 = it.y;
+  } else if (isStroke(it)) {
+    if (!it.points || !it.points.length) return null;
+    for (const p of it.points) {
+      if (p.x < x1) x1 = p.x; if (p.y < y1) y1 = p.y;
+      if (p.x > x2) x2 = p.x; if (p.y > y2) y2 = p.y;
+    }
+  } else if (it.tool === 'crescendo' || it.tool === 'decrescendo') {
+    if (it.x1 == null) return null;
+    const xs = [it.x1, it.x2, it.x3], ys = [it.y1, it.y2, it.y3];
+    x1 = Math.min(...xs); x2 = Math.max(...xs);
+    y1 = Math.min(...ys); y2 = Math.max(...ys);
+  } else {
+    return null;
+  }
+  return { x: x1 - pad, y: y1 - pad, w: (x2 - x1) + pad * 2, h: (y2 - y1) + pad * 2 };
+}
 function pageHits(p) {
-  // Najde text/dynamiku na stránce blízko bodu p (hit ~ 20 px)
+  // Najde anotaci na stránce, do jejíž celé plochy (boxu) kliknutí patří.
+  // Reaguje tak prakticky všude v oblasti prvku, ne jen na jeho střed.
   const items = pageItems.value;
-  let best = null, bestDist = Infinity;
+  let best = null, bestArea = Infinity;
   for (const it of items) {
-    if (it.tool !== 'text' && it.tool !== 'dynamic') continue;
-    const d = Math.hypot(p.x - (it.x || 0), p.y - (it.y || 0));
-    if (d < 20 && d < bestDist) { bestDist = d; best = it; }
+    const b = itemBox(it);
+    if (!b || p.x < b.x || p.y < b.y || p.x > b.x + b.w || p.y > b.y + b.h) continue;
+    const area = b.w * b.h;
+    if (area < bestArea) { bestArea = area; best = it; }
   }
   return best;
 }
