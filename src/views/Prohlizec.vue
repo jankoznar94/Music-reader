@@ -60,17 +60,16 @@
             text-anchor="middle"
           >{{ it.text }}</text>
           <!-- Crescendo (otvírá se vpravo) / decrescendo (otvírá se vlevo) -->
+          <!-- Klín: špička (x1,y1) → dvě ramena se rozbíhají do (x2,y2). ŽÁDNÁ středová čára. -->
           <g v-else-if="it.tool === 'crescendo' || it.tool === 'decrescendo'"
              :opacity="it.opacity != null ? it.opacity : 1">
             <template v-if="it.tool === 'crescendo'">
-              <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
               <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2 - it.open" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
-              <line :x1="it.x1" :y1="it.y1 + it.open" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+              <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2 + it.open" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
             </template>
             <template v-else>
-              <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
-              <line :x1="it.x1" :y1="it.y1 - it.open" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
-              <line :x1="it.x1" :y1="it.y1 + it.open" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+              <line :x1="it.x2" :y1="it.y2" :x2="it.x1" :y2="it.y1 - it.open" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+              <line :x1="it.x2" :y1="it.y2" :x2="it.x1" :y2="it.y1 + it.open" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
             </template>
           </g>
         </g>
@@ -244,78 +243,101 @@
 
     <!-- Plovoucí panel anotací (jen v anotačním režimu) -->
     <div v-if="annotMode" class="annot-panel">
-      <!-- Řádek 0: sbalit/rozbalit -- aby se dalo psát podél spodního okraje -->
-      <div class="ap-row toggle-row">
+      <!-- Hlavička: sbalit/rozbalit -->
+      <div class="ap-header">
+        <span class="ap-title">Anotace</span>
         <button class="ap-collapse" @click="annotCollapsed = !annotCollapsed" :title="annotCollapsed ? 'Rozbalit' : 'Sbalit'">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path v-if="!annotCollapsed" d="M6 9l6 6 6-6"/><path v-else d="M6 15l6-6 6 6"/></svg>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path v-if="!annotCollapsed" d="M6 9l6 6 6-6"/><path v-else d="M6 15l6-6 6 6"/></svg>
         </button>
-        <span class="ap-collapse-label">{{ annotCollapsed ? 'Rozbalit' : 'Sbalit' }}</span>
       </div>
 
       <template v-if="!annotCollapsed">
-      <!-- Řádek 1: typ nástroje -->
-      <div class="ap-row">
-        <button class="ap-tool" @click="setTool('pencil')" :class="{ on: tool === 'pencil' }" title="Tužka">✏️</button>
-        <button class="ap-tool" @click="setTool('highlighter')" :class="{ on: tool === 'highlighter' }" title="Zvýraznění">🖍️</button>
-        <button class="ap-tool" @click="setTool('text')" :class="{ on: tool === 'text' }" title="Text (klávesnice)">T</button>
-        <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf...)">𝆏</button>
+      <!-- Kategorie: Nástroje -->
+      <div class="ap-cat">
+        <div class="ap-cat-label">Nástroje</div>
+        <div class="ap-row">
+          <button class="ap-tool" @click="setTool('pencil')" :class="{ on: tool === 'pencil' }" title="Tužka">✏️</button>
+          <button class="ap-tool" @click="setTool('highlighter')" :class="{ on: tool === 'highlighter' }" title="Zvýraznění">🖍️</button>
+          <button class="ap-tool" @click="setTool('text')" :class="{ on: tool === 'text' }" title="Text (klávesnice)">T</button>
+          <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf...)">𝆏</button>
+        </div>
       </div>
-      <!-- Řádek 1b: hudební značky -->
-      <div class="ap-row">
-        <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (táhni na délku)">&lt;</button>
-        <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (táhni na délku)">&gt;</button>
+
+      <!-- Kategorie: Hudební značky -->
+      <div class="ap-cat">
+        <div class="ap-cat-label">Značky</div>
+        <div class="ap-row">
+          <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (táhni na délku)">&lt;</button>
+          <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (táhni na délku)">&gt;</button>
+          <button class="ap-tool" @click="tool = 'edit'" :class="{ on: tool === 'edit' }" title="Upravit / přesunout text či dynamiku">✋</button>
+        </div>
       </div>
-      <!-- Řádek 2: barva -->
-      <div class="ap-row">
-        <button
-          v-for="c in colors"
-          :key="c"
-          class="ap-color"
-          :class="{ on: annotColor === c }"
-          :style="{ background: c }"
-          @click="annotColor = c"
-          :title="'Barva'"
-        ></button>
+
+      <!-- Kategorie: Styl -->
+      <div class="ap-cat">
+        <div class="ap-cat-label">Styl</div>
+        <div class="ap-row">
+          <button
+            v-for="c in colors"
+            :key="c"
+            class="ap-color"
+            :class="{ on: annotColor === c }"
+            :style="{ background: c }"
+            @click="annotColor = c"
+            :title="'Barva'"
+          ></button>
+        </div>
+        <div class="ap-row">
+          <button
+            v-for="s in sizes"
+            :key="s"
+            class="ap-size"
+            :class="{ on: annotSize === s }"
+            @click="annotSize = s"
+            :title="'Velikost ' + s"
+          ><span class="ap-size-num">{{ s }}</span></button>
+        </div>
+        <div class="ap-row op-row">
+          <span class="ap-op-label">Krytí</span>
+          <input
+            type="range"
+            class="ap-opacity"
+            min="10" max="100" step="5"
+            :value="annotOpacity"
+            @input="annotOpacity = Number($event.target.value)"
+          />
+          <span class="ap-op-val">{{ annotOpacity }}%</span>
+        </div>
       </div>
-      <!-- Řádek 3: velikost (jako čísla) -->
-      <div class="ap-row">
-        <button
-          v-for="s in sizes"
-          :key="s"
-          class="ap-size"
-          :class="{ on: annotSize === s }"
-          @click="annotSize = s"
-          :title="'Velikost ' + s"
-        ><span class="ap-size-num">{{ s }}</span></button>
-      </div>
-      <!-- Řádek 3b: krytí (průhlednost tužky) -->
-      <div class="ap-row op-row">
-        <span class="ap-op-label">Krytí</span>
-        <input
-          type="range"
-          class="ap-opacity"
-          min="10" max="100" step="5"
-          :value="annotOpacity"
-          @input="annotOpacity = Number($event.target.value)"
-        />
-        <span class="ap-op-val">{{ annotOpacity }}%</span>
-      </div>
-      <!-- Řádek 4: akce -->
-      <div class="ap-row">
-        <button class="ap-tool" @click="undoAnnot" title="Zpět" :disabled="!canUndo">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
-        </button>
-        <button class="ap-tool" @click="redoAnnot" title="Dopředu" :disabled="!canRedo">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
-        </button>
-        <button v-if="hasAnnotations" class="ap-tool" @click="clearAnnots" title="Smazat všechny anotace">🗑️</button>
-      </div>
-      <!-- Řádek 5: jen pero (palm-rejection) -->
-      <div class="ap-row">
-        <button class="ap-tool pen-only" @click="penOnly = !penOnly" :class="{ on: penOnly }" title="Kreslit jen perem (ignorovat dotyk rukou)">🖊️</button>
-        <span class="ap-pen-label" @click="penOnly = !penOnly">Jen pero</span>
+
+      <!-- Kategorie: Akce -->
+      <div class="ap-cat">
+        <div class="ap-cat-label">Akce</div>
+        <div class="ap-row">
+          <button class="ap-tool" @click="undoAnnot" title="Zpět" :disabled="!canUndo">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+          </button>
+          <button class="ap-tool" @click="redoAnnot" title="Dopředu" :disabled="!canRedo">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+          </button>
+          <button v-if="hasAnnotations" class="ap-tool" @click="clearAnnots" title="Smazat všechny anotace">🗑️</button>
+          <button class="ap-tool pen-only" @click="penOnly = !penOnly" :class="{ on: penOnly }" title="Kreslit jen perem (ignorovat dotyk rukou)">🖊️</button>
+          <span class="ap-pen-label" @click="penOnly = !penOnly">Jen pero</span>
+        </div>
       </div>
       </template>
+    </div>
+
+    <!-- Pásmo úprav vybrané textové/dynamické anotace -->
+    <div v-if="editingId" class="edit-bar">
+      <span class="eb-type">{{ editingTypeLabel }}</span>
+      <button class="eb-btn" @click="editText(editingAnnot)" title="Přepsat text">✏️</button>
+      <span class="eb-size">Velikost</span>
+      <button class="eb-btn" @click="resizeAnnot(editingAnnot, -1)" title="Zmenšit">−</button>
+      <span class="eb-val">{{ editingAnnot ? Math.round(editingAnnot.size) : 0 }}</span>
+      <button class="eb-btn" @click="resizeAnnot(editingAnnot, 1)" title="Zvětšit">+</button>
+      <button class="eb-btn" @click="endEdit" title="Hotovo">✓</button>
+      <button class="eb-btn" @click="deleteEditing" title="Smazat">🗑</button>
     </div>
 
     <!-- Vstup pro text / dynamiku -->
@@ -396,6 +418,13 @@ const annotOpacity = ref(100);     // aktuální opacity tahu v % (100 = plné k
 const annotCollapsed = ref(false); // anotační panel sbalený (jen přepínač)
 const editingAnnotationId = ref(null); // id anotace (text/dynamika), jejíž text se právě edituje
 const annotTextDraft = ref('');     // rozpisy textu při editaci
+const editingId = ref(null);        // id vybrané textové/dynamické anotace pro lištu úprav
+const editingAnnot = computed(() =>
+  editingId.value ? annotations.value.items.find(x => x.id === editingId.value) || null : null
+);
+const editingTypeLabel = computed(() =>
+  editingAnnot.value ? (editingAnnot.value.tool === 'dynamic' ? 'Dynamika' : 'Text') : ''
+);
 const history = ref([]);           // undo stack (kopie předchozích stavů items)
 const redoStack = ref([]);         // redo stack
 const canUndo = computed(() => history.value.length > 0);
@@ -908,6 +937,21 @@ function onLayerDown(e) {
   if (_activePointerId !== null) return; // už kreslí jiný tah (např. druhá ruka)
   _activePointerId = e.pointerId;
   const p = toLayerCoords(e);
+
+  // Režim "Upravit": vybrat text/dynamiku na daném místě a připravit k přetažení
+  if (tool.value === 'edit') {
+    const hit = pageHits(p);
+    if (hit) {
+      editingId.value = hit.id;
+      _dragAnnot = hit;
+      _dragOffset = { x: p.x - hit.x, y: p.y - hit.y };
+    } else {
+      editingId.value = null;
+    }
+    _prev = p;
+    return;
+  }
+
   const pen = tool.value === 'highlighter';
   const w = pen ? annotSize.value * 2 : annotSize.value;
 
@@ -953,6 +997,8 @@ function onLayerDown(e) {
 }
 let _prev = null;
 let _activePointerId = null;
+let _dragAnnot = null;   // text/dynamická anotace přetahovaná v režimu Upravit
+let _dragOffset = null;  // odstup od středu (x,y)
 function isStroke(it) {
   return it && (it.tool === 'pencil' || it.tool === 'highlighter');
 }
@@ -963,6 +1009,15 @@ function isFreehand() {
   return tool.value === 'pencil' || tool.value === 'highlighter';
 }
 function onLayerMove(e) {
+  // Režim "Upravit": přetahování vybrané textové/dynamické anotace
+  if (tool.value === 'edit' && _dragAnnot) {
+    if (_activePointerId !== e.pointerId) return;
+    const p = toLayerCoords(e);
+    _dragAnnot.x = p.x - _dragOffset.x;
+    _dragAnnot.y = p.y - _dragOffset.y;
+    _prev = p;
+    return;
+  }
   if (!activeItem.value) return;
   if (_activePointerId !== e.pointerId) return; // jiný prvek (druhá ruka) — nekreslit
   const p = toLayerCoords(e);
@@ -971,7 +1026,7 @@ function onLayerMove(e) {
   if (activeItem.value.tool === 'crescendo' || activeItem.value.tool === 'decrescendo') {
     activeItem.value.x2 = p.x; activeItem.value.y2 = p.y;
     const len = Math.max(20, Math.hypot(p.x - activeItem.value.x1, p.y - activeItem.value.y1));
-    activeItem.value.open = Math.min(60, len * 0.3); // otevření úměrné délce
+    activeItem.value.open = Math.min(20, len * 0.1); // mírné rozbíhání ramen
     _prev = p;
     return;
   }
@@ -987,6 +1042,16 @@ function onLayerMove(e) {
   }
 }
 function onLayerUp(e) {
+  // Režim "Upravit": ukončit přetahování, uložit novou pozici
+  if (tool.value === 'edit') {
+    if (_dragAnnot && _activePointerId === e.pointerId) {
+      saveAnnotations();
+    }
+    _dragAnnot = null; _dragOffset = null;
+    _activePointerId = null;
+    _prev = null;
+    return;
+  }
   if (!activeItem.value) return;
   if (_activePointerId !== e.pointerId) return;
   _activePointerId = null;
@@ -996,7 +1061,7 @@ function onLayerUp(e) {
   if (it.tool === 'crescendo' || it.tool === 'decrescendo') {
     const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1);
     if (len < 20) { activeItem.value = null; return; }
-    it.open = it.open || Math.min(60, len * 0.3);
+    it.open = it.open || Math.min(20, len * 0.1);
     pushHistory();
     annotations.value.items.push(it);
     activeItem.value = null;
@@ -1062,6 +1127,39 @@ function cancelTextAnnot() {
   }
   editingAnnotationId.value = null;
   annotTextDraft.value = '';
+}
+
+// --- Režim "Upravit" — výběr, přetažení, změna velikosti textu/dynamiky ---
+function pageHits(p) {
+  // Najde text/dynamiku na stránce blízko bodu p (hit ~ 20 px)
+  const items = pageItems.value;
+  let best = null, bestDist = Infinity;
+  for (const it of items) {
+    if (it.tool !== 'text' && it.tool !== 'dynamic') continue;
+    const d = Math.hypot(p.x - (it.x || 0), p.y - (it.y || 0));
+    if (d < 20 && d < bestDist) { bestDist = d; best = it; }
+  }
+  return best;
+}
+function editText(it) {
+  annotTextDraft.value = it.text || '';
+  editingAnnotationId.value = it.id;
+}
+function resizeAnnot(it, dir) {
+  if (!it) return;
+  it.size = Math.max(10, it.size + dir * 4);
+  saveAnnotations();
+}
+function endEdit() {
+  editingId.value = null;
+}
+function deleteEditing() {
+  const id = editingId.value;
+  if (!id) return;
+  pushHistory();
+  annotations.value.items = annotations.value.items.filter(x => x.id !== id);
+  editingId.value = null;
+  saveAnnotations();
 }
 
 // History (undo/redo)
@@ -1379,19 +1477,87 @@ async function deleteBookmark(b) {
   z-index: 23;
 }
 
-/* Plovoucí panel anotací — řádky, zarovnáno doleva */
+/* Plovoucí panel anotací — větší, kategorizovaný, overlay nad plátnem */
 .annot-panel {
-  position: absolute; bottom: 92px; left: 16px;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 16px;
-  padding: 10px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
-  z-index: 25; max-width: 94vw;
+  position: fixed; bottom: 88px; left: 16px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 12px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 18px;
+  padding: 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+  z-index: 26; max-width: 96vw; min-width: 220px;
 }
-.ap-tool.mus { font-size: 1.1rem; font-weight: 700; }
+.ap-header {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%;
+}
+.ap-title { font-weight: 700; font-size: 0.95rem; }
+.ap-cat { display: flex; flex-direction: column; gap: 8px; }
+.ap-cat-label {
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.ap-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.toggle-row { width: 100%; }
+.ap-collapse {
+  width: 32px; height: 32px; flex: 0 0 auto; padding: 0;
+  background: transparent; border: none; border-radius: 50%;
+  color: var(--text-dim); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: manipulation;
+}
+.ap-collapse:active { color: var(--text); }
+.ap-collapse-label { font-size: 0.85rem; color: var(--text-dim); cursor: pointer; }
+.ap-tool.mus { font-size: 1.15rem; font-weight: 700; }
+.op-row { width: 100%; gap: 8px; }
+.ap-op-label { font-size: 0.8rem; color: var(--text-dim); white-space: nowrap; }
+.ap-opacity { flex: 1; min-width: 0; accent-color: var(--accent); height: 4px; }
+.ap-op-val { font-size: 0.8rem; color: var(--text-dim); min-width: 32px; text-align: right; }
+.ap-tool {
+  width: 40px; height: 40px; flex: 0 0 auto; min-width: 0; padding: 0;
+  border-radius: 50%; box-sizing: border-box;
+  border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 1.15rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: manipulation;
+}
+.ap-tool.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
+.ap-tool:disabled { opacity: 0.35; pointer-events: none; }
+.ap-color {
+  width: 30px; height: 30px; flex: 0 0 auto; min-width: 0; padding: 0;
+  border-radius: 50%; box-sizing: border-box;
+  border: 2px solid var(--border); cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+}
+.ap-color.on { border-color: var(--accent); }
+.ap-size {
+  width: 34px; height: 34px; flex: 0 0 auto; min-width: 0; padding: 0;
+  border-radius: 50%; box-sizing: border-box;
+  border: 1px solid var(--border); background: var(--bg-elev2);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.ap-size span { font-size: 0.9rem; color: var(--text); line-height: 1; }
+.ap-size.on span { color: #17130f; }
+.ap-size.on { border-color: var(--accent); }
+
+/* Pásmo úprav vybrané textové/dynamické anotace */
+.edit-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 32px;
+  padding: 8px 14px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+  z-index: 27; max-width: 96vw;
+}
+.eb-type { font-weight: 600; font-size: 0.85rem; color: var(--accent); }
+.eb-size { font-size: 0.8rem; color: var(--text-dim); }
+.eb-val { font-size: 0.9rem; font-weight: 600; min-width: 20px; text-align: center; }
+.eb-btn {
+  width: 34px; height: 34px; flex: 0 0 auto; padding: 0;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 1rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; touch-action: manipulation;
+}
 
 /* Text / dynamika — vstupní overlay */
 .text-input-overlay {
-  position: absolute; inset: 0; z-index: 40;
+  position: fixed; inset: 0; z-index: 40;
   display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,0.45);
 }
@@ -1406,46 +1572,6 @@ async function deleteBookmark(b) {
   border-radius: 10px; padding: 12px; color: var(--text); font-size: 1rem;
 }
 .ti-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.ap-row { display: flex; align-items: center; gap: 6px; }
-.toggle-row { width: 100%; }
-.ap-collapse {
-  width: 28px; height: 28px; flex: 0 0 auto; padding: 0;
-  background: transparent; border: none; border-radius: 50%;
-  color: var(--text-dim); display: flex; align-items: center; justify-content: center;
-  cursor: pointer; touch-action: manipulation;
-}
-.ap-collapse:active { color: var(--text); }
-.ap-collapse-label { font-size: 0.85rem; color: var(--text-dim); cursor: pointer; }
-.op-row { width: 100%; gap: 8px; }
-.ap-op-label { font-size: 0.8rem; color: var(--text-dim); white-space: nowrap; }
-.ap-opacity { flex: 1; min-width: 0; accent-color: var(--accent); height: 4px; }
-.ap-op-val { font-size: 0.8rem; color: var(--text-dim); min-width: 32px; text-align: right; }
-.ap-tool {
-  width: 34px; height: 34px; flex: 0 0 auto; min-width: 0; padding: 0;
-  border-radius: 50%; box-sizing: border-box;
-  border: 1px solid var(--border); background: var(--bg-elev2);
-  color: var(--text); font-size: 1rem; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  touch-action: manipulation;
-}
-.ap-tool.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
-.ap-tool:disabled { opacity: 0.35; pointer-events: none; }
-.ap-color {
-  width: 26px; height: 26px; flex: 0 0 auto; min-width: 0; padding: 0;
-  border-radius: 50%; box-sizing: border-box;
-  border: 2px solid var(--border); cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-}
-.ap-color.on { border-color: var(--accent); }
-.ap-size {
-  width: 30px; height: 30px; flex: 0 0 auto; min-width: 0; padding: 0;
-  border-radius: 50%; box-sizing: border-box;
-  border: 1px solid var(--border); background: var(--bg-elev2);
-  display: flex; align-items: center; justify-content: center; cursor: pointer;
-}
-.ap-size span { font-size: 0.85rem; color: var(--text); line-height: 1; }
-.ap-size.on span { color: #17130f; }
-.ap-size.on { border-color: var(--accent); }
 
 /* Loading overlay při prvním načtení / přechodu mezi skladbami */
 .viewer-loading {
