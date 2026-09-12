@@ -1440,38 +1440,38 @@ function segOnUnder(fine, r, it) {
   return false;
 }
 
-// Guma na tahu (tužka/zvýrazňovač): vyřadí ty úsečky tahu, které jsou blíž než r
-// k dráze gumy (fine), a rozdělí tah na zbylé souvislé kusy. Segment-segment test,
-// takže nezáleží na řídkosti bodů čáry — guma maže přesně to, co fyzicky protne.
-// Vrací pole nových itemů (0 = vše pryč, null = není kontakt).
+// Guma na tahu (tužka/zvýrazňovač): vhodí jen BODY čáry, které jsou uvnitř
+// poloměru r od dráhy gumy (fine), a zbylé sousedící body rozdělí na souvislé
+// kusy. Bodové mazání = přesný úzký pruh přesně v rozsahu kolečka; NEsmaže
+// celý segment čáry mimo kolečko (to dělal segment-segment a proto mazal víc).
+// Vrací pole nových itemů (0 = vše pryč, null = nenávist není kontakt).
 function eraseStrokeOnSeg(it, fine, r) {
   const orig = (it.points || []);
-  if (orig.length < 2) return null;
-  // označit body, které budou smazány (úsečka z nich vycházející/u nich končící je pod gumou)
-  const removed = new Set();
-  for (let i = 0; i < orig.length - 1; i++) {
-    const a = orig[i], b = orig[i + 1];
-    let contact = false;
+  if (!orig.length) return null;
+  const keep = [];
+  for (const pt of orig) {
+    let under = false;
     for (let j = 0; j < fine.length - 1; j++) {
-      const f1 = fine[j], f2 = fine[j + 1];
-      if (distSegSeg(a.x, a.y, b.x, b.y, f1.x, f1.y, f2.x, f2.y) <= r) { contact = true; break; }
+      if (distToSeg(pt.x, pt.y, fine[j].x, fine[j].y, fine[j + 1].x, fine[j + 1].y) <= r) {
+        under = true; break;
+      }
     }
-    if (contact) { removed.add(i); removed.add(i + 1); }
+    if (!under) keep.push(pt);
   }
-  if (removed.size === 0) return null;   // nedotklo se
-  if (removed.size >= orig.length) return []; // celý tah pryč
-  // rozdělit zbylé body na souvislé podsahy
-  const chunks = [];
-  let cur = [];
-  for (let i = 0; i < orig.length; i++) {
-    if (removed.has(i)) { if (cur.length) { chunks.push(cur); cur = []; } }
-    else cur.push(i);
-  }
-  if (cur.length) chunks.push(cur);
+  if (keep.length === orig.length) return null;   // nedotklo se
+  if (keep.length === 0) return [];                 // celý tah pryč
+  // rozdělit zbylé body na souvislé podsahy (sousedící body ≤2px k sobě)
   const out = [];
-  for (const ci of chunks) {
-    if (ci.length < 2) continue;
-    out.push(mkStroke(it, ci.map(i => orig[i])));
+  let cur = [];
+  for (let i = 0; i < keep.length; i++) {
+    if (cur.length) cur.push(keep[i]);
+    else cur = [keep[i]];
+    const next = keep[i + 1];
+    const last = cur[cur.length - 1];
+    if (i === keep.length - 1 || !next || Math.hypot(next.x - last.x, next.y - last.y) > 2) {
+      if (cur.length >= 2) out.push(mkStroke(it, cur.slice()));
+      cur = [];
+    }
   }
   return out.length ? out : [];
 }
