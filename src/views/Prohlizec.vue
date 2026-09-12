@@ -109,7 +109,7 @@
           v-if="tool === 'eraser' && activeItem && activeItem.points && activeItem.points.length"
           :cx="activeItem.points[activeItem.points.length - 1].x"
           :cy="activeItem.points[activeItem.points.length - 1].y"
-          :r="(activeItem.width || 4) / 2 + 3"
+          :r="Math.max(4, activeItem.width || 4) / 2"
           class="eraser-cursor"
         />
 
@@ -1160,42 +1160,51 @@ function onLayerMove(e) {
     _prev = p;
     return;
   }
-  // Guma: okamžitá zpětná vazba jako u tužky — přidá bod a hned maže,
-  // co právě protíná. History se uloží PŘED prvním smazáním (opravuje undo).
+  // Guma: okamžitá zpětná vazba jako u tužky. Každý snímek maže JEN ten
+  // nový úsek dráhy (minulý bod → aktuální), jemně subdividovaný, takže
+  // mazání je plynulé a přesně v poloměru kolečka — ne trhané, nepřemazává.
   if (tool.value === 'eraser') {
-    if (!prev || Math.abs(p.x - prev.x) > 1 || Math.abs(p.y - prev.y) > 1) {
+    const hadPrev = !!prev;
+    if (!hadPrev || Math.abs(p.x - prev.x) > 1 || Math.abs(p.y - prev.y) > 1) {
       activeItem.value.points.push(p); _prev = p;
     }
-    const pts = activeItem.value.points;
-    // průměr gumy → poloměr (guma maže přesně v poloměru, jak ukazuje kolečko)
-    const eraserR = (activeItem.value.width || 4) / 2;
+    // jen poslední segment (prev → p) = nový kus dráhy pro tento snímek
+    const seg = hadPrev
+      ? [{ x: prev.x, y: prev.y }, { x: p.x, y: p.y }]
+      : [{ x: p.x, y: p.y }];
+    // jemně subdividovat, aby rychlý pohyb neroztrhal stopu a nevynechal mezery
+    const fine = [];
+    for (let i = 0; i < seg.length - 1; i++) {
+      const a = seg[i], b = seg[i + 1];
+      const d = Math.hypot(b.x - a.x, b.y - a.y);
+      const n = Math.max(1, Math.ceil(d / 4));
+      for (let s = 0; s < n; s++) fine.push({ x: a.x + (b.x - a.x) * s / n, y: a.y + (b.y - a.y) * s / n });
+    }
+    fine.push(seg[seg.length - 1]);
+    const eraserR = Math.max(4, activeItem.value.width || 4) / 2; // poloměr
     let changed = false;
     const items = annotations.value.items;
     const next = [];
     for (const x of items) {
       if (x.page !== currentPage.value) { next.push(x); continue; }
-      // Tah (tužka/zvýrazňovač): rozdělit gumou, ne smazat celý prvek
+      // Tah (tužka/zvýrazňovač): rozdělit jen podle nového úseku
       if (isStroke(x)) {
-        const parts = eraserDivide(x, pts, eraserR);
+        const parts = eraseStrokeOnSeg(x, fine, eraserR);
         if (parts === null) { next.push(x); continue; }
         changed = true;
-        next.push(...parts); // 0 dílů = celý tah smazán
+        next.push(...parts);
         continue;
       }
-      // Klín / text / dynamika: klasicky smazat, když se dotkneš
-      const under = strokeUnder(pts, eraserR, x);
-      if (under) { changed = true; continue; }
+      // Klín / text / dynamika: smazat, když se dotkneš
+      if (segOnUnder(fine, eraserR, x)) { changed = true; continue; }
       next.push(x);
     }
-    // History se ukládá JEŠTĚ PŘED přiřazením nové podoby — jinak by undo
-    // vracelo už rozdělený stav, ne originál (proto undo nefungoval).
+    // History se ukládá JEŠTĚ PŘED přiřazením nové podoby
     if (changed) {
       if (!_eraserHistoryPushed) { pushHistory(); _eraserHistoryPushed = true; }
     }
     annotations.value.items = next;
-    if (changed) {
-      saveAnnotations();
-    }
+    if (changed) saveAnnotations();
     return;
   }
   // Tužka / zvýraznění: přidat body
@@ -1400,48 +1409,65 @@ function strokeUnder(pts, w, it) {
   return false;
 }
 
-// Vrátí indexy bodů tahu (it.points), které jsou POD gumou (polyčára pts o šířce w)
-function strokeUnderIndices(pts, w, it) {
-  const out = new Set();
-  const orig = (it.points || []);
-  for (let i = 0; i < orig.length; i++) {
-    const pt = orig[i];
-    for (let j = 0; j < pts.length - 1; j++) {
-      if (distToSeg(pt.x, pt.y, pts[j].x, pts[j].y, pts[j + 1].x, pts[j + 1].y) < w) {
-        out.add(i); break;
-      }
-    }
+// Vzdálenost bodu od lomené čáry poly (fine segment) = minimum přes úsečky
+function distToPoly(px, py, poly) {
+  let best = Infinity;
+  for (let i = 0; i < poly.length - 1; i++) {
+    const d = distToSeg(px, py, poly[i].x, poly[i].y, poly[i + 1].x, poly[i + 1].y);
+    if (d < best) best = d;
   }
-  return out;
+  return best;
 }
 
-// Guma na tahu (tužka/zvýrazňovač): NEsmazat celý prvek, ale ROZDĚLIT ho gumou —
-// body pod gumou se vyhodí a zbylé souvislé úseky se stanou samostatnými tahy.
-// Vrací pole nových itemů (0 = vše smazáno, null = guma se tahu nedotkla).
-function eraserDivide(it, pts, w) {
-  const orig = (it.points || []);
-  if (orig.length < 2) return (strokeUnder(pts, w, it) ? [] : null);
-  const removed = strokeUnderIndices(pts, w, it);
-  if (removed.size === 0) return null;      // nedotýká se
-  if (removed.size >= orig.length) return []; // celý tah pryč
-  // rozděl body do souvislých úseků (oddělených gumou)
-  const chunks = [];
-  let cur = [];
-  for (let i = 0; i < orig.length; i++) {
-    if (removed.has(i)) { if (cur.length) { chunks.push(cur); cur = []; } }
-    else cur.push(i);
+// Dotkne se guma (fine-segment o poloměru r) prvku it? (klín/text/dynamika)
+function segOnUnder(fine, r, it) {
+  const pts = [];
+  if (it.x1 != null) pts.push({ x: it.x1, y: it.y1 }, { x: it.x2, y: it.y2 }, { x: it.x3, y: it.y3 });
+  else if (it.x != null) pts.push({ x: it.x, y: it.y });
+  for (const pt of pts) {
+    if (distToPoly(pt.x, pt.y, fine) < r) return true;
   }
-  if (cur.length) chunks.push(cur);
+  return false;
+}
+
+// Guma na tahu (tužka/zvýrazňovač): odstraní jen body tahu, které kolidují
+// s novým úsekem dráhy (fine, poloměr r), a rozdělí tah na souvislé kusy.
+// Vrací pole nových itemů (0 = vše pryč, null = není kontakt).
+function eraseStrokeOnSeg(it, fine, r) {
+  const orig = (it.points || []);
+  if (!orig.length) return null;
+  // vyřadit body, které jsou gumou pod novým úsekem
+  const keep = [];
+  for (const pt of orig) {
+    if (distToPoly(pt.x, pt.y, fine) < r) continue; // tento bod gumuješ
+    keep.push(pt);
+  }
+  if (keep.length === orig.length) return null;      // nedotklo se
+  if (keep.length === 0) return [];                    // celý tah pryč
+  // rozdělit zbylé body na souvislé podsahy (jednodušší, plynulejší)
   const out = [];
-  for (const ci of chunks) {
-    if (ci.length < 2) continue; // osamocený bod nemá smysl
-    out.push({
-      id: crypto.randomUUID(), page: it.page,
-      tool: it.tool, color: it.color, opacity: it.opacity, width: it.width,
-      points: ci.map(i => ({ x: orig[i].x, y: orig[i].y })),
-    });
+  let cur = [];
+  for (let i = 0; i < keep.length; i++) {
+    // pokud sousedí (v původním tahu), patří k sobě
+    if (cur.length) cur.push(keep[i]);
+    else cur = [keep[i]];
+    // konec segmentu = nový prvek
+    if (i === keep.length - 1 || !adjacent(keep[i], keep[i + 1], 6)) {
+      if (cur.length >= 2) out.push(mkStroke(it, cur));
+      cur = [];
+    }
   }
   return out.length ? out : [];
+}
+function adjacent(a, b, tol) {
+  return Math.hypot(a.x - b.x, a.y - b.y) <= tol;
+}
+function mkStroke(it, pts) {
+  return {
+    id: crypto.randomUUID(), page: it.page,
+    tool: it.tool, color: it.color, opacity: it.opacity, width: it.width,
+    points: pts.map(pt => ({ x: pt.x, y: pt.y })),
+  };
 }
 function undoAnnot() {
   if (history.value.length === 0) return;
