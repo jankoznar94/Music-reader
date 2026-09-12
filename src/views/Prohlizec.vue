@@ -37,6 +37,14 @@
             stroke-linejoin="round"
             :class="{ hl: it.tool === 'highlighter' }"
           />
+          <!-- Zvýrazňovač: 3-bodový obdélník (levý spodní, levý horní, vpravo) -->
+          <rect
+            v-else-if="it.tool === 'highlighter'"
+            :x="Math.min(it.x1, it.x2)" :y="Math.min(it.y1, it.y2)"
+            :width="Math.abs(it.x2 - it.x1)" :height="Math.abs(it.y2 - it.y1)"
+            :fill="it.color" :opacity="it.opacity != null ? it.opacity : 1"
+            class="hl"
+          />
           <!-- Textová anotace -->
           <text
             v-else-if="isText(it)"
@@ -395,8 +403,10 @@
     </div>
 
     <!-- Sběr bodů zobáčku (crescendo / decrescendo) -->
-    <div v-if="wedgePoints.length" class="wedge-overlay">
-      <div class="wedge-hint">{{ wedgeHintText }} <span class="wedge-cancel" @click="wedgePoints = []">Zrušit</span></div>
+    <div v-if="wedgePoints.length || (tool === 'highlighter' && hlPoints.length)" class="wedge-overlay">
+      <div class="wedge-hint">{{ wedgeHintText }}
+        <span class="wedge-cancel" @click="wedgePoints = []; hlPoints = []">Zrušit</span>
+      </div>
     </div>
 
     <!-- Plovoucí zoom (levý okraj) — zobrazí se na povel (tap na střed) -->
@@ -483,6 +493,9 @@ const selectedBox = computed(() => {
     const xs = [it.x1, it.x2, it.x3], ys = [it.y1, it.y2, it.y3];
     x1 = Math.min(...xs); x2 = Math.max(...xs);
     y1 = Math.min(...ys); y2 = Math.max(...ys);
+  } else if (it.tool === 'highlighter') {
+    x1 = Math.min(it.x1, it.x2); x2 = Math.max(it.x1, it.x2);
+    y1 = Math.min(it.y1, it.y2); y2 = Math.max(it.y1, it.y2);
   }
   if (x2 < x1 || y2 < y1) return null;
   const pad = 8;
@@ -492,6 +505,7 @@ const editingTypeLabel = computed(() =>
   editingAnnot.value ? (editingAnnot.value.tool === 'dynamic' ? 'Dynamika' : 'Text') : ''
 );
 const wedgePoints = ref([]); // body zobáčku (crescendo/decrescendo), až 3 × {x,y}
+const hlPoints = ref([]);    // body zvýrazňovače (3 × {x,y}: levý spodní, levý horní, vpravo)
 const wedgeHintText = computed(() => {
   if (tool.value === 'crescendo') {
     return wedgePoints.value.length === 0 ? '1. Špička (klepni)' :
@@ -502,6 +516,11 @@ const wedgeHintText = computed(() => {
     return wedgePoints.value.length === 0 ? '1. Konec ramena (klepni)' :
            wedgePoints.value.length === 1 ? '2. Druhý konec ramena (klepni)' :
            '3. Špička (klepni)';
+  }
+  if (tool.value === 'highlighter') {
+    return hlPoints.value.length === 0 ? '1. Levý spodní (klepni)' :
+           hlPoints.value.length === 1 ? '2. Levý horní (klepni)' :
+           '3. Pravý (klepni)';
   }
   return '';
 });
@@ -1081,6 +1100,34 @@ function onLayerDown(e) {
     return;
   }
 
+  // Zvýrazňovač: 3 body klepnutím → levý spodní, levý horní, vpravo → přesný obdélník.
+  // Levá vertikála z prvního bodu, horní/dolní horizontála z 1.+2., pravá vertikála z 3.
+  if (tool.value === 'highlighter') {
+    _activePointerId = null;   // guard by jinak zablokoval 2. a 3. klik
+    hlPoints.value.push({ x: p.x, y: p.y });
+    if (hlPoints.value.length === 3) {
+      const [a, b, c] = hlPoints.value;
+      const x1 = a.x;                 // levá vertikála z prvního bodu
+      const y1 = Math.min(a.y, b.y);  // horní horizontála
+      const y2 = Math.max(a.y, b.y);  // dolní horizontála
+      const x2 = c.x;                 // pravá vertikála z třetího bodu
+      const it = {
+        id: crypto.randomUUID(), page: currentPage.value,
+        tool: 'highlighter', color: annotColor.value + '80',
+        opacity: 1,
+        width: Math.max(1, Math.round(annotSize.value)),
+        x1, y1, x2, y2,
+      };
+      hlPoints.value = [];
+      pushHistory();
+      annotations.value.items.push(it);
+      saveAnnotations();
+    }
+    _activePointerId = null;
+    _prev = p;
+    return;
+  }
+
   // Text / dynamika: umístění na stránku (vytvoří se po uvolnění)
   if (tool.value === 'text' || tool.value === 'dynamic') {
     activeItem.value = {
@@ -1127,7 +1174,7 @@ let _dragFrom = null;    // výchozí bod přetažení (x,y)
 let _dragSnap = null;    // snapshot geometrie prvku na začátku přetažení
 let _eraserHistoryPushed = false; // aby guma uložila history jen jednou za tah
 function isStroke(it) {
-  return it && (it.tool === 'pencil' || it.tool === 'highlighter');
+  return it && it.tool === 'pencil';   // highlighter je teď 3-bodový obdélník, ne tah
 }
 function isText(it) {
   return it && it.tool === 'text';
@@ -1152,6 +1199,9 @@ function onLayerMove(e) {
       it.x1 = s.x1 + dx; it.y1 = s.y1 + dy;
       it.x2 = s.x2 + dx; it.y2 = s.y2 + dy;
       it.x3 = s.x3 + dx; it.y3 = s.y3 + dy;
+    } else if (it.tool === 'highlighter') {
+      it.x1 = s.x1 + dx; it.y1 = s.y1 + dy;
+      it.x2 = s.x2 + dx; it.y2 = s.y2 + dy;
     }
     _prev = p;
     return;
@@ -1347,6 +1397,10 @@ function itemBox(it) {
     const xs = [it.x1, it.x2, it.x3], ys = [it.y1, it.y2, it.y3];
     x1 = Math.min(...xs); x2 = Math.max(...xs);
     y1 = Math.min(...ys); y2 = Math.max(...ys);
+  } else if (it.tool === 'highlighter') {
+    if (it.x1 == null) return null;
+    x1 = Math.min(it.x1, it.x2); x2 = Math.max(it.x1, it.x2);
+    y1 = Math.min(it.y1, it.y2); y2 = Math.max(it.y1, it.y2);
   } else {
     return null;
   }
@@ -1446,13 +1500,35 @@ function distSegSeg(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y) {
   return Math.min(d1, d2, d3, d4);
 }
 
-// Dotkne se guma (fine-segment o poloměru r) prvku it? (klín/text/dynamika)
+// Dotkne se guma (fine-segment o poloměru r) prvku it? (klín/text/dynamika/zvýrazňovač)
 function segOnUnder(fine, r, it) {
   const pts = [];
+  if (it.tool === 'highlighter' && it.x1 != null) {
+    // zvýrazňovač = obdélník: smaže se, když guma protne jeho box
+    const x1 = Math.min(it.x1, it.x2), y1 = Math.min(it.y1, it.y2);
+    const x2 = Math.max(it.x1, it.x2), y2 = Math.max(it.y1, it.y2);
+    // zkontroluj, jestli guma přejela přes obdélník (segment protne box)
+    for (let j = 0; j < fine.length - 1; j++) {
+      const a = fine[j], b = fine[j + 1];
+      if (segCrossRect(a.x, a.y, b.x, b.y, x1, y1, x2, y2)) return true;
+    }
+    return false;
+  }
   if (it.x1 != null) pts.push({ x: it.x1, y: it.y1 }, { x: it.x2, y: it.y2 }, { x: it.x3, y: it.y3 });
   else if (it.x != null) pts.push({ x: it.x, y: it.y });
   for (const pt of pts) {
     if (distToPoly(pt.x, pt.y, fine) < r) return true;
+  }
+  return false;
+}
+// Protne úsečka (a→b) obdélník (x1,y1,x2,y2)?
+function segCrossRect(ax, ay, bx, by, rx1, ry1, rx2, ry2) {
+  // rychlá bounding-box odmítnutí
+  if (Math.max(ax, bx) < rx1 || Math.min(ax, bx) > rx2 || Math.max(ay, by) < ry1 || Math.min(ay, by) > ry2) return false;
+  // kontrola každé hrany obdélníku pro průnik s úsečkou
+  const edges = [[rx1,ry1,rx2,ry1],[rx2,ry1,rx2,ry2],[rx2,ry2,rx1,ry2],[rx1,ry2,rx1,ry1]];
+  for (const [e1x,e1y,e2x,e2y] of edges) {
+    if (distSegSeg(ax,ay,bx,by,e1x,e1y,e2x,e2y) === 0) return true;
   }
   return false;
 }
