@@ -25,7 +25,9 @@
       >
         <!-- Překreslené anotace aktuální stránky -->
         <g v-for="it in pageItems" :key="it.id">
+          <!-- Vykreslit tah (tužka / zvýraznění) -->
           <path
+            v-if="isStroke(it)"
             :d="pathD(it)"
             fill="none"
             :stroke="it.color"
@@ -35,18 +37,58 @@
             stroke-linejoin="round"
             :class="{ hl: it.tool === 'highlighter' }"
           />
+          <!-- Textová anotace -->
+          <text
+            v-else-if="isText(it)"
+            :x="it.x" :y="it.y"
+            :fill="it.color"
+            :font-size="it.size"
+            font-family="system-ui, sans-serif"
+            :opacity="it.opacity != null ? it.opacity : 1"
+            text-anchor="start"
+          >{{ it.text }}</text>
+          <!-- Dynamika (p, f, mp...) -->
+          <text
+            v-else-if="it.tool === 'dynamic'"
+            :x="it.x" :y="it.y"
+            :fill="it.color"
+            :font-size="it.size"
+            font-family="Georgia, 'Times New Roman', serif"
+            font-style="italic"
+            font-weight="bold"
+            :opacity="it.opacity != null ? it.opacity : 1"
+            text-anchor="middle"
+          >{{ it.text }}</text>
+          <!-- Crescendo (otvírá se vpravo) / decrescendo (otvírá se vlevo) -->
+          <g v-else-if="it.tool === 'crescendo' || it.tool === 'decrescendo'"
+             :opacity="it.opacity != null ? it.opacity : 1">
+            <template v-if="it.tool === 'crescendo'">
+              <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+              <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2 - it.open" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+              <line :x1="it.x1" :y1="it.y1 + it.open" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+            </template>
+            <template v-else>
+              <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+              <line :x1="it.x1" :y1="it.y1 - it.open" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+              <line :x1="it.x1" :y1="it.y1 + it.open" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+            </template>
+          </g>
         </g>
-        <!-- Aktivní tah -->
-        <path
-          v-if="activeStroke"
-          :d="pathD(activeStroke)"
-          fill="none"
-          :stroke="activeStroke.color"
-          :stroke-width="activeStroke.width"
-          :opacity="activeStroke.opacity"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
+        <!-- Aktivní prvek -->
+        <!-- Aktivní tah / klín / umístění textu -->
+        <g v-if="activeItem">
+          <path
+            v-if="isStroke(activeItem)"
+            :d="pathD(activeItem)"
+            fill="none" :stroke="activeItem.color" :stroke-width="activeItem.width"
+            :opacity="activeItem.opacity" stroke-linecap="round" stroke-linejoin="round"
+          />
+          <line v-else-if="activeItem.tool === 'crescendo' || activeItem.tool === 'decrescendo'"
+            :x1="activeItem.x1" :y1="activeItem.y1" :x2="activeItem.x2" :y2="activeItem.y2"
+            :stroke="activeItem.color" :stroke-width="activeItem.width" stroke-linecap="round" />
+          <circle v-else :cx="activeItem.x" :cy="activeItem.y" r="6"
+            fill="none" :stroke="activeItem.color" stroke-width="2" />
+        </g>
       </svg>
     </div>
 
@@ -215,6 +257,13 @@
       <div class="ap-row">
         <button class="ap-tool" @click="setTool('pencil')" :class="{ on: tool === 'pencil' }" title="Tužka">✏️</button>
         <button class="ap-tool" @click="setTool('highlighter')" :class="{ on: tool === 'highlighter' }" title="Zvýraznění">🖍️</button>
+        <button class="ap-tool" @click="setTool('text')" :class="{ on: tool === 'text' }" title="Text (klávesnice)">T</button>
+        <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf...)">𝆏</button>
+      </div>
+      <!-- Řádek 1b: hudební značky -->
+      <div class="ap-row">
+        <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (táhni na délku)">&lt;</button>
+        <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (táhni na délku)">&gt;</button>
       </div>
       <!-- Řádek 2: barva -->
       <div class="ap-row">
@@ -228,7 +277,7 @@
           :title="'Barva'"
         ></button>
       </div>
-      <!-- Řádek 3: velikost -->
+      <!-- Řádek 3: velikost (jako čísla) -->
       <div class="ap-row">
         <button
           v-for="s in sizes"
@@ -237,7 +286,7 @@
           :class="{ on: annotSize === s }"
           @click="annotSize = s"
           :title="'Velikost ' + s"
-        ><span :style="{ width: s + 'px', height: s + 'px' }"></span></button>
+        ><span class="ap-size-num">{{ s }}</span></button>
       </div>
       <!-- Řádek 3b: krytí (průhlednost tužky) -->
       <div class="ap-row op-row">
@@ -267,6 +316,23 @@
         <span class="ap-pen-label" @click="penOnly = !penOnly">Jen pero</span>
       </div>
       </template>
+    </div>
+
+    <!-- Vstup pro text / dynamiku -->
+    <div v-if="editingAnnotationId" class="text-input-overlay">
+      <div class="text-input-card">
+        <span class="ti-label">{{ editingAnnotTool === 'dynamic' ? 'Dynamika' : 'Text' }}</span>
+        <input
+          v-model="annotTextDraft"
+          class="ti-input"
+          :placeholder="editingAnnotTool === 'dynamic' ? 'např. p, f, mf' : 'Text poznámky'"
+          @keydown.enter="confirmTextAnnot"
+        />
+        <div class="ti-actions">
+          <button class="jp-btn" @click="cancelTextAnnot">Zrušit</button>
+          <button class="jp-btn primary" @click="confirmTextAnnot">Uložit</button>
+        </div>
+      </div>
     </div>
 
     <!-- Plovoucí zoom (levý okraj) — zobrazí se na povel (tap na střed) -->
@@ -319,15 +385,17 @@ const panY = ref(0);
 
 const annotMode = ref(false);
 const tool = ref('pencil');
-const activeStroke = ref(null);
+const activeItem = ref(null);
 
 // Rozšířené anotace
 const colors = ['#1a1a1a', '#c05a4a', '#e5d7a6', '#f2c4b6', '#bcd3b6', '#a8c4e0', '#e5c9a8', '#d9b6d9', '#1a2a4a'];
-const sizes = [2, 3, 4, 6, 8, 12];
+const sizes = [1, 2, 3, 4, 6, 8, 12];
 const annotColor = ref('#1a1a1a'); // aktuální barva pera
 const annotSize = ref(2);          // aktuální velikost pera (výchozí = nejmenší)
 const annotOpacity = ref(100);     // aktuální opacity tahu v % (100 = plné krytí)
 const annotCollapsed = ref(false); // anotační panel sbalený (jen přepínač)
+const editingAnnotationId = ref(null); // id anotace (text/dynamika), jejíž text se právě edituje
+const annotTextDraft = ref('');     // rozpisy textu při editaci
 const history = ref([]);           // undo stack (kopie předchozích stavů items)
 const redoStack = ref([]);         // redo stack
 const canUndo = computed(() => history.value.length > 0);
@@ -840,13 +908,44 @@ function onLayerDown(e) {
   if (_activePointerId !== null) return; // už kreslí jiný tah (např. druhá ruka)
   _activePointerId = e.pointerId;
   const p = toLayerCoords(e);
-  const w = tool.value === 'highlighter' ? annotSize.value * 2 : annotSize.value;
-  activeStroke.value = {
-    id: crypto.randomUUID(),
-    page: currentPage.value,
+  const pen = tool.value === 'highlighter';
+  const w = pen ? annotSize.value * 2 : annotSize.value;
+
+  // Klín (crescendo / decrescendo): začátek tahu → dva body, otvírá se tahem
+  if (tool.value === 'crescendo' || tool.value === 'decrescendo') {
+    activeItem.value = {
+      id: crypto.randomUUID(), page: currentPage.value,
+      tool: tool.value, color: annotColor.value,
+      opacity: annotOpacity.value / 100,
+      width: Math.max(2, Math.round(annotSize.value)), // klín má jasnější čáru
+      x1: p.x, y1: p.y,
+      x2: p.x, y2: p.y,
+      open: 10,
+    };
+    _prev = p;
+    return;
+  }
+
+  // Text / dynamika: umístění na stránku (vytvoří se po uvolnění)
+  if (tool.value === 'text' || tool.value === 'dynamic') {
+    activeItem.value = {
+      id: crypto.randomUUID(), page: currentPage.value,
+      tool: tool.value, color: annotColor.value,
+      opacity: annotOpacity.value / 100,
+      size: Math.max(14, 20 + annotSize.value * 3),
+      x: p.x, y: p.y, text: '',
+      pending: true,   // po uvolnění otevře vstup
+    };
+    _prev = p;
+    return;
+  }
+
+  // Tužka / zvýraznění: tah s body
+  activeItem.value = {
+    id: crypto.randomUUID(), page: currentPage.value,
     tool: tool.value,
-    color: tool.value === 'highlighter' ? annotColor.value + '55' : annotColor.value,
-    opacity: tool.value === 'highlighter' ? 1 : annotOpacity.value / 100, // tužka má proměnnou průhlednost
+    color: pen ? annotColor.value + '55' : annotColor.value,
+    opacity: pen ? 1 : annotOpacity.value / 100,
     width: w,
     points: [p],
   };
@@ -854,28 +953,73 @@ function onLayerDown(e) {
 }
 let _prev = null;
 let _activePointerId = null;
+function isStroke(it) {
+  return it && (it.tool === 'pencil' || it.tool === 'highlighter');
+}
+function isText(it) {
+  return it && it.tool === 'text';
+}
+function isFreehand() {
+  return tool.value === 'pencil' || tool.value === 'highlighter';
+}
 function onLayerMove(e) {
-  if (!activeStroke.value) return;
-  if (_activePointerId !== e.pointerId) return; // jiný tah (druhá ruka) — nekreslit
+  if (!activeItem.value) return;
+  if (_activePointerId !== e.pointerId) return; // jiný prvek (druhá ruka) — nekreslit
   const p = toLayerCoords(e);
   const prev = _prev;
+  // Klín: roztáhnout konec tahem (x2,y2)
+  if (activeItem.value.tool === 'crescendo' || activeItem.value.tool === 'decrescendo') {
+    activeItem.value.x2 = p.x; activeItem.value.y2 = p.y;
+    const len = Math.max(20, Math.hypot(p.x - activeItem.value.x1, p.y - activeItem.value.y1));
+    activeItem.value.open = Math.min(60, len * 0.3); // otevření úměrné délce
+    _prev = p;
+    return;
+  }
+  // Text / dynamika: jen sledovat, dokud neuvolníme (pozice se nastaví na up)
+  if (tool.value === 'text' || tool.value === 'dynamic') {
+    activeItem.value.x = p.x; activeItem.value.y = p.y;
+    _prev = p;
+    return;
+  }
+  // Tužka / zvýraznění: přidat body
   if (!prev || Math.abs(p.x - prev.x) > 1 || Math.abs(p.y - prev.y) > 1) {
-    activeStroke.value.points.push(p); _prev = p;
+    activeItem.value.points.push(p); _prev = p;
   }
 }
 function onLayerUp(e) {
-  if (!activeStroke.value) return;
+  if (!activeItem.value) return;
   if (_activePointerId !== e.pointerId) return;
   _activePointerId = null;
+  const it = activeItem.value;
+
+  // Klín: ukončit až po minimální délce, jinak zrušit
+  if (it.tool === 'crescendo' || it.tool === 'decrescendo') {
+    const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1);
+    if (len < 20) { activeItem.value = null; return; }
+    it.open = it.open || Math.min(60, len * 0.3);
+    pushHistory();
+    annotations.value.items.push(it);
+    activeItem.value = null;
+    saveAnnotations();
+    return;
+  }
+
+  // Text / dynamika: místo uvolnění → otevřít textový vstup (pending)
+  if (tool.value === 'text' || tool.value === 'dynamic') {
+    it.pending = true;
+    editingAnnotationId.value = it.id;
+    return; // držet aktivní do uložení textu
+  }
+
+  // Tužka / zvýraznění
   // Maličká/rychá poznámka: tah s pouhým 1 bodem je při kreslení prakticky neviditelný
-  // a užívala se s tím, že se nic nezaznamená. Přidáme drobnou stopu podél směru tahu.
-  if (activeStroke.value.points.length < 2) {
+  if (it.points.length < 2) {
     const p = toLayerCoords(e);
-    activeStroke.value.points.push(p);
+    it.points.push(p);
   }
   pushHistory();
-  annotations.value.items.push(activeStroke.value);
-  activeStroke.value = null;
+  annotations.value.items.push(it);
+  activeItem.value = null;
   saveAnnotations();
 }
 
@@ -885,6 +1029,39 @@ function clearAnnots() {
     annotations.value.items = [];
     saveAnnotations();
   }
+}
+
+// --- Text / dynamika — potvrzení vstupu ---
+const editingAnnotTool = computed(() => {
+  if (!editingAnnotationId.value) return '';
+  const it = annotations.value.items.find(x => x.id === editingAnnotationId.value)
+         || (activeItem.value && activeItem.value.id === editingAnnotationId.value ? activeItem.value : null);
+  return it ? it.tool : '';
+});
+function confirmTextAnnot() {
+  const id = editingAnnotationId.value;
+  if (!id) return;
+  const it = annotations.value.items.find(x => x.id === id) || activeItem.value;
+  if (it) {
+    it.text = annotTextDraft.value.trim();
+  }
+  if (!annotations.value.items.includes(it)) {
+    pushHistory();
+    annotations.value.items.push(it);
+  }
+  activeItem.value = null;
+  editingAnnotationId.value = null;
+  annotTextDraft.value = '';
+  saveAnnotations();
+}
+function cancelTextAnnot() {
+  // Odebrat případné pending (neuložené) místo
+  const id = editingAnnotationId.value;
+  if (id && activeItem.value && activeItem.value.id === id) {
+    activeItem.value = null;
+  }
+  editingAnnotationId.value = null;
+  annotTextDraft.value = '';
 }
 
 // History (undo/redo)
@@ -1210,6 +1387,25 @@ async function deleteBookmark(b) {
   padding: 10px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
   z-index: 25; max-width: 94vw;
 }
+.ap-tool.mus { font-size: 1.1rem; font-weight: 700; }
+
+/* Text / dynamika — vstupní overlay */
+.text-input-overlay {
+  position: absolute; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.45);
+}
+.text-input-card {
+  display: flex; flex-direction: column; gap: 10px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 16px;
+  padding: 16px; width: 86vw; max-width: 420px; box-shadow: 0 6px 24px rgba(0,0,0,0.6);
+}
+.ti-label { font-weight: 700; font-size: 0.95rem; }
+.ti-input {
+  width: 100%; background: var(--bg-elev2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px; color: var(--text); font-size: 1rem;
+}
+.ti-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .ap-row { display: flex; align-items: center; gap: 6px; }
 .toggle-row { width: 100%; }
 .ap-collapse {
@@ -1247,7 +1443,8 @@ async function deleteBookmark(b) {
   border: 1px solid var(--border); background: var(--bg-elev2);
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.ap-size span { border-radius: 50%; background: var(--text); display: block; flex: 0 0 auto; }
+.ap-size span { font-size: 0.85rem; color: var(--text); line-height: 1; }
+.ap-size.on span { color: #17130f; }
 .ap-size.on { border-color: var(--accent); }
 
 /* Loading overlay při prvním načtení / přechodu mezi skladbami */
