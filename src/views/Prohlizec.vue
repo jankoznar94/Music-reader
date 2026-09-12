@@ -60,17 +60,11 @@
             text-anchor="middle"
           >{{ it.text }}</text>
           <!-- Crescendo (otvírá se vpravo) / decrescendo (otvírá se vlevo) -->
-          <!-- Klín: špička (x1,y1) → dvě ramena se rozbíhají do (x2,y2). ŽÁDNÁ středová čára. -->
+          <!-- Uložený klín: špička (x1,y1), dvě ramena (x2,y2) a (x3,y3). ŽÁDNÁ středová čára. -->
           <g v-else-if="it.tool === 'crescendo' || it.tool === 'decrescendo'"
              :opacity="it.opacity != null ? it.opacity : 1">
-            <template v-if="it.tool === 'crescendo'">
-              <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2 - it.open" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
-              <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2 + it.open" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
-            </template>
-            <template v-else>
-              <line :x1="it.x2" :y1="it.y2" :x2="it.x1" :y2="it.y1 - it.open" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
-              <line :x1="it.x2" :y1="it.y2" :x2="it.x1" :y2="it.y1 + it.open" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
-            </template>
+            <line :x1="it.x1" :y1="it.y1" :x2="it.x2" :y2="it.y2" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
+            <line :x1="it.x1" :y1="it.y1" :x2="it.x3" :y2="it.y3" :stroke="it.color" :stroke-width="it.width" stroke-linecap="round" />
           </g>
         </g>
         <!-- Aktivní prvek -->
@@ -357,6 +351,11 @@
       </div>
     </div>
 
+    <!-- Sběr bodů zobáčku (crescendo / decrescendo) -->
+    <div v-if="wedgePoints.length" class="wedge-overlay">
+      <div class="wedge-hint">{{ wedgeHintText }} <span class="wedge-cancel" @click="wedgePoints = []">Zrušit</span></div>
+    </div>
+
     <!-- Plovoucí zoom (levý okraj) — zobrazí se na povel (tap na střed) -->
     <div class="fab-col left" v-if="controlsVisible">
       <div class="zoom-val">{{ Math.round(zoom * 100) }}%</div>
@@ -425,6 +424,20 @@ const editingAnnot = computed(() =>
 const editingTypeLabel = computed(() =>
   editingAnnot.value ? (editingAnnot.value.tool === 'dynamic' ? 'Dynamika' : 'Text') : ''
 );
+const wedgePoints = ref([]); // body zobáčku (crescendo/decrescendo), až 3 × {x,y}
+const wedgeHintText = computed(() => {
+  if (tool.value === 'crescendo') {
+    return wedgePoints.value.length === 0 ? '1. Špička (klepni)' :
+           wedgePoints.value.length === 1 ? '2. Konec ramena (klepni)' :
+           '3. Druhý konec ramena (klepni)';
+  }
+  if (tool.value === 'decrescendo') {
+    return wedgePoints.value.length === 0 ? '1. Konec ramena (klepni)' :
+           wedgePoints.value.length === 1 ? '2. Druhý konec ramena (klepni)' :
+           '3. Špička (klepni)';
+  }
+  return '';
+});
 const history = ref([]);           // undo stack (kopie předchozích stavů items)
 const redoStack = ref([]);         // redo stack
 const canUndo = computed(() => history.value.length > 0);
@@ -916,7 +929,7 @@ function toggleAnnot() {
   annotMode.value = !annotMode.value;
   if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; } // jiné panely zavřít
 }
-function setTool(t) { tool.value = t; annotMode.value = true; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; }
+function setTool(t) { tool.value = t; wedgePoints.value = []; annotMode.value = true; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; }
 
 function toLayerCoords(e) {
   const svg = layerSvgEl.value;
@@ -955,17 +968,29 @@ function onLayerDown(e) {
   const pen = tool.value === 'highlighter';
   const w = pen ? annotSize.value * 2 : annotSize.value;
 
-  // Klín (crescendo / decrescendo): začátek tahu → dva body, otvírá se tahem
+  // Klín (crescendo / decrescendo): sbírání 3 bodů klepnutím → vygeneruje zobák.
   if (tool.value === 'crescendo' || tool.value === 'decrescendo') {
-    activeItem.value = {
-      id: crypto.randomUUID(), page: currentPage.value,
-      tool: tool.value, color: annotColor.value,
-      opacity: annotOpacity.value / 100,
-      width: Math.max(2, Math.round(annotSize.value)), // klín má jasnější čáru
-      x1: p.x, y1: p.y,
-      x2: p.x, y2: p.y,
-      open: 10,
-    };
+    wedgePoints.value.push({ x: p.x, y: p.y });
+    if (wedgePoints.value.length === 3) {
+      const [a, b, c] = wedgePoints.value;
+      // Crescendo: špička = a, dvě ramena = a→b a a→c.
+      // Decrescendo: špička = c, dvě ramena = c→a a c→b.
+      const tip = tool.value === 'crescendo' ? a : c;
+      const r1  = tool.value === 'crescendo' ? b : a;
+      const r2  = tool.value === 'crescendo' ? c : b;
+      const it = {
+        id: crypto.randomUUID(), page: currentPage.value,
+        tool: tool.value, color: annotColor.value,
+        opacity: annotOpacity.value / 100,
+        width: Math.max(2, Math.round(annotSize.value)),
+        x1: tip.x, y1: tip.y, x2: r1.x, y2: r1.y,
+        x3: r2.x, y3: r2.y,
+      };
+      wedgePoints.value = [];
+      pushHistory();
+      annotations.value.items.push(it);
+      saveAnnotations();
+    }
     _prev = p;
     return;
   }
@@ -1022,14 +1047,6 @@ function onLayerMove(e) {
   if (_activePointerId !== e.pointerId) return; // jiný prvek (druhá ruka) — nekreslit
   const p = toLayerCoords(e);
   const prev = _prev;
-  // Klín: roztáhnout konec tahem (x2,y2)
-  if (activeItem.value.tool === 'crescendo' || activeItem.value.tool === 'decrescendo') {
-    activeItem.value.x2 = p.x; activeItem.value.y2 = p.y;
-    const len = Math.max(20, Math.hypot(p.x - activeItem.value.x1, p.y - activeItem.value.y1));
-    activeItem.value.open = Math.min(20, len * 0.1); // mírné rozbíhání ramen
-    _prev = p;
-    return;
-  }
   // Text / dynamika: jen sledovat, dokud neuvolníme (pozice se nastaví na up)
   if (tool.value === 'text' || tool.value === 'dynamic') {
     activeItem.value.x = p.x; activeItem.value.y = p.y;
@@ -1056,18 +1073,6 @@ function onLayerUp(e) {
   if (_activePointerId !== e.pointerId) return;
   _activePointerId = null;
   const it = activeItem.value;
-
-  // Klín: ukončit až po minimální délce, jinak zrušit
-  if (it.tool === 'crescendo' || it.tool === 'decrescendo') {
-    const len = Math.hypot(it.x2 - it.x1, it.y2 - it.y1);
-    if (len < 20) { activeItem.value = null; return; }
-    it.open = it.open || Math.min(20, len * 0.1);
-    pushHistory();
-    annotations.value.items.push(it);
-    activeItem.value = null;
-    saveAnnotations();
-    return;
-  }
 
   // Text / dynamika: místo uvolnění → otevřít textový vstup (pending)
   if (tool.value === 'text' || tool.value === 'dynamic') {
@@ -1554,6 +1559,19 @@ async function deleteBookmark(b) {
   color: var(--text); font-size: 1rem; cursor: pointer;
   display: flex; align-items: center; justify-content: center; touch-action: manipulation;
 }
+
+/* Sběr bodů zobáčku — hint lišta */
+.wedge-overlay {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+  z-index: 30;
+}
+.wedge-hint {
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 24px;
+  padding: 10px 18px; font-size: 0.95rem; color: var(--text); font-weight: 600;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+  display: flex; align-items: center; gap: 10px; white-space: nowrap;
+}
+.wedge-cancel { color: var(--accent); cursor: pointer; }
 
 /* Text / dynamika — vstupní overlay */
 .text-input-overlay {
