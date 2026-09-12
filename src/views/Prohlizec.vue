@@ -188,7 +188,6 @@
         step="1"
         :value="pageSlider"
         @input="onSliderInput($event)"
-        @change="onSliderChange($event)"
       />
     </div>
 
@@ -631,13 +630,8 @@ function onSliderInput(e) {
     ensureThumb(v);
   }, 120);
 }
-// Puštění slideru → skočit na přesně trefenou stránku (change střílí s finální hodnotou)
-async function onSliderChange(e) {
-  const v = Math.round(Number(e.target.value));
-  const target = Math.max(0, Math.min(totalPages.value - 1, v));
-  pageSlider.value = target;
-  await gotoPage(target);
-}
+// Puštění slideru → NIKAM neskočit; skok jen kliknutím na miniaturu nebo stránku.
+// (slidování jen zvýrazní náhled přes pageSlider)
 // Posunout pás miniatur tak, aby byla aktuální miniatura na očích
 function scrollThumbIntoView(idx) {
   const strip = thumbStripEl.value;
