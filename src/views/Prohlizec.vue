@@ -801,7 +801,7 @@ function onTap(e) {
   // by jinak spadl do okrajové zóny a skočil na předchozí stránku).
   if (e.target.closest('button')) return;
   if (e.target.closest('input, textarea, select')) return;
-  if (e.target.closest('.jump-panel, .slider-panel')) return;
+  if (e.target.closest('.jump-panel, .slider-panel, .bookmark-strip')) return;
   const el = viewerEl.value;
   if (!el) return;
   const x = e.clientX - el.getBoundingClientRect().left;
@@ -1090,12 +1090,18 @@ async function deleteBookmark(b) {
    takže se nemůže dostat pod obraz, ať je canvas jakkoli velký. */
 .bookmark-strip {
   position: fixed; left: 16px; right: 16px; bottom: 12px;
-  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  display: flex; flex-wrap: nowrap; gap: 8px; align-items: center;
   justify-content: flex-start; z-index: 22;
-  pointer-events: none;
+  overflow-x: auto; overflow-y: hidden;    /* jediný řádek, při přetečení horizontální scroll */
+  scrollbar-width: none;                   /* skrýt scrollbar (Firefox) */
+  -ms-overflow-style: none;                /* (IE) */
+  padding-bottom: 2px;
+  pointer-events: auto;                     /* lišta musí reagovat, aby šla horizontálně scrollovat */
+  touch-action: pan-x pan-y;                /* vertikální tah projde na stránku, horizontální scrolluje lištu */
 }
+.bookmark-strip::-webkit-scrollbar { display: none; }  /* skrýt scrollbar (Chrome/Safari) */
 .bookmark-btn {
-  display: inline-flex; align-items: center; gap: 6px;
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px;
   background: var(--bg-elev); border: 1px solid var(--border);
   border-radius: 20px; padding: 6px 12px;
   font-size: 0.92rem; font-weight: 600; color: var(--text);
