@@ -989,9 +989,11 @@ function onLayerDown(e) {
         tool: tool.value, color: annotColor.value,
         opacity: annotOpacity.value / 100,
         width: Math.max(2, Math.round(annotSize.value)),
-        x1: tip.x, y1: tip.y, x2: r1.x, y2: r1.y,
-        // Konce ramen vodorovně nad sebou: X druhého ramene bere z prvního (symetrický klín),
-        // Y z kliknutí, takže ramena jsou vždy přímo nad sebou bez ohledu na přesnost kliknutí.
+        x1: tip.x,
+        // Hrot vertikálně na střed mezi konci ramen (konce jsou už vodorovně
+        // nad sebou z předchozí úpravy → hrot tak sedí přímo doprostřed).
+        y1: (r1.y + r2.y) / 2,
+        x2: r1.x, y2: r1.y,
         x3: r1.x, y3: r2.y,
       };
       wedgePoints.value = [];
