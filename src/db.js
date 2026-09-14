@@ -182,3 +182,14 @@ export function dbSaveBookmarks(bookmarks) {
 export function dbGetBookmarks(songId) {
   return tx('bookmarks', 'readonly', (s) => s.get(songId));
 }
+
+// --- Nastavení zobrazení skladby (per-skladba: výchozí zoom) ---
+// Klíč 'view:<songId>' v meta store → { songId, zoom } (nenastaveno = fit 1.0)
+export function dbSaveSongView(view) {
+  return tx('meta', 'readwrite', (s) => s.put(cloneForDb(view), 'view:' + view.songId));
+}
+
+export async function dbGetSongView(songId) {
+  const val = await tx('meta', 'readonly', (s) => s.get('view:' + songId));
+  return val === undefined ? null : val;
+}
