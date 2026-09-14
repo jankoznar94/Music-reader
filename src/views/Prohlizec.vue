@@ -438,8 +438,8 @@
       <button class="fab" @click="resetView" title="Vycentrovat">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
       </button>
-      <button class="fab" @click="saveZoomAsDefault" title="Uložit zoom jako výchozí">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
+      <button class="fab" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit zoom jako výchozí">
+        <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
       </button>
       <button class="fab" @click="toggleSlider" :class="{ on: sliderOpen }" title="Slider stránek">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
@@ -479,6 +479,8 @@ const currentPage = ref(0); // 0-based
 const loading = ref(true);  // loading overlay při prvním načtení / přechodu mezi skladbami
 const zoom = ref(1.0);     // výchozí zoom 100 % (1 = fit výšce)
 const songZoom = ref(1.0); // uložený výchozí zoom aktuální skladby (per-skladba), fallback 1.0
+// True, když má aktuální skladba nastavený (uložený) výchozí zoom ≠ fit 1.0
+const hasSavedZoom = ref(false);
 const panX = ref(0);        // posun stránky (dvouprstý pan)
 const panY = ref(0);
 
@@ -707,6 +709,7 @@ let availW = 800, availH = 1100;
 async function applySongView() {
   const view = await dbGetSongView(song.id);
   songZoom.value = (view && view.zoom) ? view.zoom : 1.0;
+  hasSavedZoom.value = !!(view && view.zoom);
   // Vycentrovat = uložený výchozí (ne vždy 1.0)
   zoom.value = songZoom.value;
   panX.value = 0; panY.value = 0;
@@ -715,6 +718,7 @@ async function applySongView() {
 // Uloží aktuální zoom jako výchozí zobrazení pro DANOU skladbu
 async function saveZoomAsDefault() {
   songZoom.value = zoom.value;
+  hasSavedZoom.value = true;
   await dbSaveSongView({ songId: song.id, zoom: zoom.value });
 }
 
