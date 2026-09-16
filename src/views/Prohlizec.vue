@@ -154,10 +154,35 @@
       </svg>
     </div>
 
-    <!-- Indikátor stránky + názvu noty (schovaný při úpravě prvku, ať nepřekáží) -->
+    <!-- Indikátor stránky + názvu noty (schovaný při úpravě prvku, ať nepřekáží).
+         Kliknutí na číslo stránky otevře ruční zadání cílové stránky. -->
     <div v-if="!editingId" class="page-ind">
       <span v-if="group" class="ind-song">{{ songName }} · {{ groupIndex + 1 }}/{{ groupSongs.length }}</span>
-      <span>{{ currentPage + 1 }} / {{ totalPages }}</span>
+      <button class="ind-page" @click="openPageGo" :title="'Přejít na stránku'">
+        {{ currentPage + 1 }} / {{ totalPages }}
+      </button>
+    </div>
+
+    <!-- Ruční zadání čísla stránky (plovoucí modal, stejná logika jako u skoku na skladbu) -->
+    <div v-if="pageGoOpen" class="page-go-backdrop" @click.self="closePageGo">
+      <div class="page-go">
+        <span class="pg-label">Přejít na stránku</span>
+        <div class="pg-row">
+          <input
+            ref="pageGoInputEl"
+            v-model="pageGoValue"
+            class="pg-input"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            @keydown.enter="goToTypedPage"
+            @keydown.esc="closePageGo"
+          />
+          <span class="pg-total">/ {{ totalPages }}</span>
+          <button class="pg-btn primary" @click="goToTypedPage">Přejít</button>
+          <button class="pg-btn" @click="closePageGo">Zavřít</button>
+        </div>
+      </div>
     </div>
 
     <!-- Loading overlay při prvním načtení / přechodu mezi skladbami -->
@@ -1059,7 +1084,7 @@ function onTap(e) {
   // by jinak spadl do okrajové zóny a skočil na předchozí stránku).
   if (e.target.closest('button')) return;
   if (e.target.closest('input, textarea, select')) return;
-  if (e.target.closest('.jump-panel, .slider-panel, .bookmark-strip')) return;
+  if (e.target.closest('.jump-panel, .slider-panel, .bookmark-strip, .page-go-backdrop')) return;
   const el = viewerEl.value;
   if (!el) return;
   const x = e.clientX - el.getBoundingClientRect().left;
@@ -1697,6 +1722,40 @@ async function deleteJump(j) {
   }
 }
 
+// --- Ruční zadání čísla stránky (indikátor nahoře) ---
+// Jan: "dalo by se ručně zadat číslo stránky, na kterou chci skočit" — klik na číslo
+// v indikátoru stránky otevře zadání; 1-based vstup, uvnitř se pracuje s 0-based currentPage.
+const pageGoOpen = ref(false);
+const pageGoValue = ref('');
+const pageGoInputEl = ref(null);
+let _pageGoPrevPage = null;   // stránka, ze které jsme zadání otevřeli (Esc = zpět na ni)
+
+function openPageGo() {
+  _pageGoPrevPage = currentPage.value;
+  pageGoValue.value = String(currentPage.value + 1);
+  pageGoOpen.value = true;
+  // panel se otevře i mimo anotační režim; ostatní mody zavřít, aby se nepřekrývaly
+  annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false;
+  nextTick(() => {
+    const el = pageGoInputEl.value;
+    if (el) { el.focus(); el.select(); }
+  });
+}
+function closePageGo() {
+  pageGoOpen.value = false;
+}
+// Zadej číslo → skoč na stránku; prázdný/neplatný vstup nebo Esc → zpět na výchozí stránku
+function goToTypedPage() {
+  const raw = String(pageGoValue.value).trim();
+  const n = parseInt(raw, 10);
+  pageGoOpen.value = false;
+  if (!raw || !Number.isFinite(n)) return;
+  const target = Math.max(0, Math.min(totalPages.value - 1, n - 1));
+  // gotoPage je synchronní fire-and-forget (token v renderCurrent vykreslí jen poslední stránku)
+  if (target === currentPage.value && _pageGoPrevPage === target) return;
+  gotoPage(target);
+}
+
 // --- Záložky (konkrétní stránky) ---
 function openBookmark() {
   bookmarkMode.value = true;
@@ -1823,6 +1882,14 @@ async function deleteBookmark(b) {
   z-index: 23;
 }
 .ind-song { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+/* Číslo stránky v indikátoru je tlačítko — otevírá ruční zadání stránky.
+   Ploché, bez hover/focus efektů (mobilní PWA), jen :active ztmavení. */
+.ind-page {
+  background: transparent; border: none; padding: 2px 6px; margin: -2px -6px;
+  border-radius: 12px; font: inherit; color: var(--text-dim);
+  cursor: pointer; touch-action: manipulation; white-space: nowrap;
+}
+.ind-page:active { background: var(--bg-elev2); }
 
 /* Přepínání not ve skupině */
 .nav-strip {
@@ -1925,6 +1992,33 @@ async function deleteBookmark(b) {
   font-size: 0.8rem; font-weight: 700;
 }
 .bk-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Ruční zadání stránky — plovoucí modal nahoře, plochý design bez karet */
+.page-go-backdrop {
+  position: fixed; inset: 0; z-index: 41;
+  background: rgba(0,0,0,0.35);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 64px 16px 16px;
+}
+.page-go {
+  display: flex; flex-direction: column; gap: 10px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 16px;
+  padding: 12px 14px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); max-width: 94vw;
+}
+.pg-label { font-weight: 700; font-size: 0.95rem; }
+.pg-row { display: flex; align-items: center; gap: 8px; }
+.pg-input {
+  width: 84px; background: var(--bg-elev2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 10px; color: var(--text); font-size: 1rem;
+  font-weight: 600; text-align: center;
+}
+.pg-total { color: var(--text-dim); font-size: 0.9rem; font-weight: 600; }
+.pg-btn {
+  background: var(--bg-elev2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 12px; font-size: 0.9rem; color: var(--text); cursor: pointer;
+  touch-action: manipulation;
+}
+.pg-btn.primary { background: var(--accent); color: #17130f; border-color: var(--accent); font-weight: 600; }
 
 .jp-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .jp-drag {
