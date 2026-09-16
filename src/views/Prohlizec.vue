@@ -1845,10 +1845,10 @@ async function deleteBookmark(b) {
 }
 
 /* Skoky (Da Capo / VIDE) — vpravo, AŽ POD sloupcem FAB tlačítek.
-   Sloupec FAB je 3×52px + 2 mezery = 176px, tj. sahá do 50 % + 88px,
-   proto začínáme až na 50 % + 110px, aby se tlačítka nepřekrývala. */
+   Sloupec FAB je 3×52px + 2 mezery = 176px, tj. sahá do 50 % + 88px.
+   Jan po nasazení chtěl ještě o 15 px níž → 50 % + 125px (rezerva pod FAB). */
 .jump-strip {
-  position: fixed; right: 16px; top: calc(50% + 110px);
+  position: fixed; right: 16px; top: calc(50% + 125px);
   display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 24;
   pointer-events: none;
 }
