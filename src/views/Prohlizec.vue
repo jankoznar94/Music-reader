@@ -228,7 +228,21 @@
       <!-- Seznam existujících záložek (editace + řazení + smazání) -->
       <div v-if="bookmarks.length" class="jp-list">
         <div class="jp-subtitle">Záložky</div>
-        <div v-for="(b, idx) in bookmarks" :key="b.id" class="jp-item">
+        <div v-for="b in bookmarks" :key="b.id" class="jp-item" :class="{ dragging: bmDragId === b.id }">
+          <button
+            class="jp-drag"
+            title="Přetáhnout pro změnu pořadí"
+            @pointerdown="bmDragStart($event, b)"
+            @pointermove="bmDragMove"
+            @pointerup="bmDragEnd"
+            @pointercancel="bmDragEnd"
+            @touchstart.stop.prevent="bmNoop"
+            @touchmove.stop.prevent="bmNoop"
+            @touchend.stop="bmNoop"
+            @touchcancel.stop="bmNoop"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/></svg>
+          </button>
           <span class="jp-item-label" :class="{ dim: !b.label }">str. {{ b.page + 1 }}<template v-if="b.label"> · {{ b.label }}</template></span>
           <span class="jp-actions">
             <button class="jp-icon" @click="startEditBookmark(b)" title="Upravit">
@@ -236,14 +250,6 @@
             </button>
             <button class="jp-icon del" @click="deleteBookmark(b)" title="Smazat">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-            </button>
-          </span>
-          <span class="jp-moves">
-            <button class="jp-icon" @click="moveBookmark(b, -1)" :disabled="idx === 0" title="Přesunout nahoru">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
-            </button>
-            <button class="jp-icon" @click="moveBookmark(b, 1)" :disabled="idx === bookmarks.length - 1" title="Přesunout dolů">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
             </button>
           </span>
         </div>
@@ -667,6 +673,8 @@ onUnmounted(() => {
   window.removeEventListener('resize', onResize);
   disconnectThumbObserver();
   releaseWakeLock();
+  clearTimeout(_bmSaveTimer);
+  _bmDrag = null;
 });
 
 // --- Screen Wake Lock: displej nezhasíná, dokud je prohlížeč otevřený ---
@@ -1714,12 +1722,71 @@ function startEditBookmark(b) {
   bookmarkEditing.value = b.id;
   bookmarkLabel.value = b.label || '';
 }
-function moveBookmark(b, dir) {
-  const i = bookmarks.value.findIndex(x => x.id === b.id);
-  const j = i + dir;
-  if (i < 0 || j < 0 || j >= bookmarks.value.length) return;
-  [bookmarks.value[i], bookmarks.value[j]] = [bookmarks.value[j], bookmarks.value[i]];
-  dbSaveBookmarks({ songId: song.id, items: bookmarks.value });
+// --- Řazení záložek tažením za táhlo (drag & drop) ---
+// Jan: v úpravě záložek chce měnit pořadí tažením, ne šipkami.
+// Řádek se přesouvá živě podle polohy prstu; do IndexedDB se ukládá až po puštění (jeden zápis).
+const bmDragId = ref(null);       // id záložky, která se právě táhne (jen vizuální stav)
+let _bmDrag = null;               // { id, lastY, moved }
+let _bmSaveTimer = null;
+
+function bmRows(el) {
+  const list = el.closest('.jp-list');
+  return list ? Array.from(list.querySelectorAll('.jp-item')) : [];
+}
+function bmNoop() {}   // dlaždicové touch eventy jen pohlcujeme, ať je .viewer nebere jako swipe
+function bmDragStart(e, b) {
+  if (_bmDrag) return;
+  e.stopPropagation();
+  _bmDrag = { id: b.id, lastY: e.clientY, moved: false };
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* ignorovat */ }
+  e.preventDefault();
+}
+function bmDragMove(e) {
+  const d = _bmDrag;
+  if (!d) return;
+  if (!d.moved) {
+    if (Math.abs(e.clientY - d.lastY) < 6) return;  // tolerance: tap na táhlo nic neposouvá
+    d.moved = true;
+    bmDragId.value = d.id;
+  }
+  d.lastY = e.clientY;
+  const arr = bookmarks.value;
+  const rows = bmRows(e.currentTarget);
+  if (rows.length !== arr.length) return;
+  let i = arr.findIndex(x => x.id === d.id);
+  if (i < 0) return;
+  let moved = false;
+  while (i > 0) {                                   // nahoru přes střed předchozího řádku
+    const r = rows[i - 1].getBoundingClientRect();
+    if (e.clientY >= r.top + r.height / 2) break;
+    [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
+    rows.splice(i - 1, 0, rows.splice(i, 1)[0]);
+    i--; moved = true;
+  }
+  while (i < arr.length - 1) {                      // dolů přes střed následujícího řádku
+    const r = rows[i + 1].getBoundingClientRect();
+    if (e.clientY <= r.top + r.height / 2) break;
+    [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
+    rows.splice(i + 1, 0, rows.splice(i, 1)[0]);
+    i++; moved = true;
+  }
+  if (moved) bmScheduleSave();
+}
+function bmDragEnd() {
+  const d = _bmDrag;
+  if (!d) return;
+  _bmDrag = null;
+  bmDragId.value = null;
+  if (d.moved) bmSaveNow();                          // jeden zápis po dokončení tažení
+}
+function bmScheduleSave() {
+  clearTimeout(_bmSaveTimer);
+  _bmSaveTimer = setTimeout(() => { _bmSaveTimer = null; bmSaveNow(); }, 400);
+}
+function bmSaveNow() {
+  clearTimeout(_bmSaveTimer);
+  _bmSaveTimer = null;
+  return dbSaveBookmarks({ songId: song.id, items: bookmarks.value });
 }
 async function goBookmark(b) {
   await gotoPage(b.page);
@@ -1777,9 +1844,11 @@ async function deleteBookmark(b) {
   min-width: 44px; text-align: center; padding: 0 4px;
 }
 
-/* Skoky (Da Capo / VIDE) — vpravo, pod tlačítkem Jump menu, výrazně barevné */
+/* Skoky (Da Capo / VIDE) — vpravo, AŽ POD sloupcem FAB tlačítek.
+   Sloupec FAB je 3×52px + 2 mezery = 176px, tj. sahá do 50 % + 88px,
+   proto začínáme až na 50 % + 110px, aby se tlačítka nepřekrývala. */
 .jump-strip {
-  position: fixed; right: 16px; top: calc(50% + 67px);
+  position: fixed; right: 16px; top: calc(50% + 110px);
   display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 24;
   pointer-events: none;
 }
@@ -1858,7 +1927,15 @@ async function deleteBookmark(b) {
 .bk-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .jp-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
-.jp-moves { display: flex; align-items: center; gap: 0; }
+.jp-drag {
+  width: 32px; height: 32px; flex: 0 0 auto; padding: 0;
+  background: transparent; border: none; border-radius: 50%;
+  color: var(--text-dim); display: flex; align-items: center; justify-content: center;
+  cursor: grab; touch-action: none;   /* touch-action: none → tažení neposouvá stránku */
+}
+.jp-drag:active { color: var(--text); }
+.jp-item.dragging { border-color: var(--accent); }
+.jp-item.dragging .jp-drag { color: var(--accent); }
 .jp-icon {
   width: 32px; height: 32px; flex: 0 0 auto; padding: 0;
   background: transparent; border: none; border-radius: 50%;
