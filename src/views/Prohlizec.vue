@@ -247,6 +247,14 @@
            Uvnitř .stage → posouvají se a zoomují spolu s notami, takže tlačítko
            drží na místě, kam ho uživatel naklepal (třemi body). Souřadnice
            place {x,y,w,h} jsou ve stejné soustavě jako anotační vrstva. -->
+      <!-- NÁHLED umístění: hned po naklepání tří bodů je vidět, kde a jak velké
+           tlačítko bude. Dřív se ukázalo až po uložení skoku — uživatel tedy
+           po "Umístění: hotovo" neviděl nic a nevěděl, co se stalo. -->
+      <div v-if="jumpPlace" class="jump-on-page">
+        <div class="jump-on-btn preview" :style="jumpBoxStyle({ place: jumpPlace })">
+          {{ (jumpLabel || '').trim() || 'Skok' }}
+        </div>
+      </div>
       <div v-if="placerJumps.length" class="jump-on-page">
         <button
           v-for="j in placerJumps"
@@ -430,8 +438,9 @@
       />
     </div>
 
-    <!-- Plovoucí panel anotací (jen v anotačním režimu) -->
-    <div v-if="annotMode" class="annot-panel">
+    <!-- Plovoucí panel anotací (v anotačním režimu; při umisťování skoku schovaný,
+         aby nezakrýval noty, na které se klepá) -->
+    <div v-if="annotMode && !jumpPlaceMode" class="annot-panel">
       <!-- Hlavička: sbalit/rozbalit -->
       <div class="ap-header">
         <span class="ap-title">Anotace</span>
@@ -808,10 +817,10 @@ function startJumpPlace() {
   jumpPlaceMode.value = true;
   jumpPlacePoints.value = [];
   jumpPlace.value = null;
-  // POZOR: záměrně NEZAPÍNÁME annotMode — tím by se otevřel anotační panel,
-  // který přes noty zakryje celou plochu a klepnutí by šla do něj, ne na vrstvu.
-  // Vrstva se aktivuje přes `active: annotMode || jumpPlaceMode` (viz šablona).
-  annotMode.value = false;
+  // POZOR: annotMode se tu ZÁMĚRNĚ NEMĚNÍ. Dřív se vypínal, jenže tím se spustil
+  // watch na annotMode, který umisťování hned zrušil — a když uživatel měl otevřené
+  // anotace, nemohl umístit vůbec nic. Anotační panel se při umisťování jen schová
+  // (v-if="annotMode && !jumpPlaceMode"), vrstva se aktivuje přes jumpPlaceMode.
 }
 // Ze tří bodů spočítá obdélník: levé body = svislé stěny, krajní = vodorovné.
 function commitJumpPlace() {
@@ -819,7 +828,8 @@ function commitJumpPlace() {
   const left = Math.min(a.x, b.x), top = Math.min(a.y, b.y);
   const right = Math.max(c.x, a.x, b.x), bottom = Math.max(a.y, b.y);
   const w = Math.max(60, right - left), h = Math.max(28, bottom - top);
-  jumpPlace.value = { x: left, y: top, w, h };
+  // page = stránka, na kterou uživatel klepal; tlačítko se má zobrazovat TADY
+  jumpPlace.value = { x: left, y: top, w, h, page: currentPage.value };
   jumpPlaceMode.value = false;
   jumpPlacePoints.value = [];
 }
@@ -1785,7 +1795,9 @@ function jumpAtPoint(p) {
   return null;
 }
 // Skoky na aktuální stránce rozdělené podle toho, zda mají umístění na notách
-const jumpsOnPage = computed(() => jumps.value.filter(j => j.fromPage === currentPage.value));
+const jumpsOnPage = computed(() => jumps.value.filter(j =>
+  j.fromPage === currentPage.value || (j.place && j.place.page === currentPage.value)
+));
 const placerJumps = computed(() => jumpsOnPage.value.filter(j => j.place));
 const edgeJumps = computed(() => jumpsOnPage.value.filter(j => !j.place));
 // Styl obdélníku tlačítka na stránce (v souřadnicích anotační vrstvy = CSS px)
@@ -2373,6 +2385,11 @@ async function deleteBookmark(b) {
   cursor: pointer; touch-action: manipulation;
 }
 .jump-on-btn:active { background: var(--bg-elev2); border-color: var(--border); color: var(--text); }
+/* Náhled před uložením — čárkovaně, ať je jasné, že ještě není uložený */
+.jump-on-btn.preview {
+  background: rgba(201,168,124,0.30); border: 2px dashed var(--accent);
+  color: var(--text); pointer-events: none;
+}
 /* Nápověda u sběru tří bodů (v panelu skoku) */
 .jp-hint {
   font-size: 0.82rem; color: var(--accent); font-weight: 600;
