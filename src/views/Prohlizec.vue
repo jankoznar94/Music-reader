@@ -14,34 +14,44 @@
          Ploché, bez hover/focus efektů — jediný feedback je :active (Jan: mobilní PWA). -->
     <div class="top-bar" ref="barEl">
       <div class="tb-row">
-        <button class="tb-btn" @click="goBack" title="Zpět">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
-        </button>
-        <span v-if="group" class="tb-song">{{ songName }}</span>
-        <button class="tb-page" @click="openPageGo" title="Přejít na stránku">
-          {{ currentPage + 1 }} / {{ totalPages }}
-        </button>
+        <!-- Levá skupina -->
+        <div class="tb-side left">
+          <button class="tb-btn" @click="goBack" title="Zpět">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+          </button>
+          <span v-if="group" class="tb-song">{{ songName }}</span>
+          <!-- Listování sestavou — navigace, proto vlevo (a vyvažuje lištu) -->
+          <div v-if="group" class="tb-nav">
+            <button class="tb-btn" @click="prevSong" :disabled="groupIndex <= 0" title="Předchozí skladba">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <span class="tb-grp">{{ groupIndex + 1 }}/{{ groupSongs.length }}</span>
+            <button class="tb-btn" @click="nextSong" :disabled="groupIndex >= groupSongs.length - 1" title="Další skladba">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+          </div>
+          <button class="tb-btn" @click="openBookmark" :class="{ on: bookmarkMode }" title="Přidat záložku na tuto stránku">🔖</button>
+          <button class="tb-btn" @click="toggleJumpMode" :class="{ on: jumpMode }" title="Vytvořit skok (Da Capo / VIDE)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
+          </button>
+        </div>
+        <!-- Rezerva: drží místo pro počítadlo, které je na přesném středu lišty -->
+        <div class="tb-mid-space" />
+        <!-- Pravá skupina -->
+        <div class="tb-side right">
         <button class="tb-btn" @click="toggleAnnot" :class="{ on: annotMode }" title="Anotace / listování">✏️</button>
-        <button class="tb-btn" @click="openBookmark" :class="{ on: bookmarkMode }" title="Přidat záložku na tuto stránku">🔖</button>
-        <button class="tb-btn" @click="toggleJumpMode" :class="{ on: jumpMode }" title="Vytvořit skok (Da Capo / VIDE)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
-        </button>
         <button class="tb-btn zoom-btn" @click="toggleZoomPanel" :class="{ on: zoomPanelOpen }" title="Zvětšení">
           {{ Math.round(zoom * 100) }}%
         </button>
         <button class="tb-btn" @click="toggleSlider" :class="{ on: sliderOpen }" title="Slider stránek">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
         </button>
-        <div v-if="group" class="tb-nav">
-          <button class="tb-btn" @click="prevSong" :disabled="groupIndex <= 0" title="Předchozí skladba">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-          </button>
-          <span class="tb-grp">{{ groupIndex + 1 }}/{{ groupSongs.length }}</span>
-          <button class="tb-btn" @click="nextSong" :disabled="groupIndex >= groupSongs.length - 1" title="Další skladba">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-          </button>
         </div>
       </div>
+      <!-- Počítadlo stránek — na přesném středu lišty (klik otevře zadání stránky) -->
+      <button class="tb-page tb-page-center" @click="openPageGo" title="Přejít na stránku">
+        {{ currentPage + 1 }} / {{ totalPages }}
+      </button>
     </div>
 
     <!-- Panel zvětšení — otevírá se z tlačítka s procenty v liště -->
@@ -2044,8 +2054,8 @@ async function deleteBookmark(b) {
 .top-bar {
   position: absolute; top: 0; left: 0; right: 0;
   display: flex; flex-direction: row; align-items: center;
-  padding: 5px 8px;
-  padding-top: calc(5px + env(safe-area-inset-top, 0px));
+  padding: 3px 8px;
+  padding-top: calc(3px + env(safe-area-inset-top, 0px));
   /* Velikost prvků roste s šířkou displeje. Dřív jsem je zmenšila napevno, aby se
      "vešly" — jenže na širším displeji pak zůstaly malé v levém rohu a zbytek lišty
      byl prázdný. Pružná velikost + space-between vyplní lištu na každé šířce. */
@@ -2053,7 +2063,7 @@ async function deleteBookmark(b) {
      (pohodlný dotyk), na malém telefonu se zastaví na 33 px, na tabletu na 50 px.
      Dřív tu bylo 4.6vw, což vyšlo na ~19 px — clamp vždy skončil na minimu
      a tlačítka zůstala malá bez ohledu na šířku displeje. */
-  --tb: clamp(40px, 11.8vw, 56px);
+  --tb: clamp(34px, 10vw, 48px);
   /* Lehká průhlednost + jemný rozostření pozadí — noty pod lištou neprosvítají rušivě */
   background: rgba(38, 34, 32, 0.78);
   backdrop-filter: blur(3px);
@@ -2070,12 +2080,23 @@ async function deleteBookmark(b) {
 }
 .top-bar::-webkit-scrollbar { display: none; }
 .tb-row {
-  /* Prvky jsou tady (ne v .top-bar) — rozestoupí se po celé šířce lišty,
-     takže nezůstává prázdný pruh vpravo. */
   display: flex; align-items: center; justify-content: space-between;
   gap: clamp(3px, 1.2vw, 12px);
-  min-height: 44px; width: 100%;
+  min-height: 38px; width: 100%;
 }
+/* Levá a pravá skupina tlačítek */
+/* Obě skupiny stejně široké (1 1 0) — tím je počítadlo mezi nimi PŘESNĚ
+   uprostřed a tlačítka se drží u okrajů. Dřív měla levá jen tlačítko zpět,
+   takže byla prázdná a počítadlo se překrývalo s tlačítky. */
+/* Skupiny NEROSTOU (0 1 auto) — jinak by se jejich obsah tlačil do středu
+   a tlačítka by zajela pod počítadlo (ověřeno: 28 px překryv). */
+.tb-side { display: flex; align-items: center; gap: clamp(3px, 1.2vw, 12px);
+           flex: 0 1 auto; min-width: 0; }
+.tb-side.left { justify-content: flex-start; }
+.tb-side.right { justify-content: flex-end; }
+/* Rezerva na středu: roste a drží odstup tlačítek od počítadla.
+   min-width musí být VŽDY větší než šířka počítadla, aby se nikdy nepřekryla. */
+.tb-mid-space { flex: 1 1 auto; min-width: clamp(60px, 16vw, 90px); }
 .tb-btn {
   width: var(--tb, 38px); height: var(--tb, 38px); flex: 0 0 auto; padding: 0;
   border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
@@ -2086,8 +2107,8 @@ async function deleteBookmark(b) {
 .tb-btn.sm { width: calc(var(--tb, 38px) - 8px); height: calc(var(--tb, 38px) - 8px); font-size: 1rem; }
 .tb-btn.sm svg { width: calc(var(--tb, 38px) * 0.46); height: calc(var(--tb, 38px) * 0.46); }
 /* Tlačítko zvětšení má místo ikony text s procenty — potřebuje víc šířky */
-.tb-btn.zoom-btn { width: auto; min-width: calc(var(--tb, 38px) + 14px); padding: 0 10px;
-  font-size: clamp(0.8rem, 2vw, 0.95rem); font-weight: 600; border-radius: 18px; }
+.tb-btn.zoom-btn { width: auto; min-width: calc(var(--tb, 38px) + 8px); padding: 0 7px;
+  font-size: clamp(0.75rem, 1.9vw, 0.9rem); font-weight: 600; border-radius: 16px; }
 .tb-btn.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
 .tb-btn:disabled { opacity: 0.3; pointer-events: none; }
 .tb-btn:active { background: var(--bg-elev); }
@@ -2100,11 +2121,18 @@ async function deleteBookmark(b) {
   font-weight: 600; font-size: clamp(0.8rem, 1.7vw, 1rem); color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Počítadlo stránek — na PŘESNÉM středu lišty (nezávisle na šířce skupin).
+   Klik otevře ruční zadání stránky. */
+.tb-page-center {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+}
 /* Počítadlo stránek — klik otevře ruční zadání stránky */
 .tb-page {
   flex: 0 0 auto; background: transparent; border: 1px solid var(--border);
-  border-radius: 15px; padding: 6px 10px; font: inherit;
-  font-size: clamp(0.85rem, 2.2vw, 1rem);
+  border-radius: 14px; padding: 4px 9px; font: inherit;
+  font-size: clamp(0.8rem, 2vw, 0.95rem);
   font-weight: 600; color: var(--text-dim); cursor: pointer;
   touch-action: manipulation; white-space: nowrap;
 }
