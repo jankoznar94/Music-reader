@@ -21,19 +21,14 @@
         <button class="tb-page" @click="openPageGo" title="Přejít na stránku">
           {{ currentPage + 1 }} / {{ totalPages }}
         </button>
-        <span class="tb-sep" />
         <button class="tb-btn" @click="toggleAnnot" :class="{ on: annotMode }" title="Anotace / listování">✏️</button>
         <button class="tb-btn" @click="openBookmark" :class="{ on: bookmarkMode }" title="Přidat záložku na tuto stránku">🔖</button>
         <button class="tb-btn" @click="toggleJumpMode" :class="{ on: jumpMode }" title="Vytvořit skok (Da Capo / VIDE)">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
         </button>
-      </div>
-
-      <div class="tb-row">
         <button class="tb-btn sm" @click="zoomOut" title="Oddálit">−</button>
         <span class="tb-zoom">{{ Math.round(zoom * 100) }}%</span>
         <button class="tb-btn sm" @click="zoomIn" title="Přiblížit">+</button>
-        <span class="tb-sep" />
         <button class="tb-btn sm" @click="resetView" title="Vycentrovat">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
         </button>
@@ -43,7 +38,6 @@
         <button class="tb-btn sm" @click="toggleSlider" :class="{ on: sliderOpen }" title="Slider stránek">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
         </button>
-        <span class="tb-sep" />
         <div v-if="group" class="tb-nav">
           <button class="tb-btn sm" @click="prevSong" :disabled="groupIndex <= 0" title="Předchozí skladba">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -880,11 +874,12 @@ async function saveZoomAsDefault() {
 }
 
 function computeFit() {
-  // .page-area je vlastní oblast POD lištou (flex:1) — její clientHeight už lištu
-  // neobsahuje, takže se nic nedopočítává. Fallback na .viewer je pro jistotu.
+  // .page-area je přes celou výšku (lišta je overlay), ale má padding-top o výšce
+  // lišty. Odečteme ho, aby se noty vešly POD lištu a nepod ni nezajely.
   const el = pageAreaEl.value || viewerEl.value;
   if (el) {
-    availH = Math.max(200, el.clientHeight - 12);
+    const barH = topBarH.value || 0;
+    availH = Math.max(200, el.clientHeight - barH - 12);
     availW = Math.max(200, el.clientWidth - 12);
   }
 }
@@ -1899,6 +1894,14 @@ function goToTypedPage() {
 
 // --- Záložky (konkrétní stránky) ---
 function openBookmark() {
+  // Opětovný tap na tlačítko záložek panel ZAVŘE (jinak se dal jen otevřít
+  // a ven se šlo přes "Zavřít" v panelu).
+  if (bookmarkMode.value) {
+    bookmarkMode.value = false;
+    bookmarkLabel.value = '';
+    bookmarkEditing.value = null;
+    return;
+  }
   bookmarkMode.value = true;
   annotMode.value = false; // jiný panel → vypnout anotaci
   endEdit();               // a zrušit výběr prvku (rámeček by zůstal viset)
@@ -2018,62 +2021,77 @@ async function deleteBookmark(b) {
 }
 
 /* ===== JEDINÁ HORNÍ LIŠTA =====
-   Trvale viditelná, dva řádky. Nekryje noty — stránka má vlastní oblast pod ní.
+   Jeden řádek, absolutně pozicovaná (neodtlačuje dokument dolů — noty mají
+   vlastní plochu s odpovídajícím paddingem). Lehce průhledná, ať není těžká.
    Plochá, bez hover/focus efektů (Jan: mobilní PWA) — feedback jen :active / .on. */
 .top-bar {
-  flex: 0 0 auto;
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 6px 8px;
-  padding-top: calc(6px + env(safe-area-inset-top, 0px));
-  background: var(--bg-elev); border-bottom: 1px solid var(--border);
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; flex-direction: row; align-items: center; gap: 2px;
+  padding: 4px 4px;
+  padding-top: calc(5px + env(safe-area-inset-top, 0px));
+  /* Lehká průhlednost + jemný rozostření pozadí — noty pod lištou neprosvítají rušivě */
+  background: rgba(38, 34, 32, 0.78);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  border-bottom: 1px solid var(--border);
+  /* Když je displej úzký (telefon na výšku), méně důležité prvky se odsunou
+     do strany — scrollbar skrytý, ať lišta zůstane čistá. */
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none; -ms-overflow-style: none;
+  touch-action: pan-x;
   /* Vlastní vrstva NAD podkladem modalu (41) — podklad je zkrácený pod lištu,
      takže lišta zůstává čitelná a klikatelná i s otevřeným modalem. */
   z-index: 45;
 }
+.top-bar::-webkit-scrollbar { display: none; }
 .tb-row {
-  display: flex; align-items: center; gap: 6px;
-  min-height: 40px;
+  display: flex; align-items: center; gap: 2px;
+  min-height: 38px;
 }
 .tb-btn {
-  width: 40px; height: 40px; flex: 0 0 auto; padding: 0;
+  width: 31px; height: 31px; flex: 0 0 auto; padding: 0;
   border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
-  color: var(--text); font-size: 1.05rem; cursor: pointer;
+  color: var(--text); font-size: 1rem; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   touch-action: manipulation;
 }
-.tb-btn.sm { width: 34px; height: 34px; font-size: 1rem; }
+.tb-btn.sm { width: 26px; height: 26px; font-size: 0.9rem; }
+.tb-btn.sm svg { width: 16px; height: 16px; }
 .tb-btn.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
 .tb-btn:disabled { opacity: 0.3; pointer-events: none; }
 .tb-btn:active { background: var(--bg-elev); }
 
 /* Název skladby — zabírá zbylé místo, zkracuje se třemi tečkami */
 .tb-song {
-  flex: 1 1 auto; min-width: 0;
-  font-weight: 600; font-size: 0.92rem; color: var(--text);
+  flex: 0 1 auto; min-width: 0; max-width: 30vw;
+  font-weight: 600; font-size: 0.85rem; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Počítadlo stránek — klik otevře ruční zadání stránky */
 .tb-page {
   flex: 0 0 auto; background: transparent; border: 1px solid var(--border);
-  border-radius: 16px; padding: 6px 10px; font: inherit; font-size: 0.9rem;
+  border-radius: 13px; padding: 4px 5px; font: inherit; font-size: 0.78rem;
   font-weight: 600; color: var(--text-dim); cursor: pointer;
   touch-action: manipulation; white-space: nowrap;
 }
 .tb-page:active { background: var(--bg-elev2); }
 .tb-zoom {
-  flex: 0 0 auto; min-width: 52px; text-align: center;
-  font-size: 0.85rem; color: var(--text-dim); font-weight: 600;
+  flex: 0 0 auto; min-width: 28px; text-align: center;
+  font-size: 0.74rem; color: var(--text-dim); font-weight: 600;
 }
-.tb-sep { width: 1px; height: 24px; flex: 0 0 auto; background: var(--border); }
-.tb-nav { display: flex; align-items: center; gap: 6px; }
+.tb-sep { display: none; }
+.tb-nav { display: flex; align-items: center; gap: 3px; }
 .tb-grp {
-  font-size: 0.85rem; font-weight: 600; color: var(--text);
-  min-width: 38px; text-align: center;
+  font-size: 0.8rem; font-weight: 600; color: var(--text);
+  min-width: 32px; text-align: center;
 }
 
 /* Oblast stránky pod lištou — z její velikosti se počítá fit not */
 .page-area {
   flex: 1 1 auto; min-height: 0; position: relative;
+  /* Lišta je absolutní overlay (neposouvá dokument), ale noty pod ni zajet nesmí —
+     plocha si proto drží odsazení přesně o její výšku. */
+  padding-top: var(--topbar-h, 96px);
   display: flex; align-items: center; justify-content: center;
   /* overflow: hidden má DVA důvody:
      1) Stránka nesmí přetéct nad horní lištu ani pod displej. V krajině je
