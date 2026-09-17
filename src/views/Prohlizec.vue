@@ -76,7 +76,7 @@
       <svg
         ref="layerSvgEl"
         class="annot-layer"
-        :class="{ active: annotMode }"
+        :class="{ active: annotMode || jumpPlaceMode }"
         :width="cssW"
         :height="cssH"
         @pointerdown.prevent="onLayerDown($event)"
@@ -182,6 +182,23 @@
           />
         </g>
 
+        <!-- Umisťování tlačítka skoku: náhled nasbíraných bodů a obdélníku -->
+        <g v-if="jumpPlaceMode && jumpPlacePoints.length" class="wedge-preview">
+          <rect
+            v-if="jumpPlacePoints.length >= 2"
+            :x="Math.min(jumpPlacePoints[0].x, jumpPlacePoints[1].x)"
+            :y="Math.min(jumpPlacePoints[0].y, jumpPlacePoints[1].y)"
+            :width="Math.max(60, (jumpPlacePoints.length >= 3 ? jumpPlacePoints[2].x : jumpPlacePoints[0].x + 80) - jumpPlacePoints[0].x)"
+            :height="Math.abs(jumpPlacePoints[1].y - jumpPlacePoints[0].y)"
+            fill="none" stroke="var(--accent,#d8a657)" stroke-width="2" stroke-dasharray="6 4" rx="4"
+          />
+          <circle
+            v-for="(pt, i) in jumpPlacePoints" :key="'jp'+i"
+            :cx="pt.x" :cy="pt.y" r="8"
+            fill="none" stroke="var(--accent,#d8a657)" stroke-width="2.5"
+          />
+        </g>
+
         <!-- Live preview bodů zvýrazňovače — kam uživatel klikl + náhled boxu -->
         <g v-if="tool === 'highlighter' && hlPoints.length" class="wedge-preview">
           <rect
@@ -225,6 +242,21 @@
           />
         </g>
       </svg>
+
+      <!-- Skoky (Da Capo / VIDE) umístěné PŘÍMO NA NOTÁCH.
+           Uvnitř .stage → posouvají se a zoomují spolu s notami, takže tlačítko
+           drží na místě, kam ho uživatel naklepal (třemi body). Souřadnice
+           place {x,y,w,h} jsou ve stejné soustavě jako anotační vrstva. -->
+      <div v-if="placerJumps.length" class="jump-on-page">
+        <button
+          v-for="j in placerJumps"
+          :key="j.id"
+          class="jump-on-btn"
+          :style="jumpBoxStyle(j)"
+          @click="goJump(j)"
+          :title="'Skok na str. ' + (j.toPage + 1)"
+        >{{ j.label }}</button>
+      </div>
     </div>
     </div>
 
@@ -256,11 +288,9 @@
       <div class="loading-text">Načítám noty…</div>
     </div>
 
-    <!-- Skoky (Da Capo / VIDE) — tlačítko se zobrazí jen na stránce, kde skok začíná.
-         Necháváme je velké na pravém okraji (Jan: mačkají se při zpěvu). -->
-    <div v-if="currentJumps.length" class="jump-strip">
+    <div v-if="edgeJumps.length" class="jump-strip">
       <button
-        v-for="j in currentJumps"
+        v-for="j in edgeJumps"
         :key="j.id"
         class="jump-btn"
         @click="goJump(j)"
@@ -268,8 +298,14 @@
       >{{ j.label }}</button>
     </div>
 
-    <!-- Panel pro vytváření skoku -->
-    <div v-if="jumpMode" class="jump-panel">
+    <!-- Nápověda při umisťování — malá lišta, aby nezakrývala noty, na které se klepá -->
+    <div v-if="jumpPlaceMode" class="jp-place-hint">
+      <span>{{ jumpPlaceHint }}</span>
+      <span class="jp-place-count">{{ jumpPlacePoints.length }}/3</span>
+    </div>
+
+    <!-- Panel pro vytváření skoku (při umisťování se schová — jinak zakrývá noty) -->
+    <div v-if="jumpMode && !jumpPlaceMode" class="jump-panel">
       <div class="jp-title">Nový skok</div>
       <div class="jp-row">
         <button class="jp-btn" @click="setJumpStart" :class="{ on: jumpStart !== null }">
@@ -281,7 +317,19 @@
       </div>
       <div class="jp-row">
         <input v-model="jumpLabel" class="jp-input" placeholder="Text tlačítka (např. Da Capo)" />
-        <button class="jp-btn primary" @click="saveJump" :disabled="jumpStart === null || jumpEnd === null">Uložit</button>
+      </div>
+      <!-- Umístění tlačítka přímo na noty — tři body jako u zvýrazňovače.
+           Uživatel často potřebuje tlačítko tam, kde mu končí noty, ne na okraji displeje. -->
+      <div class="jp-row">
+        <button class="jp-btn" @click="startJumpPlace" :class="{ on: jumpPlaceMode }">
+          {{ jumpPlaceMode ? 'Umísťuji… (' + jumpPlacePoints.length + '/3)' : (jumpPlace ? 'Umístění: hotovo' : 'Umístit na stránku') }}
+        </button>
+        <button v-if="jumpPlace" class="jp-btn" @click="jumpPlace = null" title="Zrušit umístění">✕</button>
+      </div>
+      <div v-if="jumpPlaceMode" class="jp-hint">{{ jumpPlaceHint }}</div>
+      <div class="jp-row">
+        <span class="jp-item-pages">Str. {{ currentPage + 1 }}</span>
+        <button class="jp-btn primary" @click="saveJump" :disabled="jumpStart === null || jumpEnd === null">Uložit skok</button>
       </div>
       <div v-if="jumps.length" class="jp-list">
         <div class="jp-subtitle">Existující skoky</div>
@@ -742,6 +790,39 @@ const jumpMode = ref(false);      // režim vytváření skoku
 const jumpStart = ref(null);      // výchozí stránka (0-based) nebo null
 const jumpEnd = ref(null);        // cílová stránka (0-based) nebo null
 const jumpLabel = ref('');        // text tlačítka
+// Umístění tlačítka přímo na noty. Sběr tří bodů jako u zvýrazňovače:
+//   1) levý horní   2) levý spodní (spolu s 1. dávají horní a spodní stěnu)
+//   3) pravý (určuje pravou stěnu)
+// Uloží se jako obdélník, do kterého se vloží text tlačítka.
+const jumpPlace = ref(null);       // {x, y, w, h} hotové umístění na stránce
+const jumpPlaceMode = ref(false);  // probíhá sběr bodů
+const jumpPlacePoints = ref([]);   // nasbírané body (max 3)
+const jumpPlaceHint = computed(() => {
+  const n = jumpPlacePoints.value.length;
+  if (n === 0) return '1. Levý horní roh tlačítka (klepni na noty)';
+  if (n === 1) return '2. Levý spodní roh (určí výšku tlačítka)';
+  return '3. Pravý roh (určí šířku tlačítka)';
+});
+function startJumpPlace() {
+  if (jumpPlaceMode.value) { jumpPlaceMode.value = false; jumpPlacePoints.value = []; return; }
+  jumpPlaceMode.value = true;
+  jumpPlacePoints.value = [];
+  jumpPlace.value = null;
+  // POZOR: záměrně NEZAPÍNÁME annotMode — tím by se otevřel anotační panel,
+  // který přes noty zakryje celou plochu a klepnutí by šla do něj, ne na vrstvu.
+  // Vrstva se aktivuje přes `active: annotMode || jumpPlaceMode` (viz šablona).
+  annotMode.value = false;
+}
+// Ze tří bodů spočítá obdélník: levé body = svislé stěny, krajní = vodorovné.
+function commitJumpPlace() {
+  const [a, b, c] = jumpPlacePoints.value;
+  const left = Math.min(a.x, b.x), top = Math.min(a.y, b.y);
+  const right = Math.max(c.x, a.x, b.x), bottom = Math.max(a.y, b.y);
+  const w = Math.max(60, right - left), h = Math.max(28, bottom - top);
+  jumpPlace.value = { x: left, y: top, w, h };
+  jumpPlaceMode.value = false;
+  jumpPlacePoints.value = [];
+}
 
 // Záložky (konkrétní stránky) — per skladba
 const bookmarks = ref([]);        // [{id, page, label}]
@@ -1230,6 +1311,7 @@ function mid(a, b) {
 // Tap: okraje → listování (jen mimo anotaci, tlačítka, lištu a formuláře)
 function onTap(e) {
   if (annotMode.value) return;
+  if (jumpPlaceMode.value) return;   // probíhá umisťování — klepnutí patří vrstvě
   // Plovoucí tlačítka, panely a vstupy necháme bez stránkování (input ve správci záložek
   // by jinak spadl do okrajové zóny a skočil na předchozí stránku).
   if (e.target.closest('button')) return;
@@ -1253,7 +1335,13 @@ function toggleAnnot() {
 // POJISTKA: jakmile se anotační režim vypne (jakýmkoli způsobem — FAB, jiný panel,
 // přechod skladby…), výběr prvku se zruší. Dřív se endEdit() volal ručně na ~8 místech
 // a stačilo jedno opomenutí a rámeček zůstal viset přes celou obrazovku.
-watch(annotMode, (on) => { if (!on) endEdit(); });
+watch(annotMode, (on) => {
+  if (!on) {
+    endEdit();
+    // Přerušené umisťování skončí — jinak by zůstal viset režim sběru bodů
+    if (jumpPlaceMode.value) { jumpPlaceMode.value = false; jumpPlacePoints.value = []; }
+  }
+});
 // Totéž při změně nástroje: rámeček patří nástroji Ruka, u jiného nástroje nemá co dělat.
 watch(tool, () => endEdit());
 
@@ -1272,6 +1360,14 @@ function toLayerCoords(e) {
 }
 
 function onLayerDown(e) {
+  // Umisťování tlačítka skoku: tři klepnutí určují obdélník tlačítka.
+  // Musí být PŘED kontrolou annotMode — jinak by klepnutí spadlo do kreslení.
+  if (jumpPlaceMode.value) {
+    const p2 = toLayerCoords(e);
+    jumpPlacePoints.value.push({ x: p2.x, y: p2.y });
+    if (jumpPlacePoints.value.length === 3) commitJumpPlace();
+    return;
+  }
   if (!annotMode.value) return;
   // Pen-only mód: ignorovat dotyk prstem/rukou (palm-rejection), kreslit jen stylusem
   if (penOnly.value && e.pointerType !== 'pen') return;
@@ -1281,6 +1377,17 @@ function onLayerDown(e) {
 
   // Režim "Upravit": vybrat prvek na daném místě a připravit k přetažení
   if (tool.value === 'edit') {
+    // Tažení za tlačítko skoku (má uložené umístění) — přesun celého obdélníku
+    const jHit = jumpAtPoint(p);
+    if (jHit) {
+      _dragJump = jHit.j;
+      _dragJumpFrom = { x: p.x, y: p.y };
+      _dragJumpSnap = { ...jHit.j.place };
+      editingId.value = null;
+      _prev = p;
+      return;
+    }
+    _dragJump = null;
     const hit = pageHits(p);
     if (hit) {
       editingId.value = hit.id;
@@ -1404,7 +1511,9 @@ function onLayerDown(e) {
 }
 let _prev = null;
 let _activePointerId = null;
-let _dragAnnot = null;   // prvek přetahovaný v režimu Upravit (ruka)
+let _dragAnnot = null;
+// Tažení tlačítka skoku po notách (režim Ruka) — aby si uživatel doladil umístění
+let _dragJump = null, _dragJumpFrom = null, _dragJumpSnap = null;   // prvek přetahovaný v režimu Upravit (ruka)
 let _dragFrom = null;    // výchozí bod přetažení (x,y)
 let _dragSnap = null;    // snapshot geometrie prvku na začátku přetažení
 let _eraserHistoryPushed = false; // aby guma uložila history jen jednou za tah
@@ -1418,6 +1527,18 @@ function isFreehand() {
   return tool.value === 'pencil' || tool.value === 'highlighter';
 }
 function onLayerMove(e) {
+  // Režim "Upravit": přetahování tlačítka skoku po notách
+  if (tool.value === 'edit' && _dragJump && _dragJumpSnap) {
+    const p2 = toLayerCoords(e);
+    const s = _dragJumpSnap;
+    _dragJump.place = {
+      x: Math.round(s.x + (p2.x - _dragJumpFrom.x)),
+      y: Math.round(s.y + (p2.y - _dragJumpFrom.y)),
+      w: s.w, h: s.h,
+    };
+    _prev = p2;
+    return;
+  }
   // Režim "Upravit": přetahování vybraného prvku (text, dynamika, tah, klín)
   if (tool.value === 'edit' && _dragAnnot) {
     if (_activePointerId !== e.pointerId) return;
@@ -1517,6 +1638,14 @@ function onLayerMove(e) {
 function onLayerUp(e) {
   // Režim "Upravit": ukončit přetahování, uložit novou pozici
   if (tool.value === 'edit') {
+    // Přesun tlačítka skoku → uložit nové umístění do DB
+    if (_dragJump) {
+      dbSaveJumps({ songId: song.id, items: jumps.value });
+      _dragJump = null; _dragJumpFrom = null; _dragJumpSnap = null;
+      _activePointerId = null;
+      _prev = null;
+      return;
+    }
     if (_dragAnnot && _activePointerId === e.pointerId) {
       saveAnnotations();
     }
@@ -1644,6 +1773,29 @@ function itemBox(it) {
     return null;
   }
   return { x: x1 - pad, y: y1 - pad, w: (x2 - x1) + pad * 2, h: (y2 - y1) + pad * 2 };
+}
+// Skok, jehož obdélník je pod daným bodem (pro tažení i pro klepnutí)
+function jumpAtPoint(p) {
+  for (const j of jumps.value) {
+    if (!j.place) continue;
+    if (j.fromPage !== currentPage.value) continue;
+    const b = j.place;
+    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return { j };
+  }
+  return null;
+}
+// Skoky na aktuální stránce rozdělené podle toho, zda mají umístění na notách
+const jumpsOnPage = computed(() => jumps.value.filter(j => j.fromPage === currentPage.value));
+const placerJumps = computed(() => jumpsOnPage.value.filter(j => j.place));
+const edgeJumps = computed(() => jumpsOnPage.value.filter(j => !j.place));
+// Styl obdélníku tlačítka na stránce (v souřadnicích anotační vrstvy = CSS px)
+function jumpBoxStyle(j) {
+  const b = j.place;
+  if (!b) return {};
+  return {
+    left: b.x + 'px', top: b.y + 'px',
+    width: b.w + 'px', height: b.h + 'px',
+  };
 }
 function pageHits(p) {
   // Najde anotaci na stránce, do jejíž celé plochy (boxu) kliknutí patří.
@@ -1868,9 +2020,14 @@ function setJumpEnd() {
 async function saveJump() {
   if (jumpStart.value === null || jumpEnd.value === null) return;
   const label = jumpLabel.value.trim() || `Skok ${jumps.value.length + 1}`;
-  jumps.value.push({ id: crypto.randomUUID(), fromPage: jumpStart.value, toPage: jumpEnd.value, label });
+  jumps.value.push({
+    id: crypto.randomUUID(), fromPage: jumpStart.value, toPage: jumpEnd.value, label,
+    // Umístění na stránce (nepovinné) — kde přesně má tlačítko na notách stát
+    place: jumpPlace.value ? { ...jumpPlace.value } : null,
+  });
   await dbSaveJumps({ songId: song.id, items: jumps.value });
   jumpMode.value = false; jumpStart.value = null; jumpEnd.value = null; jumpLabel.value = '';
+  jumpPlace.value = null; jumpPlaceMode.value = false; jumpPlacePoints.value = [];
 }
 // Kliknutí na tlačítko skoku → skočit na cílovou stránku
 async function goJump(j) {
@@ -2197,8 +2354,43 @@ async function deleteBookmark(b) {
 
 /* ===== Panely a modaly se kotví POD horní lištu (tlačítko i panel u sebe) ===== */
 
-/* Skoky (Da Capo / VIDE) — velká tlačítka na pravém okraji, svisle vycentrovaná
-   v ploše POD horní lištou. Jan je chce velké (mačkají se při zpěvu). */
+/* Tlačítko skoku umístěné PŘÍMO NA NOTÁCH — obdélník, který si uživatel
+   naklepal třemi body (levý horní, levý spodní, pravý) a může ho posouvat tažením.
+   Souřadnice jsou ve stejné soustavě jako anotační vrstva (CSS px stránky). */
+.jump-on-page {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none;   /* samotná vrstva nesmí blokovat kreslení/gesta */
+  z-index: 19;
+}
+.jump-on-btn {
+  position: absolute; pointer-events: auto;
+  display: flex; align-items: center; justify-content: center;
+  padding: 2px 6px; box-sizing: border-box;
+  background: var(--accent); border: 1.5px solid var(--accent);
+  border-radius: 8px; color: #17130f;
+  font-weight: 700; font-size: clamp(0.7rem, 2vw, 0.95rem);
+  line-height: 1.1; text-align: center; overflow: hidden;
+  cursor: pointer; touch-action: manipulation;
+}
+.jump-on-btn:active { background: var(--bg-elev2); border-color: var(--border); color: var(--text); }
+/* Nápověda u sběru tří bodů (v panelu skoku) */
+.jp-hint {
+  font-size: 0.82rem; color: var(--accent); font-weight: 600;
+  background: var(--bg-elev2); border-radius: 8px; padding: 6px 8px;
+}
+/* Nápověda při umisťování tlačítka na noty — úzká lišta DOLE, aby nezakrývala
+   noty, na které uživatel klepá. Panel skoku je při umisťování schovaný. */
+.jp-place-hint {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-elev); border: 1.5px solid var(--accent); border-radius: 22px;
+  padding: 8px 16px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); z-index: 32;
+  font-size: 0.85rem; font-weight: 600; color: var(--text); white-space: nowrap;
+}
+.jp-place-count { color: var(--accent); font-weight: 700; }
+
+/* Skoky (Da Capo / VIDE) bez umístění — velká tlačítka na pravém okraji.
+   Jan je chce velké (mačkají se při zpěvu). */
 .jump-strip {
   position: absolute; right: 16px;
   top: calc(var(--topbar-h, 96px) + (100dvh - var(--topbar-h, 96px)) / 2);
@@ -2219,6 +2411,11 @@ async function deleteBookmark(b) {
   display: flex; flex-direction: column; gap: 8px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 16px;
   padding: 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); z-index: 25; max-width: 94vw;
+  /* Panel sám nikdy nesmí přetéct mimo displej (Jan: seznam záložek přetékal dolů).
+     Přebytek řeší scroll uvnitř .jp-list, takže zadávací pole i tlačítko Zavřít
+     zůstávají pořád vidět. */
+  max-height: calc(100dvh - var(--topbar-h, 96px) - 24px);
+  overflow: hidden;
 }
 .jp-title { font-weight: 700; font-size: 0.95rem; }
 .jp-row { display: flex; gap: 8px; align-items: center; }
@@ -2361,7 +2558,17 @@ async function deleteBookmark(b) {
   padding: 1px 5px; border-radius: 8px;
 }
 .slider { width: calc(100% - 24px); margin: 0 12px; accent-color: var(--accent); }
-.jp-list { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 10px; }
+/* Seznam existujících záložek / skoků — SCROLLOVATELNÝ.
+   Při mnoha záložkách jinak přetékal pod okraj displeje a poslední nebyly
+   dosažitelné. Pole pro novou záložku a "Zavřít" zůstávají vidět nad/pod ním. */
+.jp-list {
+  display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px solid var(--border); padding-top: 10px;
+  overflow-y: auto; overflow-x: hidden;
+  max-height: min(46dvh, 340px);
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;   /* svislý posun seznamu (lišta má touch-action: none) */
+}
 .jp-subtitle { font-size: 0.85rem; font-weight: 600; color: var(--text-dim); }
 .jp-item {
   display: flex; align-items: center; gap: 8px;
