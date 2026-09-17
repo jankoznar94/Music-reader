@@ -150,8 +150,11 @@
           class="eraser-cursor"
         />
 
-        <!-- Označení vybraného prvku v režimu Upravit (ruka) — plochý čárkovaný rámeček -->
-        <g v-if="editingAnnot && selectedBox" class="annot-selected">
+        <!-- Označení vybraného prvku v režimu Upravit (ruka) — plochý čárkovaný rámeček.
+             Podmínka drží i tool === 'edit' a annotMode: rámeček smí existovat JEN
+             v nástroji Ruka a jen když je anotační režim zapnutý. I kdyby někde
+             zůstal viset editingId, rámeček se nevykreslí. -->
+        <g v-if="annotMode && tool === 'edit' && editingAnnot && selectedBox" class="annot-selected">
           <rect
             :x="selectedBox.x" :y="selectedBox.y"
             :width="selectedBox.w" :height="selectedBox.h"
@@ -435,8 +438,8 @@
       </template>
     </div>
 
-    <!-- Pásmo úprav vybrané textové/dynamické anotace -->
-    <div v-if="editingId" class="edit-bar">
+    <!-- Pásmo úprav vybrané textové/dynamické anotace (jen v nástroji Ruka) -->
+    <div v-if="annotMode && tool === 'edit' && editingId" class="edit-bar">
       <span class="eb-type">{{ editingTypeLabel }}</span>
       <button class="eb-btn" @click="editText(editingAnnot)" title="Přepsat text">✏️</button>
       <span class="eb-size">Velikost</span>
@@ -513,7 +516,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView } from '../db.js';
 import { renderPage, getPageWidthHeight, getPageCount } from '../pdf.js';
@@ -1201,9 +1204,16 @@ function onTap(e) {
 function toggleAnnot() {
   annotMode.value = !annotMode.value;
   if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; } // jiné panely zavřít
-
-  else endEdit(); // vypnutí anotačního režimu = zrušit výběr prvku (rámeček nesmí zůstat viset)
+  // vypnutí řeší watch na annotMode níže (pokrývá i cesty, které by na endEdit zapomněly)
 }
+
+// POJISTKA: jakmile se anotační režim vypne (jakýmkoli způsobem — FAB, jiný panel,
+// přechod skladby…), výběr prvku se zruší. Dřív se endEdit() volal ručně na ~8 místech
+// a stačilo jedno opomenutí a rámeček zůstal viset přes celou obrazovku.
+watch(annotMode, (on) => { if (!on) endEdit(); });
+// Totéž při změně nástroje: rámeček patří nástroji Ruka, u jiného nástroje nemá co dělat.
+watch(tool, () => endEdit());
+
 function setTool(t) { endEdit(); tool.value = t; wedgePoints.value = []; hlPoints.value = []; annotMode.value = true; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; }
 
 function toLayerCoords(e) {
