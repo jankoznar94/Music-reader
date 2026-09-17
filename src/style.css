@@ -47,6 +47,12 @@ html, body {
   padding: 0;
   height: 100%;
   overflow: hidden; /* stránka jako taková se nesmí scrollovat — prohlížeč je overlay na pevné výšce image */
+  /* Zákaz systémového gesta zpět (swipe od okraje / horizontální overscroll).
+     Bez toho swipe vpravo při listování zpět vyhodí celou aplikaci do knihovny
+     — ověřeno, gesto se chytá až do poloviny šířky displeje. none = gesto se
+     nekoná; swipe tak zůstane naší obsluze (listování stran). */
+  overscroll-behavior: none;
+  overscroll-behavior-x: none;
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;

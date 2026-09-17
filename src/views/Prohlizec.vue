@@ -2,12 +2,62 @@
   <div
     class="viewer"
     ref="viewerEl"
+    :style="{ '--topbar-h': topBarH + 'px' }"
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
     @touchend.passive="onTouchEnd"
     @click="onTap"
   >
-    <!-- Aktivní stránka -->
+    <!-- JEDINÁ HORNÍ LIŠTA — trvale viditelná, vše na jednom místě.
+         Řádek 1: zpět · název skladby · počítadlo stránek · nástroje (anotace, záložka, skok)
+         Řádek 2: zoom (− % +) · vycentrovat · výchozí zoom · přehled stránek · listování sestavou
+         Ploché, bez hover/focus efektů — jediný feedback je :active (Jan: mobilní PWA). -->
+    <div class="top-bar" ref="barEl">
+      <div class="tb-row">
+        <button class="tb-btn" @click="goBack" title="Zpět">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+        </button>
+        <span class="tb-song">{{ group ? songName : '' }}</span>
+        <button class="tb-page" @click="openPageGo" title="Přejít na stránku">
+          {{ currentPage + 1 }} / {{ totalPages }}
+        </button>
+        <span class="tb-sep" />
+        <button class="tb-btn" @click="toggleAnnot" :class="{ on: annotMode }" title="Anotace / listování">✏️</button>
+        <button class="tb-btn" @click="openBookmark" :class="{ on: bookmarkMode }" title="Přidat záložku na tuto stránku">🔖</button>
+        <button class="tb-btn" @click="toggleJumpMode" :class="{ on: jumpMode }" title="Vytvořit skok (Da Capo / VIDE)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
+        </button>
+      </div>
+
+      <div class="tb-row">
+        <button class="tb-btn sm" @click="zoomOut" title="Oddálit">−</button>
+        <span class="tb-zoom">{{ Math.round(zoom * 100) }}%</span>
+        <button class="tb-btn sm" @click="zoomIn" title="Přiblížit">+</button>
+        <span class="tb-sep" />
+        <button class="tb-btn sm" @click="resetView" title="Vycentrovat">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+        </button>
+        <button class="tb-btn sm" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit zoom jako výchozí">
+          <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
+        </button>
+        <button class="tb-btn sm" @click="toggleSlider" :class="{ on: sliderOpen }" title="Slider stránek">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
+        </button>
+        <span class="tb-sep" />
+        <div v-if="group" class="tb-nav">
+          <button class="tb-btn sm" @click="prevSong" :disabled="groupIndex <= 0" title="Předchozí skladba">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <span class="tb-grp">{{ groupIndex + 1 }}/{{ groupSongs.length }}</span>
+          <button class="tb-btn sm" @click="nextSong" :disabled="groupIndex >= groupSongs.length - 1" title="Další skladba">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Aktivní stránka (vlastní oblast pod lištou — lišta noty nepřekrývá) -->
+    <div class="page-area" ref="pageAreaEl">
     <div class="stage" :style="{ transform: 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')' }">
       <canvas ref="canvasEl" class="pdf-canvas" />
       <!-- Anotační vrstva nad PDF -->
@@ -164,14 +214,6 @@
         </g>
       </svg>
     </div>
-
-    <!-- Indikátor stránky + názvu noty (schovaný při úpravě prvku, ať nepřekáží).
-         Kliknutí na číslo stránky otevře ruční zadání cílové stránky. -->
-    <div v-if="!editingId" class="page-ind">
-      <span v-if="group" class="ind-song">{{ songName }} · {{ groupIndex + 1 }}/{{ groupSongs.length }}</span>
-      <button class="ind-page" @click="openPageGo" :title="'Přejít na stránku'">
-        {{ currentPage + 1 }} / {{ totalPages }}
-      </button>
     </div>
 
     <!-- Ruční zadání čísla stránky (plovoucí modal, stejná logika jako u skoku na skladbu) -->
@@ -202,18 +244,8 @@
       <div class="loading-text">Načítám noty…</div>
     </div>
 
-    <!-- Přepínání skladeb ve skupině (setlist) -->
-    <div v-if="group" class="nav-strip">
-      <button class="nav-btn" @click="prevSong" :disabled="groupIndex <= 0" title="Předchozí skladba">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-      </button>
-      <span class="nav-label">{{ groupIndex + 1 }} / {{ groupSongs.length }}</span>
-      <button class="nav-btn" @click="nextSong" :disabled="groupIndex >= groupSongs.length - 1" title="Další skladba">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
-      </button>
-    </div>
-
-    <!-- Skoky (Da Capo / VIDE) — tlačítko se zobrazí jen na stránce, kde skok začíná -->
+    <!-- Skoky (Da Capo / VIDE) — tlačítko se zobrazí jen na stránce, kde skok začíná.
+         Necháváme je velké na pravém okraji (Jan: mačkají se při zpěvu). -->
     <div v-if="currentJumps.length" class="jump-strip">
       <button
         v-for="j in currentJumps"
@@ -336,15 +368,6 @@
         :value="pageSlider"
         @input="onSliderInput($event)"
       />
-    </div>
-
-    <!-- Plovoucí ovládací tlačítka (pravý okraj) — zobrazí se na povel (tap na střed) -->
-    <div class="fab-col" v-if="controlsVisible || annotMode">
-      <button class="fab" @click="toggleAnnot" :class="{ on: annotMode }" title="Anotace / listování">✏️</button>
-      <button class="fab" @click="openBookmark" :class="{ on: bookmarkMode }" title="Přidat záložku na tuto stránku">🔖</button>
-      <button class="fab" @click="toggleJumpMode" :class="{ on: jumpMode }" title="Vytvořit skok (Da Capo / VIDE)">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
-      </button>
     </div>
 
     <!-- Plovoucí panel anotací (jen v anotačním režimu) -->
@@ -492,26 +515,6 @@
       </div>
     </div>
 
-    <!-- Plovoucí zoom (levý okraj) — zobrazí se na povel (tap na střed) -->
-    <div class="fab-col left" v-if="controlsVisible">
-      <div class="zoom-val">{{ Math.round(zoom * 100) }}%</div>
-      <button class="fab" @click="zoomIn" title="Přiblížit">+</button>
-      <button class="fab" @click="zoomOut" title="Oddálit">−</button>
-      <button class="fab" @click="resetView" title="Vycentrovat">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
-      </button>
-      <button class="fab" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit zoom jako výchozí">
-        <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
-      </button>
-      <button class="fab" @click="toggleSlider" :class="{ on: sliderOpen }" title="Slider stránek">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
-      </button>
-    </div>
-
-    <!-- Plovoucí zpět (levý horní roh) -->
-    <button class="fab back" @click="goBack" title="Zpět">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
-    </button>
   </div>
 </template>
 
@@ -530,6 +533,8 @@ const groupSongs = ref([]);     // načtené noty ve skupině (v pořadí)
 const groupIndex = ref(-1);     // index aktuální noty ve skupině
 
 const viewerEl = ref(null);
+const barEl = ref(null);       // horní lišta (měříme její výšku → vejde se stránka pod ni)
+const pageAreaEl = ref(null);  // oblast stránky pod lištou (z ní se počítá fit na šířku/výšku)
 const canvasEl = ref(null);
 const layerSvgEl = ref(null);
 const thumbStripEl = ref(null);
@@ -690,7 +695,11 @@ const canUndo = computed(() => history.value.length > 0);
 const canRedo = computed(() => redoStack.value.length > 0);
 const hasAnnotations = computed(() => annotations.value.items.length > 0);
 const hasPageItems = computed(() => annotations.value.items.some(x => x.page === currentPage.value));
-const controlsVisible = ref(false); // ovládací tlačítka (zoom/anotace) — zobrazí se na tap na střed
+// Změřená výška horní lišty → CSS proměnná --topbar-h. Panely a modaly se pod ni
+// kotví, takže i když se lišta zalomí jinam (delší název, větší písmo systému),
+// nic se nepřekryje. ResizeObserver to drží v aktuální hodnotě.
+const topBarH = ref(96);
+let barObs = null;
 
 const cssW = ref(800);
 const cssH = ref(1100);
@@ -794,10 +803,23 @@ onMounted(async () => {
   window.addEventListener('resize', onResize);
   // Udržet displej zapnutý, dokud je prohlížeč otevřený (jako jiné appky)
   setupWakeLock();
+  // Změřit výšku horní lišty → CSS proměnná pro kotvení panelů pod ni.
+  // ResizeObserver ji drží aktuální i při změně písma/otočení displeje.
+  measureBar();
+  if (barEl.value && typeof ResizeObserver !== 'undefined') {
+    barObs = new ResizeObserver(measureBar);
+    barObs.observe(barEl.value);
+  }
 });
+
+function measureBar() {
+  const b = barEl.value;
+  if (b) topBarH.value = Math.round(b.getBoundingClientRect().height);
+}
 
 onUnmounted(() => {
   window.removeEventListener('resize', onResize);
+  if (barObs) { barObs.disconnect(); barObs = null; }
   disconnectThumbObserver();
   releaseWakeLock();
   clearTimeout(_bmSaveTimer);
@@ -858,7 +880,9 @@ async function saveZoomAsDefault() {
 }
 
 function computeFit() {
-  const el = viewerEl.value;
+  // .page-area je vlastní oblast POD lištou (flex:1) — její clientHeight už lištu
+  // neobsahuje, takže se nic nedopočítává. Fallback na .viewer je pro jistotu.
+  const el = pageAreaEl.value || viewerEl.value;
   if (el) {
     availH = Math.max(200, el.clientHeight - 12);
     availW = Math.max(200, el.clientWidth - 12);
@@ -1182,22 +1206,20 @@ function mid(a, b) {
   return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
 }
 
-// Tap: okraje → listování, střed → zobrazit/skrýt ovládací prvky (jen mimo anotaci, tlačítka a formuláře)
+// Tap: okraje → listování (jen mimo anotaci, tlačítka, lištu a formuláře)
 function onTap(e) {
   if (annotMode.value) return;
   // Plovoucí tlačítka, panely a vstupy necháme bez stránkování (input ve správci záložek
   // by jinak spadl do okrajové zóny a skočil na předchozí stránku).
   if (e.target.closest('button')) return;
   if (e.target.closest('input, textarea, select')) return;
-  if (e.target.closest('.jump-panel, .slider-panel, .bookmark-strip, .page-go-backdrop')) return;
+  if (e.target.closest('.top-bar, .jump-panel, .slider-panel, .bookmark-strip, .page-go-backdrop')) return;
   const el = viewerEl.value;
   if (!el) return;
   const x = e.clientX - el.getBoundingClientRect().left;
-  const half = el.clientWidth / 2;
   const edge = el.clientWidth * 0.2; // 20 % od okraje = listování
   if (x < edge) prevPage();
   else if (x > el.clientWidth - edge) nextPage();
-  else controlsVisible.value = !controlsVisible.value; // střed = povel pro ovládací prvky
 }
 
 // --- Anotace ---
@@ -1981,61 +2003,107 @@ async function deleteBookmark(b) {
 <style scoped>
 .viewer {
   flex: 1; position: relative; overflow: hidden;
-  height: 100dvh; /* přesně výška obrazovky → absolutní overlay kotvy (zpět nahoře, záložky dole) kotví proti viewportu, ne proti výšce plátna */
+  height: 100dvh; /* přesně výška obrazovky → overlay kotvy (lišta nahoře, záložky dole) kotví proti viewportu */
   min-height: 0;
-  background: var(--bg); display: flex; align-items: center; justify-content: center;
-  touch-action: pan-x pan-y;
+  background: var(--bg); display: flex; flex-direction: column;
+  /* touch-action: none — VŠECHNA gesta si bere naše JS obsluha.
+     Tohle je jediná spolehlivá obrana proti SYSTÉMOVÉMU GESTU ZPĚT: s 'pan-x pan-y'
+     si Chrome horizontální swipe vyložil jako "panování" a když nebylo kam
+     scrollovat, udělal z něj gesto zpět a vyhodil aplikaci do knihovny (ověřeno
+     na 11 startovacích pozicích, chytalo se to až do poloviny šířky displeje).
+     Scrollovací lišty (záložky, miniatury) si posun povolují vlastním
+     touch-action: pan-x níže — jinak by se přestaly posouvat. */
+  touch-action: none;
+  overscroll-behavior-x: none;
 }
-.stage { position: relative; }
-.pdf-canvas { display: block; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,0.6); border-radius: 6px; }
+
+/* ===== JEDINÁ HORNÍ LIŠTA =====
+   Trvale viditelná, dva řádky. Nekryje noty — stránka má vlastní oblast pod ní.
+   Plochá, bez hover/focus efektů (Jan: mobilní PWA) — feedback jen :active / .on. */
+.top-bar {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 6px 8px;
+  padding-top: calc(6px + env(safe-area-inset-top, 0px));
+  background: var(--bg-elev); border-bottom: 1px solid var(--border);
+  /* Vlastní vrstva NAD podkladem modalu (41) — podklad je zkrácený pod lištu,
+     takže lišta zůstává čitelná a klikatelná i s otevřeným modalem. */
+  z-index: 45;
+}
+.tb-row {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 40px;
+}
+.tb-btn {
+  width: 40px; height: 40px; flex: 0 0 auto; padding: 0;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 1.05rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: manipulation;
+}
+.tb-btn.sm { width: 34px; height: 34px; font-size: 1rem; }
+.tb-btn.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
+.tb-btn:disabled { opacity: 0.3; pointer-events: none; }
+.tb-btn:active { background: var(--bg-elev); }
+
+/* Název skladby — zabírá zbylé místo, zkracuje se třemi tečkami */
+.tb-song {
+  flex: 1 1 auto; min-width: 0;
+  font-weight: 600; font-size: 0.92rem; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Počítadlo stránek — klik otevře ruční zadání stránky */
+.tb-page {
+  flex: 0 0 auto; background: transparent; border: 1px solid var(--border);
+  border-radius: 16px; padding: 6px 10px; font: inherit; font-size: 0.9rem;
+  font-weight: 600; color: var(--text-dim); cursor: pointer;
+  touch-action: manipulation; white-space: nowrap;
+}
+.tb-page:active { background: var(--bg-elev2); }
+.tb-zoom {
+  flex: 0 0 auto; min-width: 52px; text-align: center;
+  font-size: 0.85rem; color: var(--text-dim); font-weight: 600;
+}
+.tb-sep { width: 1px; height: 24px; flex: 0 0 auto; background: var(--border); }
+.tb-nav { display: flex; align-items: center; gap: 6px; }
+.tb-grp {
+  font-size: 0.85rem; font-weight: 600; color: var(--text);
+  min-width: 38px; text-align: center;
+}
+
+/* Oblast stránky pod lištou — z její velikosti se počítá fit not */
+.page-area {
+  flex: 1 1 auto; min-height: 0; position: relative;
+  display: flex; align-items: center; justify-content: center;
+  /* overflow: hidden má DVA důvody:
+     1) Stránka nesmí přetéct nad horní lištu ani pod displej. V krajině je
+        fit-na-šířku vyšší než plocha (noty se ořezávají výškou — to je záměr),
+        takže bez ořezu canvas zalézal pod lištu (ověřeno: top: -383 px).
+     2) Z plochy se tím stane scroll kontejner, a teprve pak se na ni uplatní
+        touch-action: none. Chrome bere touch-action z nejbližšího SCROLL
+        kontejneru — s overflow: visible se .page-area přeskočila, použil se
+        .viewer (pan-x pan-y) a ze swipu vpravo vzniklo SYSTÉMOVÉ GESTO ZPĚT
+        (aplikace se vyhodila do knihovny). V portraitu to prošlo jen náhodou,
+        protože se stránka vešla a nebylo co panovat. */
+  overflow: hidden;
+  touch-action: none;
+  overscroll-behavior-x: none;
+}
+.stage { position: relative; touch-action: none; }
+.pdf-canvas { display: block; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,0.6); border-radius: 6px; touch-action: none; }
 .annot-layer { position: absolute; top: 0; left: 0; touch-action: none; cursor: crosshair; }
 .annot-layer.active { pointer-events: auto; }
 .annot-layer.active + .stage {  }
 .annot-layer:not(.active) { pointer-events: none; }
 .annot-layer .hl { mix-blend-mode: multiply; opacity: 0.9; }
 
-.page-ind {
-  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 20px;
-  padding: 6px 14px; font-size: 0.9rem; color: var(--text-dim);
-  display: flex; gap: 8px; align-items: center; max-width: 60vw; white-space: nowrap;
-  z-index: 23;
-}
-.ind-song { color: var(--text); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
-/* Číslo stránky v indikátoru je tlačítko — otevírá ruční zadání stránky.
-   Ploché, bez hover/focus efektů (mobilní PWA), jen :active ztmavení. */
-.ind-page {
-  background: transparent; border: none; padding: 2px 6px; margin: -2px -6px;
-  border-radius: 12px; font: inherit; color: var(--text-dim);
-  cursor: pointer; touch-action: manipulation; white-space: nowrap;
-}
-.ind-page:active { background: var(--bg-elev2); }
+/* ===== Panely a modaly se kotví POD horní lištu (tlačítko i panel u sebe) ===== */
 
-/* Přepínání not ve skupině */
-.nav-strip {
-  position: fixed; bottom: 24px; right: 16px;
-  display: flex; align-items: center; gap: 10px; z-index: 24;
-  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 28px;
-  padding: 6px 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
-}
-.nav-btn {
-  width: 40px; height: 40px; border-radius: 50%;
-  border: 1px solid var(--border); background: var(--bg-elev2);
-  color: var(--text); cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  touch-action: manipulation; padding: 0;
-}
-.nav-btn:disabled { opacity: 0.3; pointer-events: none; }
-.nav-label {
-  color: var(--text); font-size: 0.95rem; font-weight: 600;
-  min-width: 44px; text-align: center; padding: 0 4px;
-}
-
-/* Skoky (Da Capo / VIDE) — vpravo, AŽ POD sloupcem FAB tlačítek.
-   Sloupec FAB je 3×52px + 2 mezery = 176px, tj. sahá do 50 % + 88px.
-   Jan po nasazení chtěl ještě o 15 px níž → 50 % + 125px (rezerva pod FAB). */
+/* Skoky (Da Capo / VIDE) — velká tlačítka na pravém okraji, svisle vycentrovaná
+   v ploše POD horní lištou. Jan je chce velké (mačkají se při zpěvu). */
 .jump-strip {
-  position: fixed; right: 16px; top: calc(50% + 125px);
+  position: absolute; right: 16px;
+  top: calc(var(--topbar-h, 96px) + (100dvh - var(--topbar-h, 96px)) / 2);
   display: flex; flex-direction: column; align-items: flex-end; gap: 8px; z-index: 24;
   pointer-events: none;
 }
@@ -2049,7 +2117,7 @@ async function deleteBookmark(b) {
 .jump-btn:active { background: var(--bg-elev2); border-color: var(--border); color: var(--text); }
 
 .jump-panel {
-  position: absolute; bottom: 92px; left: 16px;
+  position: absolute; top: calc(var(--topbar-h, 96px) + 8px); left: 16px;
   display: flex; flex-direction: column; gap: 8px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 16px;
   padding: 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); z-index: 25; max-width: 94vw;
@@ -2083,7 +2151,9 @@ async function deleteBookmark(b) {
   -ms-overflow-style: none;                /* (IE) */
   padding: 8px 12px;
   pointer-events: auto;                     /* lišta musí reagovat, aby šla horizontálně scrollovat */
-  touch-action: pan-x pan-y;                /* vertikální tah projde na stránku, horizontální scrolluje lištu */
+  /* .viewer má touch-action: none (obrana proti gestu zpět), takže posun
+     musíme povolit tady — jinak by lišta přestala scrollovat. */
+  touch-action: pan-x;
   background: rgba(28,25,23,0.85);          /* podbarvení panelu záložek */
   border: 1px solid var(--border);
   border-radius: 24px;
@@ -2113,12 +2183,15 @@ async function deleteBookmark(b) {
 }
 .bk-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Ruční zadání stránky — plovoucí modal nahoře, plochý design bez karet */
+/* Ruční zadání stránky — plovoucí modal, plochý design bez karet.
+   Podklad začíná AŽ POD horní lištou (top: var(--topbar-h)), aby lišta zůstala
+   viditelná a klikatelná — jinak klepnutí na lištu spadlo do podkladu a modal
+   se zavřel. Klik mimo kartu (na podklad) modal pořád zavírá. */
 .page-go-backdrop {
-  position: fixed; inset: 0; z-index: 41;
+  position: fixed; left: 0; right: 0; bottom: 0; top: var(--topbar-h, 96px); z-index: 41;
   background: rgba(0,0,0,0.35);
   display: flex; align-items: flex-start; justify-content: center;
-  padding: 64px 16px 16px;
+  padding: 16px;
 }
 .page-go {
   display: flex; flex-direction: column; gap: 10px;
@@ -2163,16 +2236,18 @@ async function deleteBookmark(b) {
 .ap-pen-label { color: var(--text-dim); font-size: 0.85rem; cursor: pointer; }
 .ap-tool.pen-only.on { border-color: var(--accent); }
 
-/* Slider stránek s miniaturami — přes celou šířku */
+/* Přehled stránek (miniatury + slider) — přes celou šířku, POD horní lištou
+   (tlačítko i panel u sebe), ať nekryje spodní lištu záložek. */
 .slider-panel {
-  position: absolute; bottom: 20px; left: 0; right: 0;
+  position: absolute; top: var(--topbar-h, 96px); left: 0; right: 0;
   display: flex; flex-direction: column; gap: 10px;
-  background: var(--bg-elev); border-top: 1px solid var(--border);
-  padding: 12px 25px 16px; box-shadow: 0 -4px 18px rgba(0,0,0,0.6); z-index: 30;
+  background: var(--bg-elev); border-bottom: 1px solid var(--border);
+  padding: 12px 25px 16px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); z-index: 30;
 }
 .thumb-strip {
   display: flex; gap: 8px; overflow-x: auto; padding: 0;
   scrollbar-width: thin; -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;   /* viz lišta záložek — .viewer má none */
 }
 .thumb-item {
   position: relative; flex: 0 0 auto; width: 72px; height: 96px;
@@ -2202,39 +2277,17 @@ async function deleteBookmark(b) {
   display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 0.9rem;
 }
 
-/* Plovoucí tlačítka */
-.fab-col {
-  position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 20;
-}
-.fab-col.left { right: auto; left: 16px; }
-.fab {
-  width: 52px; height: 52px; border-radius: 50%;
-  border: 1px solid var(--border); background: var(--bg-elev2);
-  color: var(--text); font-size: 1.3rem; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
-  touch-action: manipulation;
-}
-.fab.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
-.fab-col.left .zoom-val { color: var(--text-dim); font-size: 0.85rem; text-align: center; width: 52px; height: 52px; display: flex; align-items: center; justify-content: center; }
-.fab.back {
-  position: fixed; top: 14px; left: 16px;
-  width: 48px; height: 48px; border-radius: 50%;
-  padding: 0; display: flex; align-items: center; justify-content: center;
-  z-index: 23;
-}
+/* Plovoucí tlačítka byla zrušena — všechna ovládací tlačítka jsou v horní liště. */
 
-/* Plovoucí panel anotací — větší, kategorizovaný. position:absolute → kotví jen
-   k .viewer (fixed by pokrýval celý viewport a blokoval kreslení). Max-height s
-   interním scrollením, aby panel nepřekrýval celou kreslící plochu. */
+/* Plovoucí panel anotací — větší, kategorizovaný. Kotví se POD horní lištu.
+   position: fixed → přes overlay; max-height s interním scrollením. */
 .annot-panel {
-  position: absolute; bottom: 88px; left: 16px;
+  position: absolute; top: calc(var(--topbar-h, 96px) + 8px); left: 16px;
   display: flex; flex-direction: column; align-items: stretch; gap: 12px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 18px;
   padding: 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
   z-index: 26; max-width: 96vw; min-width: 220px;
-  max-height: calc(100dvh - 120px);
+  max-height: calc(100dvh - var(--topbar-h, 96px) - 24px);
   overflow-y: auto;
 }
 .ap-header {
@@ -2293,9 +2346,9 @@ async function deleteBookmark(b) {
 .ap-size.on { border-color: var(--accent); }
 .ap-delpage { font-size: 0.55rem; font-weight: 700; margin-left: 1px; }
 
-/* Pásmo úprav vybrané textové/dynamické anotace */
+/* Pásmo úprav vybrané textové/dynamické anotace — POD horní lištou */
 .edit-bar {
-  position: fixed; left: 50%; top: 14px; transform: translateX(-50%);
+  position: fixed; left: 50%; top: calc(var(--topbar-h, 96px) + 8px); transform: translateX(-50%);
   display: flex; align-items: center; gap: 8px;
   background: var(--bg-elev); border: 2px solid var(--accent); border-radius: 32px;
   padding: 8px 14px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
