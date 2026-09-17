@@ -55,18 +55,16 @@
             :opacity="it.opacity != null ? it.opacity : 1"
             text-anchor="start"
           >{{ it.text }}</text>
-          <!-- Dynamika (p, f, mp...) -->
+          <!-- Dynamika (p, f, mp...) — notační font NotyDyn (SMuFL glyfy) -->
           <text
             v-else-if="it.tool === 'dynamic'"
             :x="it.x" :y="it.y"
             :fill="it.color"
             :font-size="it.size"
-            font-family="Georgia, 'Times New Roman', serif"
-            font-style="italic"
-            font-weight="bold"
+            font-family="'NotyDyn', serif"
             :opacity="it.opacity != null ? it.opacity : 1"
             text-anchor="middle"
-          >{{ it.text }}</text>
+          >{{ annotDisplayText(it) }}</text>
           <!-- Crescendo (otvírá se vpravo) / decrescendo (otvírá se vlevo) -->
           <!-- Uložený klín: špička (x1,y1), dvě ramena (x2,y2) a (x3,y3). ŽÁDNÁ středová čára. -->
           <g v-else-if="it.tool === 'crescendo' || it.tool === 'decrescendo'"
@@ -87,6 +85,16 @@
           <line v-else-if="activeItem.tool === 'crescendo' || activeItem.tool === 'decrescendo'"
             :x1="activeItem.x1" :y1="activeItem.y1" :x2="activeItem.x2" :y2="activeItem.y2"
             :stroke="activeItem.color" :stroke-width="activeItem.width" stroke-linecap="round" />
+          <!-- Dynamika: náhled budoucího glyfu (text zatím prázdný → tečka), ať uživatel vidí, co dostane -->
+          <text
+            v-else-if="activeItem.tool === 'dynamic' && activeItem.text"
+            :x="activeItem.x" :y="activeItem.y"
+            :fill="activeItem.color"
+            :font-size="activeItem.size"
+            font-family="'NotyDyn', serif"
+            :opacity="activeItem.opacity != null ? activeItem.opacity : 1"
+            text-anchor="middle"
+          >{{ annotDisplayText(activeItem) }}</text>
           <circle v-else :cx="activeItem.x" :cy="activeItem.y" r="6"
             fill="none" :stroke="activeItem.color" stroke-width="2" />
         </g>
@@ -365,7 +373,9 @@
         <div class="ap-row">
           <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (3 body)">&lt;</button>
           <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (3 body)">&gt;</button>
-          <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf...)">𝆏</button>
+          <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf, sfz...)">
+            <span class="dyn-ico">{{ dynGlyph('mf').text }}</span>
+          </button>
         </div>
       </div>
 
@@ -441,12 +451,30 @@
     <div v-if="editingAnnotationId" class="text-input-overlay">
       <div class="text-input-card">
         <span class="ti-label">{{ editingAnnotTool === 'dynamic' ? 'Dynamika' : 'Text' }}</span>
+
+        <!-- Rychlý výběr: klepni na dynamiku, vyplní se do pole (a rovnou se uloží) -->
+        <div v-if="editingAnnotTool === 'dynamic'" class="dyn-grid">
+          <button
+            v-for="d in DYN_PICK"
+            :key="d.key"
+            class="dyn-btn"
+            :class="{ on: dynKey(annotTextDraft) === d.key }"
+            @click="pickDyn(d.key)"
+            :title="d.key"
+          >{{ d.glyph }}</button>
+        </div>
+
         <input
           v-model="annotTextDraft"
           class="ti-input"
-          :placeholder="editingAnnotTool === 'dynamic' ? 'např. p, f, mf' : 'Text poznámky'"
+          :placeholder="editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : 'Text poznámky'"
           @keydown.enter="confirmTextAnnot"
         />
+        <!-- Neznámý výraz: font pro něj nemá glyf → zobrazil by se rozbitý znak -->
+        <span v-if="editingAnnotTool === 'dynamic' && annotTextDraft.trim() && !dynGlyph(annotTextDraft).known" class="ti-warn">
+          Tuhle dynamiku font nezná — vyber ji z nabídky výše.
+        </span>
+
         <div class="ti-actions">
           <button class="jp-btn" @click="cancelTextAnnot">Zrušit</button>
           <button class="jp-btn primary" @click="confirmTextAnnot">Uložit</button>
@@ -529,6 +557,72 @@ const annotCollapsed = ref(false); // anotační panel sbalený (jen přepínač
 const editingAnnotationId = ref(null); // id anotace (text/dynamika), jejíž text se právě edituje
 const annotTextDraft = ref('');     // rozpisy textu při editaci
 const editingId = ref(null);        // id vybrané textové/dynamické anotace pro lištu úprav
+
+// --- Dynamika: psaný text -> SMuFL kód (font NotyDyn, blok U+E520-U+E549) ---
+// Uživatel píše "mf", "sfz", "fp" atd. — v notačním fontu je každá dynamika
+// JEDEN glyf na vlastním kódu, nikoli ASCII písmena. Bez tohoto překladu by
+// se zobrazila prázdná/nesmyslná místa (ASCII písmena v tom fontu nejsou).
+// Všechny kódy a jejich šířky ověřené z fontu (advance width v em).
+const DYN_GLYPHS = {
+  pppppp: 0xE527, ppppp: 0xE528, pppp: 0xE529, ppp: 0xE52A,
+  pp: 0xE52B, p: 0xE520, mp: 0xE52C, mf: 0xE52D, pf: 0xE52E,
+  ffffff: 0xE533, fffff: 0xE532, ffff: 0xE531, fff: 0xE530,
+  ff: 0xE52F, f: 0xE522,
+  fp: 0xE534, fz: 0xE535, sfz: 0xE536, sf: 0xE524,
+  sfp: 0xE537, sfpp: 0xE538, sz: 0xE539, szp: 0xE53A,
+  sffz: 0xE53B, rf: 0xE523, rfz: 0xE53C, rfz2: 0xE53D,
+  z: 0xE525, n: 0xE526,
+};
+// Normalizace: bez diakritiky/mezer, malá písmena (uživatel může psát "mf ", "MF")
+function dynKey(raw) {
+  return String(raw || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+// Přeloží napsaný text na SMuFL znak(y). Když výraz v mapě není, vrátí text
+// beze změny (radši nic než rozbité znaky) — a vrátí i příznak, že chybí.
+function dynGlyph(raw) {
+  const k = dynKey(raw);
+  const cp = DYN_GLYPHS[k];
+  if (cp) return { text: String.fromCodePoint(cp), known: true };
+  return { text: String(raw || ''), known: false };
+}
+// Šířka dynamiky v em (z metrik fontu) — pro přesný rámeček výběru.
+// Když výraz neznáme, odhadneme (0,42 em na znak) — jen pro rámeček, ne pro text.
+const DYN_ADV = {
+  pppppp: 2.1240, ppppp: 1.7760, pppp: 1.4170, ppp: 1.0720, pp: 0.7270, p: 0.3650,
+  mp: 0.8260, mf: 0.7970, pf: 0.7700,
+  ffffff: 1.5500, fffff: 1.3100, ffff: 1.0700, fff: 0.8310, ff: 0.6090, f: 0.3640,
+  fp: 0.6190, fz: 0.4970, sfz: 0.6040, sf: 0.2290, sfp: 0.8460, sfpp: 1.1980,
+  sz: 0.7320, szp: 1.0750, sffz: 0.9640, rf: 0.2770, rfz: 0.6250, rfz2: 0.7440,
+  z: 0.2440, n: 0.3080,
+};
+function dynAdvEm(raw) {
+  const k = dynKey(raw);
+  if (DYN_ADV[k] != null) return DYN_ADV[k];
+  return 0.42 * Math.max(1, String(raw || '').length);
+}
+// Text k vykreslení: dynamika = SMuFL znak (font NotyDyn), ostatní = jak je
+function annotDisplayText(it) {
+  if (!it) return '';
+  if (it.tool === 'dynamic') return dynGlyph(it.text).text;
+  return it.text || '';
+}
+// Je to dynamika, kterou font neumí? (zvýrazníme v náhledu, ať uživatel ví)
+function dynUnknown(it) {
+  return it && it.tool === 'dynamic' && it.text && !dynGlyph(it.text).known;
+}
+
+// Nabídka dynamik v dialogu — pořadí odpovídá běžnému notačnímu úzu (od slabé k silné).
+// glyph = hotový znak z fontu, takže uživatel vidí přesně to, co dostane.
+const DYN_PICK = [
+  'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff',
+  'fp', 'sf', 'sfz', 'fz', 'rf', 'rfz', 'sffz', 'sfp', 'n',
+].map(k => ({ key: k, glyph: dynGlyph(k).text }));
+// Klepnutí na dlaždici: vyplní text a rovnou potvrdí (méně klikání na tabletu)
+function pickDyn(k) {
+  annotTextDraft.value = k;
+  confirmTextAnnot();
+}
+
 const editingAnnot = computed(() =>
   editingId.value ? annotations.value.items.find(x => x.id === editingId.value) || null : null
 );
@@ -540,7 +634,12 @@ const selectedBox = computed(() => {
   if (it.tool === 'text' || it.tool === 'dynamic') {
     if (it.x != null && it.y != null) {
       const s = it.size || 20;
-      x1 = it.x; y1 = it.y - s; x2 = it.x + (it.text ? it.text.length * s * 0.6 : s); y2 = it.y;
+      x1 = it.x; y1 = it.y - s;
+      // Dynamika = glyf z fontu (šířka z metrik, ne odhad), text = odhad podle znaků
+      const w = it.tool === 'dynamic'
+        ? dynAdvEm(it.text) * s
+        : (it.text ? it.text.length * s * 0.6 : s);
+      x2 = it.x + w; y2 = it.y;
     }
   } else if (isStroke(it)) {
     for (const p of (it.points || [])) {
@@ -852,6 +951,7 @@ function clearCanvas() {
 
 function gotoPage(i) {
   if (i < 0 || i >= totalPages.value || i === currentPage.value) return;
+  endEdit();   // listování = konec výběru prvku (rámeček patří jiné stránce)
   currentPage.value = i;
   pageSlider.value = i;
   panX.value = 0; panY.value = 0; // nová stránka = bez posunu
@@ -868,6 +968,7 @@ function toggleSlider() {
   sliderOpen.value = !sliderOpen.value;
   if (sliderOpen.value) {
     annotMode.value = false; // jiný panel → vypnout anotaci
+    endEdit();               // a zrušit výběr prvku (rámeček by zůstal viset)
     pageSlider.value = currentPage.value;
     // Přednačíst miniatury okolí aktuální stránky
     for (let i = Math.max(0, currentPage.value - 3); i <= Math.min(totalPages.value - 1, currentPage.value + 3); i++) {
@@ -972,6 +1073,7 @@ async function renderThumb(i) {
 async function switchSong(idx, toEnd) {
   const s = groupSongs.value[idx];
   if (!s) return;
+  endEdit(); // výběr prvku patří předchozí skladbě → zrušit
   // Okamžitě uložit anotace aktuální skladby (jinak by se debounce odpálil až po přepnutí
   // a uložil by B-čkové items pod B-čkový song.id → A-čková anotace by se ztratila)
   await flushAnnotations();
@@ -1099,8 +1201,10 @@ function onTap(e) {
 function toggleAnnot() {
   annotMode.value = !annotMode.value;
   if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; } // jiné panely zavřít
+
+  else endEdit(); // vypnutí anotačního režimu = zrušit výběr prvku (rámeček nesmí zůstat viset)
 }
-function setTool(t) { tool.value = t; wedgePoints.value = []; annotMode.value = true; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; }
+function setTool(t) { endEdit(); tool.value = t; wedgePoints.value = []; hlPoints.value = []; annotMode.value = true; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; }
 
 function toLayerCoords(e) {
   const svg = layerSvgEl.value;
@@ -1463,7 +1567,11 @@ function itemBox(it) {
     if (it.x == null || it.y == null) return null;
     const s = it.size || 20;
     x1 = it.x; y1 = it.y - s;
-    x2 = it.x + (it.text ? Math.max(s, it.text.length * s * 0.6) : s); y2 = it.y;
+    // Dynamika = šířka glyfu z metrik fontu; text = odhad podle počtu znaků
+    const w = it.tool === 'dynamic'
+      ? dynAdvEm(it.text) * s
+      : (it.text ? Math.max(s, it.text.length * s * 0.6) : s);
+    x2 = it.x + w; y2 = it.y;
   } else if (isStroke(it)) {
     if (!it.points || !it.points.length) return null;
     for (const p of it.points) {
@@ -1690,7 +1798,7 @@ function goBack() { router.push('/'); }
 // --- Skoky (Da Capo / VIDE) ---
 function toggleJumpMode() {
   jumpMode.value = !jumpMode.value;
-  if (jumpMode.value) annotMode.value = false; // jiný panel → vypnout anotaci
+  if (jumpMode.value) { annotMode.value = false; endEdit(); } // jiný panel → vypnout anotaci i výběr prvku
   if (!jumpMode.value) { jumpStart.value = null; jumpEnd.value = null; jumpLabel.value = ''; }
 }
 // Krok 1: označit výchozí stránku (kde skok začíná)
@@ -1736,6 +1844,7 @@ function openPageGo() {
   pageGoOpen.value = true;
   // panel se otevře i mimo anotační režim; ostatní mody zavřít, aby se nepřekrývaly
   annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false;
+  endEdit(); // zrušit výběr prvku — jinak by rámeček zůstal viset přes dialog
   nextTick(() => {
     const el = pageGoInputEl.value;
     if (el) { el.focus(); el.select(); }
@@ -1760,6 +1869,7 @@ function goToTypedPage() {
 function openBookmark() {
   bookmarkMode.value = true;
   annotMode.value = false; // jiný panel → vypnout anotaci
+  endEdit();               // a zrušit výběr prvku (rámeček by zůstal viset)
   bookmarkLabel.value = '';
   bookmarkEditing.value = null;
 }
@@ -2138,6 +2248,9 @@ async function deleteBookmark(b) {
 .ap-collapse:active { color: var(--text); }
 .ap-collapse-label { font-size: 0.85rem; color: var(--text-dim); cursor: pointer; }
 .ap-tool.mus { font-size: 1.15rem; font-weight: 700; }
+/* Ikona nástroje Dynamika = skutečný glyf z fontu NotyDyn (ne unicode 𝆏, který
+   se na různých zařízeních vykresluje různě nebo vůbec). */
+.dyn-ico { font-family: 'NotyDyn', serif; font-size: 1.5rem; line-height: 1; }
 .op-row { width: 100%; gap: 8px; }
 .ap-op-label { font-size: 0.8rem; color: var(--text-dim); white-space: nowrap; }
 .ap-opacity { flex: 1; min-width: 0; accent-color: var(--accent); height: 4px; }
@@ -2219,6 +2332,25 @@ async function deleteBookmark(b) {
   border-radius: 10px; padding: 12px; color: var(--text); font-size: 1rem;
 }
 .ti-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Nabídka dynamik — dlaždice s hotovými glyfy z fontu NotyDyn.
+   Uživatel tak vidí přesně to, co se vloží, a nemusí znát SMuFL kódy.
+   Bez hoveru/focusu (Jan: mobilní PWA) — jediný feedback je :active. */
+.dyn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  gap: 6px;
+}
+.dyn-btn {
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'NotyDyn', serif;
+  font-size: 26px; line-height: 1;
+  min-height: 46px; padding: 4px;
+  background: var(--bg-elev2); border: 1px solid var(--border);
+  border-radius: 10px; color: var(--text);
+}
+.dyn-btn.on { border-color: var(--accent); background: var(--bg-elev); }
+.ti-warn { font-size: 0.8rem; color: var(--danger); }
 
 /* Loading overlay při prvním načtení / přechodu mezi skladbami */
 .viewer-loading {

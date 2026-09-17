@@ -13,6 +13,20 @@
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* Notační font pro dynamiku (p, f, mf, sfz...).
+   NotyDyn = cílený subset fontu Bravura (Steinberg Media Technologies GmbH),
+   SIL Open Font License 1.1. Přejmenováno na NotyDyn, protože OFL zakazuje
+   použít vyhrazené jméno "Bravura" na upravené (ořezané) verzi.
+   Obsahuje blok dynamik U+E520-U+E549 (42 glyfů), 8 KB.
+   font-display:block — fallback by zobrazil úplně jiné znaky, radši krátce počkat. */
+@font-face {
+  font-family: 'NotyDyn';
+  src: url('/assets/noty-dyn.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 /* Jan: žádné hover/focus vizuální efekty ani přechody (mobil-first PWA).
