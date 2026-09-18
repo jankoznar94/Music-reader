@@ -122,7 +122,7 @@
          .rotor uvnitř je přesně velký jako neotočená stránka a otáčí se kolem
          svého středu — díky tomu se canvas, anotační vrstva I tlačítka skoků
          otočí SPOLU a poznámky zůstanou přilepené k notám. -->
-    <div class="stage" :class="{ rotated: rot !== 0 }" :style="stageStyle">
+    <div class="stage" :class="{ rotated: rot !== 0, backdrop: sheetBackdropOn }" :style="stageStyle">
      <div class="rotor" :style="rotorStyle">
       <canvas ref="canvasEl" class="pdf-canvas" />
       <!-- Anotační vrstva nad PDF -->
@@ -3144,6 +3144,11 @@ async function deleteBookmark(b) {
   transform-origin: center center;
 }
 .pdf-canvas { display: block; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,0.6); border-radius: 6px; touch-action: none; }
+/* Na bílém plátně (<- zoom / posun / rotace) by stín papíru prozradil, že jde
+   o papír položený na jiném podkladu (Jan: „jsou na plátně ještě vidět vnější
+   stíny od stránky s notami“). Když plátno svítí, stín se vypne — papír i plátno
+   jsou bílé, takže splynou v jednu plochu. V tmavém výchozím stavu stín zůstává. */
+.stage.backdrop .pdf-canvas { box-shadow: none; }
 /* Stín papíru při rotaci: měkký stín canvasu kopíruje OTOČENÝ okraj papíru, takže
    přes bílé plátno (.stage::before, které má obrys opsaného obdélníku) prosvítá
    šikmá tmavá hrana a je vidět, že je to pootočený papír na jiném podkladu (Jan).
@@ -3151,6 +3156,11 @@ async function deleteBookmark(b) {
    i stín tak mají stejný, vodorovně zarovnaný tvar. */
 .stage.rotated .pdf-canvas { box-shadow: none; }
 .stage.rotated::before { box-shadow: 0 2px 14px rgba(0,0,0,0.6); }
+/* Když je plátno aktivní (zoom/posun/rotace), stín papíru i bílého obrysu se
+   vypne — jinak je na bílé ploše vidět šedý lem a prozradí „pootočený papír na
+   jiném podkladu“. Papír i plátno jsou bílé, takže mají splynout v jednu plochu. */
+.stage.backdrop .pdf-canvas,
+.stage.backdrop::before { box-shadow: none; }
 .annot-layer { position: absolute; top: 0; left: 0; touch-action: none; cursor: crosshair; }
 /* V anotaci vrstva přijímá dotyk, ale stránkování okrajovými klepnutími se
    rozhoduje už v onTouchEnd (musí vidět pointerType i poloměr dotyku). */
