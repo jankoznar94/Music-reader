@@ -95,6 +95,10 @@
 
     <!-- Aktivní stránka (vlastní oblast pod lištou — lišta noty nepřekrývá) -->
     <div class="page-area" ref="pageAreaEl">
+    <!-- Pruhy u okrajů = místo, kde se listuje PRSTEM (jen při čtení).
+         Vizuální pomůcka, nedrží dotyk — ten dojde až na .viewer. -->
+    <div v-if="!annotMode && !jumpPlaceMode" class="edge-hint left" />
+    <div v-if="!annotMode && !jumpPlaceMode" class="edge-hint right" />
     <!-- .stage = vnější box, jehož rozměry odpovídají tomu, jak stránka zabírá
          na obrazovce PO OTOČENÍ (při 90°/270° prohozené). Nese zoom a posun.
          .rotor uvnitř je přesně velký jako neotočená stránka a otáčí se kolem
@@ -1494,12 +1498,25 @@ async function nextSong() {
 let _touchStart = null;
 let _pinchDist = null;
 let _pinchMid = null; // střed dvou prstů (pro pan)
+// Pero právě kreslí / kreslilo = stránku NELISTOVAT (Jan: „anotace se dělají perem“).
+// _lastPenAt drží čas posledního tahu perem — chrání i proti zpožděnému touchendu,
+// který na reálném tabletu dorazí až po uvolnění pera.
+let _lastPenAt = 0;
+let _lastTouchStrokeAt = 0;   // prst kreslil na anotační vrstvě → teprve pak smí listovat
+let _palmUntil = 0;           // do kdy se nesmí listovat kvůli opřené dlani
+const PEN_GUARD_MS = 800;
+function blockedNav() {
+  if (_activePointerId !== null) return true;
+  if (Date.now() - _lastPenAt < PEN_GUARD_MS) return true;
+  if (Date.now() - _lastTouchStrokeAt < PEN_GUARD_MS) return true;
+  return false;
+}
+function markPen() { _lastPenAt = Date.now(); }
 function onTouchStart(e) {
-  // V anotačním režimu se listovat SMÍ (Jan: „když je otevřený anotační režim,
-  // nedá se listovat, musí se vždy zavřít anotace"). Rozlišíme pero a prst:
-  // pero nastaví _activePointerId (kreslí), prst ne → prstem se listuje.
-  // Zahájení tahu perem ukončí čekající swipe (přiložená ruka nesmí otočit stránku).
-  if (_activePointerId !== null) { _touchStart = null; return; }
+  // V anotačním režimu se listovat SMÍ, ale JEN prstem na kraji displeje.
+  // Rozlišení je na úrovni pointerType (viz onLayerDown), tady rozhoduje jen
+  // to, že pero zrovna kreslí nebo kreslilo → dotyk patří opřené ruce.
+  if (blockedNav()) { _touchStart = null; _pinchDist = null; _pinchMid = null; return; }
   // Tah na liště záložek (horizontální scroll) nekreslí jako swipe stránky
   if (e.target && e.target.closest && e.target.closest('.bookmark-strip')) return;
   if (e.touches.length === 2) {
@@ -1510,13 +1527,21 @@ function onTouchStart(e) {
   }
   if (e.touches.length === 1) {
     const t = e.touches[0];
+    // Opřená dlaň: velký poloměr kontaktu. Nezaznamenáváme ji vůbec — nesmí
+    // listovat klepnutím ani tažením, a poznamenáme si okno, ve kterém se
+    // nesmí listovat ani přes kompatibilitní `click`.
+    if (isPalmTouch(t)) { _palmUntil = Date.now() + 700; _touchStart = null; return; }
     // Ukládáme i CÍL dotyku — při uvolnění se podle něj pozná, že klepnutí
     // patřilo ovládacímu prvku (anotační panel je v okrajové zóně) a nemá listovat.
-    _touchStart = { x: t.clientX, y: t.clientY, t: Date.now(), target: e.target };
+    _touchStart = {
+      x: t.clientX, y: t.clientY, t: Date.now(), target: e.target,
+      palm: false,
+      edge: inEdgeZone(t.clientX), // začátek tahu v okrajovém pruhu
+    };
   }
 }
 function onTouchMove(e) {
-  if (_activePointerId !== null) return;   // pero kreslí → neposouvat ani zoomovat
+  if (blockedNav()) return;   // pero kreslí → neposouvat ani zoomovat
   if (e.touches.length === 2 && _pinchDist) {
     const d = dist(e.touches[0], e.touches[1]);
     const ratio = d / _pinchDist;
@@ -1546,42 +1571,75 @@ function isControlTarget(el) {
     '.wedge-hint, .viewer-loading, .jp-place-hint'
   );
 }
+// Šířka okrajové zóny pro listování — JEN úzký pruh u okraje displeje.
+// Jan: „stránky se přepínají jen prstem, a to jen na krajích displeje.“
+// Dřívějších 20 % šířky je na tabletu zbytečně široké pruh (u 800 px = 160 px)
+// a krade místo pro anotace → strop 90 px (na mobilu zůstává 20 %).
+function edgeWidth() {
+  const el = viewerEl.value;
+  if (!el) return 90;
+  return Math.max(48, Math.min(el.clientWidth * 0.2, 90));
+}
+function inEdgeZone(clientX) {
+  const el = viewerEl.value;
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  const localX = clientX - r.left;
+  return localX < edgeWidth() || localX > r.width - edgeWidth();
+}
+// Opřená dlaň: dotyk má násobně větší poloměr kontaktu než prst. Takový dotyk
+// nikdy nelistuje (Jan: „ať to nepřepíná třeba i opřená dlaň“).
+// Prst se hlásí asi 25–35 px, dlaň 60+ px → práh 50 px.
+function isPalmTouch(t) {
+  const rx = t.radiusX || 0;
+  const ry = t.radiusY || 0;
+  return Math.max(rx, ry) > 50;
+}
 function annotEdgeTap(x, y, target) {
   // Klepnutí na ovládací prvek (tlačítko nástroje, panel, lišta) NElístuje
   if (isControlTarget(target)) return;
+  if (blockedNav()) return;
   const el = viewerEl.value;
   if (!el) return;
   const r = el.getBoundingClientRect();
-  // Zóny podél okrajů; vertikálně vynecháme pruh horní lišty
-  const edge = r.width * 0.2;
+  // Vertikálně vynecháme pruh horní lišty (patří ovládání)
   const inTop = y < (r.top + (topBarH.value || 0) + 8);
-  if (inTop) return;   // horní lišta → patří ovládání
+  if (inTop) return;
   const localX = x - r.left;
-  if (localX < edge) prevPage();
-  else if (localX > r.width - edge) nextPage();
+  if (localX < edgeWidth()) prevPage();
+  else if (localX > r.width - edgeWidth()) nextPage();
 }
 
 function onTouchEnd(e) {
-  if (_activePointerId !== null) { _pinchDist = null; _pinchMid = null; return; } // pero kreslí
   _pinchDist = null;
   _pinchMid = null;
-  if (!_touchStart) return;
-  const t = e.changedTouches[0];
-  const dx = t.clientX - _touchStart.x;
-  const dy = t.clientY - _touchStart.y;
-  const dt = Date.now() - _touchStart.t;
+  const t = e.changedTouches && e.changedTouches[0];
+  const st = _touchStart;
+  _touchStart = null;
+  // Pero právě kreslí / během tohoto dotyku kreslilo → dotyk patřil opřené ruce
+  if (_activePointerId !== null || _penDrewDuringTouch) { _penDrewDuringTouch = false; return; }
+  if (!st || !t) return;
+  // Opřená dlaň (na začátku i na konci dotyku) NIKDY nelistuje.
+  // Dlaň ale nesmí listovat ani přes kompatibilitní `click`, který prohlížeč
+  // po dotyku vygeneruje — tam poloměr dotyku k dispozici není, takže si
+  // dlaň poznamenáme stranou a onTap se podle toho zahodí.
+  if (st.palm || isPalmTouch(t)) { _palmUntil = Date.now() + 700; return; }
+  const dx = t.clientX - st.x;
+  const dy = t.clientY - st.y;
+  const dt = Date.now() - st.t;
   const tapped = Math.abs(dx) < 20 && Math.abs(dy) < 20 && dt < 400;
   const wasAnnot = annotMode.value;
-  const startTarget = _touchStart.target;
-  _touchStart = null;
-  // Během tohoto dotyku pero kreslilo → dotyk patřil opřené ruce, ne listování
-  if (_penDrewDuringTouch) { _penDrewDuringTouch = false; return; }
   if (tapped) {
-    // V anotaci listuje JEN klepnutí mimo ovládací prvky a v okrajové zóně
-    if (wasAnnot) annotEdgeTap(t.clientX, t.clientY, startTarget);
+    // V anotaci klepnutí na noty NElístuje. Listuje jen klepnutí, které
+    // ZAČALO i SKONČILO v okrajovém pruhu (prst se nepřesunul z kraje doprostřed)
+    // a netrefilo ovládací prvek (anotační panel sedí v levém kraji).
+    if (wasAnnot && st.edge && inEdgeZone(t.clientX)) {
+      annotEdgeTap(t.clientX, t.clientY, st.target);
+    }
     return; // v režimu čtení tap řeší onTap
   }
-  if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
+  // Swipe prstem listuje JEN když začal v okrajovém pruhu (Jan: „jen na krajích displeje“)
+  if (st.edge && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
     if (dx < 0) nextPage(); // swipe vlevo → další stránka/nota
     else prevPage();        // swipe vpravo → předchozí stránka/nota
   }
@@ -1593,10 +1651,15 @@ function mid(a, b) {
   return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
 }
 
-// Tap: okraje → listování (jen mimo anotaci, tlačítka, lištu a formuláře)
+// Tap: okraje → listování (jen mimo anotaci, tlačítka, lištu a formuláře).
+// Pero klepnutím NElístuje — listuje se jen prstem (Jan: „anotace se dělají perem,
+// stránky se přepínají jen prstem“), a navíc jen v úzkém pruhu u okraje.
 function onTap(e) {
   if (annotMode.value) return;
   if (jumpPlaceMode.value) return;   // probíhá umisťování — klepnutí patří vrstvě
+  if (e.pointerType === 'pen') return;   // pero nikdy nelistuje
+  if (blockedNav()) return;              // právě kreslilo pero → spíš dlaň než prst
+  if (Date.now() < _palmUntil) return;   // opřená dlaň — její dotyk právě skončil
   // Plovoucí tlačítka, panely a vstupy necháme bez stránkování (input ve správci záložek
   // by jinak spadl do okrajové zóny a skočil na předchozí stránku).
   if (e.target.closest('button')) return;
@@ -1604,10 +1667,9 @@ function onTap(e) {
   if (e.target.closest('.top-bar, .jump-panel, .slider-panel, .bookmark-strip, .page-go-backdrop')) return;
   const el = viewerEl.value;
   if (!el) return;
-  const x = e.clientX - el.getBoundingClientRect().left;
-  const edge = el.clientWidth * 0.2; // 20 % od okraje = listování
-  if (x < edge) prevPage();
-  else if (x > el.clientWidth - edge) nextPage();
+  const localX = e.clientX - el.getBoundingClientRect().left;
+  if (localX < edgeWidth()) prevPage();
+  else if (localX > el.clientWidth - edgeWidth()) nextPage();
 }
 
 // --- Anotace ---
@@ -1680,11 +1742,17 @@ function onLayerDown(e) {
     return;
   }
   if (!annotMode.value) return;
+  // Pero = kreslení (Jan: „anotace se dělají perem“). Zaznamenáme čas, aby
+  // opřená ruka, jejíž touchend dorazí až po tahu perem, neotočila stránku.
+  if (e.pointerType === 'pen') markPen();
   // Pen-only mód: dotyk prstem/rukou NEKRESLÍ (palm-rejection) — kreslí jen pero.
   // Listování prstem v anotaci řeší touch obsluha na .viewer (onTouchStart/End),
   // která pozná, že pero zrovna kreslí, přes _activePointerId.
   if (penOnly.value && e.pointerType !== 'pen') return;
   if (_activePointerId !== null) return; // už kreslí jiný tah (např. druhá ruka)
+  // Prstem se (s vypnutým „jen pero“) taky kreslí → po takovém tahu chvíli
+  // nelistovat, aby dokončení tahu neotočilo stránku.
+  if (e.pointerType === 'touch') _lastTouchStrokeAt = Date.now();
   // Pero začíná kreslit. Když v tu chvíli běží dotykový tah (opřená ruka),
   // označíme ho — jeho dokončení NESMÍ otočit stránku (na reálném tabletu
   // může touchend dorazit až po tahu perem).
@@ -1959,6 +2027,9 @@ function onLayerMove(e) {
   }
 }
 function onLayerUp(e) {
+  // Pero ukončilo tah → drž krátký ochranný interval, po který dotyk
+  // (opřená ruka se zpožděným touchendem) nesmí otočit stránku.
+  if (e && e.pointerType === 'pen') markPen();
   // Režim "Upravit": ukončit přetahování, uložit novou pozici
   if (tool.value === 'edit') {
     // Přesun tlačítka skoku → uložit nové umístění do DB
@@ -2720,9 +2791,19 @@ async function deleteBookmark(b) {
 }
 .pdf-canvas { display: block; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,0.6); border-radius: 6px; touch-action: none; }
 .annot-layer { position: absolute; top: 0; left: 0; touch-action: none; cursor: crosshair; }
+/* V anotaci vrstva přijímá dotyk, ale stránkování okrajovými klepnutími se
+   rozhoduje už v onTouchEnd (musí vidět pointerType i poloměr dotyku). */
 .annot-layer.active { pointer-events: auto; }
 .annot-layer.active + .stage {  }
 .annot-layer:not(.active) { pointer-events: none; }
+/* Pruh u okrajů = listování prstem (jen při čtení). Je to vizuální pomůcka,
+   nesmí chytat dotyk — ten musí dojít až na .viewer. */
+.edge-hint {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 90px;
+  max-width: 20%; pointer-events: none; z-index: 18;
+}
+.edge-hint.right { left: auto; right: 0; }
 .annot-layer .hl { mix-blend-mode: multiply; opacity: 0.9; }
 /* Náhled zvýrazňovače při sytých barvách: ať je vidět, že jde o zvýraznění,
    a ne o přebarvení not — náhled multiplikuje stejně jako hotový tvar. */
