@@ -60,16 +60,27 @@
       <span class="zp-val">{{ Math.round(zoom * 100) }} %</span>
       <button class="zp-btn" @click="zoomIn" title="Přiblížit">+</button>
       <span class="zp-sep" />
-      <!-- Otočení stránky: hrubé po 90° (na šířku) a jemné po 1° (křivý sken).
-           Úhel se sčítá, takže se dá dostat na libovolnou hodnotu. -->
+      <!-- Otočení stránky: hrubé po 90° (na šířku), jemné po 1° a nejjemnější
+           po 0,1° (křivý sken). Tlačítka 1° a 0,1° jdou DRŽET — úhel plynule
+           nabíhá, takže se dostane i na velký úhel bez mnoha klepání. -->
       <button class="zp-btn" @click="rotateBy(-90)" title="Otočit vlevo o 90°">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
       </button>
-      <button class="zp-btn" @click="rotateBy(-1)" title="Otočit vlevo o 1°">
+      <button class="zp-btn" @click="rotateClick(-1)" title="Otočit vlevo o 1° (drž pro plynulé otáčení)"
+              @pointerdown="rotHoldStart(-1)" @pointerup="rotHoldStop" @pointercancel="rotHoldStop" @pointerleave="rotHoldStop">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
-      <button class="zp-rot" @click="resetRotation" title="Klepnutím zrušit otočení">{{ Math.round(rot) }}°</button>
-      <button class="zp-btn" @click="rotateBy(1)" title="Otočit vpravo o 1°">
+      <button class="zp-btn fine" @click="rotateClick(-0.1)" title="Otočit vlevo o 0,1° (drž pro plynulé doladění)"
+              @pointerdown="rotHoldStart(-0.1)" @pointerup="rotHoldStop" @pointercancel="rotHoldStop" @pointerleave="rotHoldStop">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <button class="zp-rot" @click="resetRotation" title="Klepnutím zrušit otočení">{{ rotLabel }}</button>
+      <button class="zp-btn fine" @click="rotateClick(0.1)" title="Otočit vpravo o 0,1° (drž pro plynulé doladění)"
+              @pointerdown="rotHoldStart(0.1)" @pointerup="rotHoldStop" @pointercancel="rotHoldStop" @pointerleave="rotHoldStop">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <button class="zp-btn" @click="rotateClick(1)" title="Otočit vpravo o 1° (drž pro plynulé otáčení)"
+              @pointerdown="rotHoldStart(1)" @pointerup="rotHoldStop" @pointercancel="rotHoldStop" @pointerleave="rotHoldStop">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
       </button>
       <button class="zp-btn" @click="rotateBy(90)" title="Otočit vpravo o 90°">
@@ -1124,6 +1135,8 @@ function releaseWakeLock() {
   if (wakeTimer) { window.clearInterval(wakeTimer); wakeTimer = null; }
   if (wakeVisibleHandler) { document.removeEventListener('visibilitychange', wakeVisibleHandler); wakeVisibleHandler = null; }
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  // Držení otáčení nesmí přežít odchod z prohlížeče
+  rotHoldCancel();
 }
 
 let availW = 800, availH = 1100;
@@ -1203,8 +1216,15 @@ async function clearPageView() {
 }
 // Otočení stránky o delta stupňů (kladné = vpravo). Měřítko se přepočítá, aby
 // se otočená stránka vešla CELÁ — jinak by její okraje zašly pod horní lištu.
+// POZOR: tohle je drahá operace (getPageWidthHeight + invalidace cache + render),
+// proto se při držení tlačítka NESMÍ volat na každý krok auto-repeatu. Držení
+// sbírá úhel do `rot` po malých krocích a překresluje se jen občas (viz rotHold).
 async function rotateBy(delta) {
   rot.value = ((rot.value + delta) % 360 + 360) % 360;
+  await refreshAfterRotation();
+}
+// Přepočet měřítka + invalidace cache + překreslení po změně úhlu.
+async function refreshAfterRotation() {
   const d = await getPageWidthHeight(song, currentPage.value + 1);
   baseDims = { w: d.width, h: d.height };
   zoom.value = 1.0;          // `zoom` je násobitel nad fitScale (který rotaci zná)
@@ -1214,6 +1234,68 @@ async function rotateBy(delta) {
   cached.clear(); preRendered.clear(); renderPromises.clear();
   renderCurrent();
 }
+// Držení tlačítka otáčení = plynulé otáčení (jako auto-repeat na klávesnici).
+// Klepnutí udělá JEDEN krok přes @click; držení pustí opakování až po počáteční
+// prodlevě, aby se krok nepočítal dvakrát (pointerdown + click u jednoho ťuknutí).
+// Překresluje se jen ~6× za sekundu, jinak by malé kroky škubaly.
+let _rotHoldTimer = null;
+let _rotDelayTimer = null;
+let _rotRenderTimer = null;
+let _rotHoldValue = 0;
+let _rotHoldRepeats = 0;
+const ROT_HOLD_DELAY_MS = 400;   // jak dlouho držet, než se rozjede opakování
+const ROT_HOLD_STEP_MS = 60;
+const ROT_RENDER_MS = 160;
+function rotHoldStart(delta) {
+  rotHoldCancel();
+  _rotHoldValue = rot.value;
+  _rotHoldRepeats = 0;
+  _rotDelayTimer = window.setTimeout(() => {
+    _rotDelayTimer = null;
+    _rotHoldTimer = window.setInterval(() => {
+      _rotHoldValue = ((_rotHoldValue + delta) % 360 + 360) % 360;
+      rot.value = _rotHoldValue;
+      _rotHoldRepeats++;
+      scheduleRotRender();
+    }, ROT_HOLD_STEP_MS);
+  }, ROT_HOLD_DELAY_MS);
+}
+function scheduleRotRender() {
+  if (_rotRenderTimer) return;
+  _rotRenderTimer = window.setTimeout(() => {
+    _rotRenderTimer = null;
+    refreshAfterRotation();
+  }, ROT_RENDER_MS);
+}
+function rotHoldCancel() {
+  if (_rotDelayTimer) { window.clearTimeout(_rotDelayTimer); _rotDelayTimer = null; }
+  if (_rotHoldTimer) { window.clearInterval(_rotHoldTimer); _rotHoldTimer = null; }
+  if (_rotRenderTimer) { window.clearTimeout(_rotRenderTimer); _rotRenderTimer = null; }
+}
+// Dokončení držení: doladit přesně. Když se opravdu opakovalo, klik, který po
+// pointerup následuje, se zahodí (jinak by přidal ještě jeden krok navíc).
+function rotHoldStop() {
+  const repeated = _rotHoldRepeats > 0;
+  rotHoldCancel();
+  if (!repeated) return;              // ťuknutí → jeden krok udělá @click
+  refreshAfterRotation();             // finální přesné překreslení
+  _rotHoldDidRepeat = true;
+  window.setTimeout(() => { _rotHoldDidRepeat = false; }, 0);
+}
+let _rotHoldDidRepeat = false;
+// Klepnutí na tlačítko otáčení — po držení se zahodí (krok už proběhl v držení).
+function rotateClick(delta) {
+  if (_rotHoldDidRepeat) { _rotHoldDidRepeat = false; return; }
+  rotateBy(delta);
+}
+// Úhel pro popisek: celé stupně, ale u jemného doladění ukáže desetinu.
+// Jan si u křivého skenu ladí třeba 0,4° — „3°" by mu to zatajilo.
+const rotLabel = computed(() => {
+  const v = rot.value;
+  const rounded = Math.round(v * 10) / 10;
+  const isWhole = Math.abs(rounded - Math.round(rounded)) < 0.05;
+  return (isWhole ? String(Math.round(rounded)) : rounded.toFixed(1).replace('.', ',')) + '°';
+});
 // Zruší rotaci a vrátí stránku do výchozího zobrazení
 async function resetRotation() {
   rot.value = 0;
@@ -2854,6 +2936,9 @@ async function deleteBookmark(b) {
   display: flex; align-items: center; justify-content: center; touch-action: manipulation;
 }
 .zp-btn.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
+/* Jemné otáčení (0,1°) — menší tlačítko, ať se řada vejde a je vidět,
+   že jde o jemnější krok než sousední 1°. */
+.zp-btn.fine { width: 38px; height: 38px; font-size: 1.1rem; }
 .zp-val { min-width: 56px; text-align: center; font-size: 1rem; font-weight: 600; color: var(--text); }
 .zp-sep { width: 1px; height: 26px; background: var(--border); }
 /* Úhel otočení — klepnutím se zruší (ploché, jen :active feedback) */
