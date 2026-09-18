@@ -100,7 +100,7 @@
          .rotor uvnitř je přesně velký jako neotočená stránka a otáčí se kolem
          svého středu — díky tomu se canvas, anotační vrstva I tlačítka skoků
          otočí SPOLU a poznámky zůstanou přilepené k notám. -->
-    <div class="stage" :style="stageStyle">
+    <div class="stage" :class="{ rotated: rot !== 0 }" :style="stageStyle">
      <div class="rotor" :style="rotorStyle">
       <canvas ref="canvasEl" class="pdf-canvas" />
       <!-- Anotační vrstva nad PDF -->
@@ -666,12 +666,18 @@ const tool = ref('pencil');
 const activeItem = ref(null);
 
 // Rozšířené anotace
-// Výrazná paleta (Jan: „barvy jsou příliš jemné a splývají" — nejde o krytí,
-// ale o sytost odstínu). Zvýrazňovač se navíc kreslí PLNĚ (bez '80'), takže
-// přes noty prosvítá jen díky multiply, ne díky poloprůhlednosti.
-const colors = ['#111111', '#c0392b', '#e8a300', '#e8622a', '#2e8b57', '#1f6fd0', '#d4a017', '#d81b7a', '#0f3d6e'];
-// Stará jemná paleta → nová výrazná. Existující poznámky se přebarví rovnou
-// (Jan: „existující poznámky už rovnou obarvíme dle nových barev").
+// DVĚ palety:
+//  - Tužka (a text/dynamika): syté, tmavší odstíny — mají držet na bílém papíře
+//    jako inkoust (Jan: „barvy jsou příliš jemné a splývají").
+//  - Zvýrazňovač: světlé, KŘIKLAVÉ barvy — zvýrazňovač má být vidět na první
+//    pohled a přes multiply má jen podbarvit noty, ne je přebarvit (Jan).
+// Pořadí odstínů je v obou paletách stejné, takže se dá přebarvovat podle indexu.
+const PEN_COLORS = ['#111111', '#c0392b', '#e8a300', '#e8622a', '#2e8b57', '#1f6fd0', '#d4a017', '#d81b7a', '#0f3d6e'];
+const HL_COLORS  = ['#fff200', '#ff5252', '#7bff3d', '#ff8ad8', '#3dffa0', '#4fd8ff', '#ffb300', '#c77dff', '#00e5ff'];
+// Paleta podle nástroje — v panelu se ukáže ta správná
+const colors = computed(() => tool.value === 'highlighter' ? HL_COLORS : PEN_COLORS);
+// Stará jemná paleta → nové barvy. Klíčem je původní odstín; hodnota je nová
+// barva PRO TUŽKU. Zvýrazňovač má vlastní mapu (HL_UPGRADE) a přebarvuje se jí.
 const COLOR_UPGRADE = {
   '#1a1a1a': '#111111',
   '#c05a4a': '#c0392b',
@@ -683,20 +689,29 @@ const COLOR_UPGRADE = {
   '#d9b6d9': '#d81b7a',
   '#1a2a4a': '#0f3d6e',
 };
-// Přepíše uloženou barvu na výraznou. Zvládne i 8znakový zápis s alfou
-// (zvýrazňovač ukládal 'RRGGBB80') — u zvýrazňovače se alfa zahodí úplně,
+// Zvýrazňovač: z jakékoli dřívější barvy (stará jemná i nová sytá tužková) na
+// křiklavou. Index v paletě drží odstín, takže modrá zůstane modrá.
+const HL_UPGRADE = {};
+[...Object.keys(COLOR_UPGRADE), ...Object.values(COLOR_UPGRADE)].forEach((old, i) => {
+  HL_UPGRADE[old] = HL_COLORS[i % HL_COLORS.length];
+});
+HL_UPGRADE['#111111'] = HL_COLORS[0];
+// Přepíše uloženou barvu na novou. Zvládne i 8znakový zápis s alfou
+// (zvýrazňovač dřív ukládal 'RRGGBB80') — u zvýrazňovače se alfa zahodí úplně,
 // protože průhlednost nahrazuje multiply.
-function upgradeColor(color) {
+function upgradeColor(color, isHighlighter) {
   if (!color || typeof color !== 'string') return color;
   const base = color.slice(0, 7).toLowerCase();
-  return COLOR_UPGRADE[base] || base;
+  const map = isHighlighter ? HL_UPGRADE : COLOR_UPGRADE;
+  return map[base] || base;
 }
-// Přebarví všechny existující anotace (idempotentní — klidně opakovaně)
+// Přebarví všechny existující anotace (idempotentní — klidně opakovaně).
+// Zvýrazňovač se mapuje svou paletou, ostatní nástroje tužkovou.
 function upgradeAnnotationColors() {
   let changed = false;
   for (const it of annotations.value.items) {
     if (!it || typeof it.color !== 'string') continue;
-    const next = upgradeColor(it.color);
+    const next = upgradeColor(it.color, it.tool === 'highlighter');
     if (next !== it.color) { it.color = next; changed = true; }
   }
   return changed;
@@ -1495,7 +1510,9 @@ function onTouchStart(e) {
   }
   if (e.touches.length === 1) {
     const t = e.touches[0];
-    _touchStart = { x: t.clientX, y: t.clientY, t: Date.now() };
+    // Ukládáme i CÍL dotyku — při uvolnění se podle něj pozná, že klepnutí
+    // patřilo ovládacímu prvku (anotační panel je v okrajové zóně) a nemá listovat.
+    _touchStart = { x: t.clientX, y: t.clientY, t: Date.now(), target: e.target };
   }
 }
 function onTouchMove(e) {
@@ -1514,6 +1531,36 @@ function onTouchMove(e) {
     return;
   }
 }
+// Klepnutí v anotačním režimu patří nástrojům, NIKDY listování — kromě okrajových
+// zón, kde listovat chceme.
+// Proč: okrajová klepnutí se dřív vyhodnocovala i nad anotačním panelem, který
+// sedí v LEVÉ části displeje a je široký (min-width 220 px) → klepnutí na
+// tlačítko nástroje (např. tužka) přepnulo i stránku. Proto se ověřuje CÍL
+// dotyku: cokoli uvnitř panelu/lišty/tlačítka se nepočítá jako listování.
+function isControlTarget(el) {
+  if (!el || !el.closest) return false;
+  return !!el.closest(
+    'button, input, textarea, select, a, label,' +
+    '.annot-panel, .top-bar, .zoom-panel, .jump-panel, .edit-bar, .slider-panel,' +
+    '.bookmark-strip, .jump-strip, .jump-on-page, .page-go, .text-input-card,' +
+    '.wedge-hint, .viewer-loading, .jp-place-hint'
+  );
+}
+function annotEdgeTap(x, y, target) {
+  // Klepnutí na ovládací prvek (tlačítko nástroje, panel, lišta) NElístuje
+  if (isControlTarget(target)) return;
+  const el = viewerEl.value;
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  // Zóny podél okrajů; vertikálně vynecháme pruh horní lišty
+  const edge = r.width * 0.2;
+  const inTop = y < (r.top + (topBarH.value || 0) + 8);
+  if (inTop) return;   // horní lišta → patří ovládání
+  const localX = x - r.left;
+  if (localX < edge) prevPage();
+  else if (localX > r.width - edge) nextPage();
+}
+
 function onTouchEnd(e) {
   if (_activePointerId !== null) { _pinchDist = null; _pinchMid = null; return; } // pero kreslí
   _pinchDist = null;
@@ -1524,21 +1571,14 @@ function onTouchEnd(e) {
   const dy = t.clientY - _touchStart.y;
   const dt = Date.now() - _touchStart.t;
   const tapped = Math.abs(dx) < 20 && Math.abs(dy) < 20 && dt < 400;
+  const wasAnnot = annotMode.value;
+  const startTarget = _touchStart.target;
   _touchStart = null;
   // Během tohoto dotyku pero kreslilo → dotyk patřil opřené ruce, ne listování
   if (_penDrewDuringTouch) { _penDrewDuringTouch = false; return; }
   if (tapped) {
-    // V anotaci si okrajová klepnutí řešíme tady — vrstva je nad plátnem a click
-    // tam řeší nástroje, takže by se klepnutí na okraj k listování nedostalo.
-    if (annotMode.value) {
-      const el = viewerEl.value;
-      if (el) {
-        const x = t.clientX - el.getBoundingClientRect().left;
-        const edge = el.clientWidth * 0.2;
-        if (x < edge) prevPage();
-        else if (x > el.clientWidth - edge) nextPage();
-      }
-    }
+    // V anotaci listuje JEN klepnutí mimo ovládací prvky a v okrajové zóně
+    if (wasAnnot) annotEdgeTap(t.clientX, t.clientY, startTarget);
     return; // v režimu čtení tap řeší onTap
   }
   if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
@@ -1590,7 +1630,24 @@ watch(annotMode, (on) => {
 // Totéž při změně nástroje: rámeček patří nástroji Ruka, u jiného nástroje nemá co dělat.
 watch(tool, () => endEdit());
 
-function setTool(t) { endEdit(); tool.value = t; wedgePoints.value = []; hlPoints.value = []; annotMode.value = true; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; }
+function setTool(t) {
+  endEdit();
+  // Přepnutí mezi tužkou a zvýrazňovačem musí přehodit i barvu — palety jsou
+  // různé, jinak by zvýrazňovač kreslil černou (a tužka křiklavě žlutou).
+  // Index v paletě drží odstín: červená zůstane červená.
+  const wasHl = tool.value === 'highlighter';
+  const isHl = t === 'highlighter';
+  if (wasHl !== isHl) {
+    const from = wasHl ? HL_COLORS : PEN_COLORS;
+    const to = isHl ? HL_COLORS : PEN_COLORS;
+    const i = from.indexOf(annotColor.value);
+    if (i >= 0) annotColor.value = to[i];
+    else annotColor.value = to[0];
+  }
+  tool.value = t;
+  wedgePoints.value = []; hlPoints.value = []; annotMode.value = true;
+  jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false;
+}
 
 function toLayerCoords(e) {
   const svg = layerSvgEl.value;
@@ -2640,6 +2697,20 @@ async function deleteBookmark(b) {
   overscroll-behavior-x: none;
 }
 .stage { position: relative; touch-action: none; }
+/* Při rotaci jsou za otočeným papírem vidět šikmé hrany (tmavé pozadí). Bílá
+   plocha POD papírem, která přesně kopíruje jeho otočený obrys, je schová —
+   papír pak vypadá jako souvislá bílá stránka, ne jako otočený obdélník.
+   Je to bratr .rotor (ne jeho potomek), aby se rotace neaplikovala dvakrát. */
+.stage::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: #fff;
+  border-radius: 8px;
+  opacity: 0;
+  transition: opacity 0.12s linear;
+  pointer-events: none;
+}
+.stage.rotated::before { opacity: 1; }
 /* Vnitřní otočný box — přesně velký jako (neotočená) stránka, otáčí se kolem
    svého středu. Obsahuje canvas, anotační vrstvu i tlačítka skoků, takže se
    vše otočí společně a poznámky zůstanou na svém místě v notách. */
