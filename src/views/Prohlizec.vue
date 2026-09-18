@@ -350,6 +350,10 @@
       <div class="loading-text">Načítám noty…</div>
     </div>
 
+    <!-- Referenční mřížka při ladění rotace — ukazuje, co je vodorovně a co svisle.
+         Je vázaná na panel zoomu, takže zmizí, jakmile uživatel panel zavře. -->
+    <div v-if="zoomPanelOpen" class="rot-grid" aria-hidden="true" />
+
     <div v-if="edgeJumps.length" class="jump-strip">
       <button
         v-for="j in edgeJumps"
@@ -2021,8 +2025,12 @@ function onLayerDown(e) {
           x1: Math.min(...xs), y1: Math.min(...ys),
           x2: Math.max(...xs), y2: Math.max(...ys),   // bounding box (hledání, guma)
         };
-        annotations.value.items.push(it);
+        // POZOR na pořadí: historie se musí uložit PŘED vložením anotace.
+        // Dřív to bylo obráceně, takže snapshot už zvýraznění obsahoval a „zpět"
+        // nemělo co vrátit — Jan: „je potřeba ho kliknout několikrát, než anotace
+        // zmizí. Nebo nezmizí vůbec." Stejné pořadí jako u ostatních nástrojů.
         pushHistory();
+        annotations.value.items.push(it);
         saveAnnotations();
       }
       hlPoints.value = [];
@@ -2949,6 +2957,27 @@ async function deleteBookmark(b) {
   cursor: pointer; touch-action: manipulation;
 }
 .zp-rot:active { background: var(--bg-elev2); }
+
+/* Referenční mřížka při ladění rotace. Kreslí se PŘES CELÝ DISPLEJ (fixed), ne
+   přes papír — je to pomůcka pro oko, aby uživatel viděl, co je na obrazovce
+   vodorovně a co svisle, a mohl podle toho srovnat noty. Linky jsou jemné,
+   teplé a poloprůhledné (Jan: ploché, bez křiklavých barev), nesmí chytat dotyk. */
+.rot-grid {
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 26;
+  opacity: 0.5;
+  background-image:
+    /* svislé linky */
+    linear-gradient(to right, rgba(201, 168, 124, 0.34) 1px, transparent 1px),
+    /* vodorovné linky */
+    linear-gradient(to bottom, rgba(201, 168, 124, 0.34) 1px, transparent 1px),
+    /* zdůrazněné osy středu */
+    linear-gradient(to right, rgba(201, 168, 124, 0.6) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(201, 168, 124, 0.6) 1px, transparent 1px);
+  background-size: 40px 40px, 40px 40px, 100% 100%, 100% 100%;
+  background-position: 0 0, 0 0, 50% 0, 0 50%;
+}
 
 /* Oblast stránky pod lištou — z její velikosti se počítá fit not */
 .page-area {
