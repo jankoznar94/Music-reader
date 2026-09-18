@@ -106,6 +106,13 @@
 
     <!-- Aktivní stránka (vlastní oblast pod lištou — lišta noty nepřekrývá) -->
     <div class="page-area" ref="pageAreaEl">
+    <!-- Bílé plátno POD stránkou. Při rotaci krylo odkryté pozadí samo
+         (.stage.rotated::before), ale při ZOOMU a POSUNU se za papírem
+         odkrýval tmavý podklad aplikace (Jan: „musíme vytvořit to bílé plátno
+         pod stránku i v případě posunu a zoomu. Ne jen rotace."). Je to
+         viewport-ový overlay pod lištou, takže kryje celou čtecí plochu
+         bez ohledu na to, jak je papír zrovna transformovaný. -->
+    <div v-if="sheetBackdropOn" class="sheet-backdrop" aria-hidden="true" />
     <!-- Pruhy u okrajů = místo, kde se listuje PRSTEM (jen při čtení).
          Vizuální pomůcka, nedrží dotyk — ten dojde až na .viewer. -->
     <div v-if="!annotMode && !jumpPlaceMode" class="edge-hint left" />
@@ -1144,6 +1151,15 @@ function releaseWakeLock() {
 }
 
 let availW = 800, availH = 1100;
+
+// Bílé plátno pod stránkou svítí vždy, když je papír TRANSFORMOVANÝ — tedy
+// přiblížený/oddálený, posunutý nebo otočený. V tu chvíli se za ním odkrývá
+// tmavý podklad aplikace, což vypadá jako „pootočený/posunutý papír na jiném
+// podkladu" (Jan). Ve výchozím stavu (zoom 1, bez posunu) plátno nesvítí, aby
+// zůstal známý tmavý rám kolem stránky.
+const sheetBackdropOn = computed(() =>
+  rot.value !== 0 || Math.abs(zoom.value - 1) > 0.001 || panX.value !== 0 || panY.value !== 0
+);
 
 // Rozměry, jak stránka PO OTOČENÍ zabere na obrazovce (pro fit a centrování)
 function rotAvail(baseW, baseH, deg) {
@@ -3001,6 +3017,19 @@ async function deleteBookmark(b) {
   overscroll-behavior-x: none;
 }
 .stage { position: relative; touch-action: none; }
+/* Bílé plátno pod stránkou pro každý TRANSFORMOVANÝ stav (zoom, posun, rotace).
+   Kotví se na displej pod horní lištu, takže kryje celou čtecí plochu — ať je
+   papír posunutý nebo přiblížený jakkoli. Nad papírem zůstává lišta (z-index 45)
+   a všechny panely (19-41), takže nic nepřekryje; ukazatel stránky je v liště.
+   Záměrně NEkryje výchozí stav (zoom 100 %, bez posunu a rotace) — tam je tmavý
+   rám kolem stránky součástí vzhledu čtečky, na který je Jan zvyklý. */
+.sheet-backdrop {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  top: var(--topbar-h, 96px);
+  background: #fff;
+  pointer-events: none;
+  z-index: 17;
+}
 /* Při rotaci jsou za otočeným papírem vidět šikmé hrany (tmavé pozadí). Bílá
    plocha POD papírem, která přesně kopíruje jeho otočený obrys, je schová —
    papír pak vypadá jako souvislá bílá stránka, ne jako otočený obdélník.
