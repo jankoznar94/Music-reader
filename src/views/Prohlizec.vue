@@ -3220,7 +3220,7 @@ async function deleteBookmark(b) {
 /* Nápověda při umisťování tlačítka na noty — úzká lišta DOLE, aby nezakrývala
    noty, na které uživatel klepá. Panel skoku je při umisťování schovaný. */
 .jp-place-hint {
-  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  position: absolute; left: 50%; bottom: calc(16px + var(--sab)); transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px;
   background: var(--bg-elev); border: 1.5px solid var(--accent); border-radius: 22px;
   padding: 8px 16px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); z-index: 32;
@@ -3277,7 +3277,7 @@ async function deleteBookmark(b) {
    position: fixed → kotví proti viewportu (obrazovce), ne proti výšce plátna,
    takže se nemůže dostat pod obraz, ať je canvas jakkoli velký. */
 .bookmark-strip {
-  position: fixed; left: 16px; right: 16px; bottom: 12px;
+  position: fixed; left: 16px; right: 16px; bottom: calc(12px + var(--sab));
   display: flex; flex-wrap: nowrap; gap: 8px; align-items: center;
   justify-content: flex-start; z-index: 22;
   overflow-x: auto; overflow-y: hidden;    /* jediný řádek, při přetečení horizontální scroll */
@@ -3514,7 +3514,7 @@ async function deleteBookmark(b) {
 
 /* Sběr bodů zobáčku — hint lišta */
 .wedge-overlay {
-  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+  position: fixed; left: 50%; bottom: calc(14px + var(--sab)); transform: translateX(-50%);
   z-index: 30;
 }
 .wedge-hint {

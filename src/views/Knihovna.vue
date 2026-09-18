@@ -848,7 +848,9 @@ async function checkAndApply() {
 }
 .tab.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
 
-.content { flex: 1; overflow-y: auto; padding: 0 12px 12px; }
+/* Spodní odsazení respektuje bezpečnou zónu — jinak poslední soubor skončí
+   pod systémovou lištou a scroll se k němu nedostane. */
+.content { flex: 1; overflow-y: auto; padding: 0 12px calc(12px + var(--sab)); }
 .center { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px; text-align: center; }
 .muted { color: var(--text-dim); }
 
@@ -915,10 +917,11 @@ async function checkAndApply() {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   background: var(--bg-elev); border-top: 1px solid var(--border);
-  padding: 10px 12px;
+  padding: 10px 12px calc(10px + var(--sab));
 }
-/* Odsazení obsahu dole, aby hromadné akce nikdy nepřekryly poslední soubor */
-.library.has-bulk .content { padding-bottom: 76px; }
+/* Odsazení obsahu dole, aby hromadné akce nikdy nepřekryly poslední soubor
+   (navíc k bezpečné zóně, kterou .content řeší sám) */
+.library.has-bulk .content { padding-bottom: calc(76px + var(--sab)); }
 .bulk-count { color: var(--text-dim); font-size: 0.9rem; white-space: nowrap; }
 .bulk-actions { display: flex; gap: 8px; }
 .bulk-btn {
@@ -1005,7 +1008,7 @@ async function checkAndApply() {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 80px;
+  bottom: calc(80px + var(--sab));
   transform: translateX(-50%);
   z-index: 200;
   background: var(--bg-elev2);
