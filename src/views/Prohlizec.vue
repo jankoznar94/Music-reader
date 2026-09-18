@@ -3106,11 +3106,13 @@ async function deleteBookmark(b) {
   touch-action: none;
   overscroll-behavior-x: none;
 }
-.stage { position: relative; touch-action: none; }
-/* Bílé plátno pod stránkou pro každý TRANSFORMOVANÝ stav (zoom, posun, rotace).
+.stage { position: relative; touch-action: none; z-index: 1; }
+/* Bílé plátno POD stránkou pro každý TRANSFORMOVANÝ stav (zoom, posun, rotace).
    Kotví se na displej pod horní lištu, takže kryje celou čtecí plochu — ať je
-   papír posunutý nebo přiblížený jakkoli. Nad papírem zůstává lišta (z-index 45)
-   a všechny panely (19-41), takže nic nepřekryje; ukazatel stránky je v liště.
+   papír posunutý nebo přiblížený jakkoli.
+   DŮLEŽITÉ: musí zůstat POD papírem. .stage má z-index auto (0), takže plátno
+   s nižším z-indexem sedí pod ním — kdyby mělo vyšší, překrylo by noty a nešlo
+   by je odstranit (Jan). Proto z-index: 0 a .stage dostává z-index: 1.
    Záměrně NEkryje výchozí stav (zoom 100 %, bez posunu a rotace) — tam je tmavý
    rám kolem stránky součástí vzhledu čtečky, na který je Jan zvyklý. */
 .sheet-backdrop {
@@ -3118,7 +3120,7 @@ async function deleteBookmark(b) {
   top: var(--topbar-h, 96px);
   background: #fff;
   pointer-events: none;
-  z-index: 17;
+  z-index: 0;
 }
 /* Při rotaci jsou za otočeným papírem vidět šikmé hrany (tmavé pozadí). Bílá
    plocha POD papírem, která přesně kopíruje jeho otočený obrys, je schová —
