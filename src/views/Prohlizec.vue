@@ -134,7 +134,15 @@
             stroke-linejoin="round"
             :class="{ hl: it.tool === 'highlighter' }"
           />
-          <!-- Zvýrazňovač: 3-bodový obdélník (levý spodní, levý horní, vpravo) -->
+          <!-- Zvýrazňovač: čtyřúhelník postavený vodorovně se čtečkou, uložený
+               v souřadnicích vrstvy (poly) — drží se not i při rotaci. -->
+          <path
+            v-else-if="it.tool === 'highlighter' && it.poly"
+            :d="hlPathD(it)"
+            :fill="it.color" :opacity="it.opacity != null ? it.opacity : 1"
+            class="hl"
+          />
+          <!-- Starší zvýrazňovače bez poly (uložené před opravou) — obdélník -->
           <rect
             v-else-if="it.tool === 'highlighter'"
             :x="Math.min(it.x1, it.x2)" :y="Math.min(it.y1, it.y2)"
@@ -236,11 +244,9 @@
 
         <!-- Live preview bodů zvýrazňovače — kam uživatel klikl + náhled boxu -->
         <g v-if="tool === 'highlighter' && hlPoints.length" class="wedge-preview">
-          <rect
+          <path
             v-if="hlPoints.length >= 2"
-            :x="hlPoints[0].x" :y="Math.min(hlPoints[0].y, hlPoints[1].y)"
-            :width="(hlPoints.length >= 3 ? hlPoints[2].x : hlPoints[0].x + 60) - hlPoints[0].x"
-            :height="Math.abs(hlPoints[1].y - hlPoints[0].y)"
+            :d="hlPreviewD"
             :fill="annotColor" opacity="0.3" :stroke="annotColor" stroke-width="1.5" stroke-dasharray="4 3"
             class="hl-preview"
           />
@@ -794,6 +800,19 @@ function pickDyn(k) {
   confirmTextAnnot();
 }
 
+// Náhled zvýrazňovače při sběru bodů — stejná geometrie jako výsledek, takže
+// uživatel hned vidí, že pás je vodorovně se čtečkou (i na otočené stránce).
+const hlPreviewD = computed(() => {
+  const pts = hlPoints.value;
+  if (pts.length < 2) return '';
+  const fake = pts.length >= 3
+    ? pts
+    : [...pts, { x: pts[0].x + 60, y: pts[0].y, cx: (pts[0].cx != null ? pts[0].cx : pts[0].x) + 60, cy: pts[0].cy != null ? pts[0].cy : pts[0].y }];
+  const corners = hlCorners(fake);
+  if (!corners) return '';
+  return 'M' + corners.map(q => `${q.x},${q.y}`).join('L') + 'Z';
+});
+
 const editingAnnot = computed(() =>
   editingId.value ? annotations.value.items.find(x => x.id === editingId.value) || null : null
 );
@@ -822,8 +841,15 @@ const selectedBox = computed(() => {
     x1 = Math.min(...xs); x2 = Math.max(...xs);
     y1 = Math.min(...ys); y2 = Math.max(...ys);
   } else if (it.tool === 'highlighter') {
-    x1 = Math.min(it.x1, it.x2); x2 = Math.max(it.x1, it.x2);
-    y1 = Math.min(it.y1, it.y2); y2 = Math.max(it.y1, it.y2);
+    if (it.poly && it.poly.length) {
+      for (const q of it.poly) {
+        if (q.x < x1) x1 = q.x; if (q.y < y1) y1 = q.y;
+        if (q.x > x2) x2 = q.x; if (q.y > y2) y2 = q.y;
+      }
+    } else {
+      x1 = Math.min(it.x1, it.x2); x2 = Math.max(it.x1, it.x2);
+      y1 = Math.min(it.y1, it.y2); y2 = Math.max(it.y1, it.y2);
+    }
   }
   if (x2 < x1 || y2 < y1) return null;
   const pad = 8;
@@ -833,7 +859,7 @@ const editingTypeLabel = computed(() =>
   editingAnnot.value ? (editingAnnot.value.tool === 'dynamic' ? 'Dynamika' : 'Text') : ''
 );
 const wedgePoints = ref([]); // body zobáčku (crescendo/decrescendo), až 3 × {x,y}
-const hlPoints = ref([]);    // body zvýrazňovače (3 × {x,y}: levý spodní, levý horní, vpravo)
+const hlPoints = ref([]);    // body zvýrazňovače (3 × {x,y}: levý spodní, levý horní, vpravo) — ve „vzpřímené" soustavě
 const wedgeHintText = computed(() => {
   if (tool.value === 'crescendo') {
     return wedgePoints.value.length === 0 ? '1. Špička (klepni)' :
@@ -1712,24 +1738,87 @@ function setTool(t) {
 }
 
 function toLayerCoords(e) {
-  const svg = layerSvgEl.value;
-  const rect = svg.getBoundingClientRect();
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
   // Přes převodní matici SVG (getScreenCTM) — ta zná zoom, posun I ROTACI stage.
   // Dřív se měřilo jen podle poměru šířek, takže na otočené stránce pero kreslilo
   // mimo kurzor (a ruka neuchopila, na co uživatel klepl).
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const svg = layerSvgEl.value;
   const ctm = svg.getScreenCTM();
   if (ctm && typeof DOMPoint !== 'undefined') {
     const p = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
     return { x: p.x, y: p.y };
   }
   // Záložní cesta (kdyby matice nebyla k dispozici) — bez rotace jako dřív
+  const rect = svg.getBoundingClientRect();
   const scale = cssW.value / rect.width;
   return {
     x: (clientX - rect.left) * scale,
     y: (clientY - rect.top) * scale,
   };
+}
+
+// Kolik stupňů je vrstva natočená na obrazovce (kladně = po směru hodin).
+function layerAngleDeg() {
+  const svg = layerSvgEl.value;
+  if (!svg) return 0;
+  const m = svg.getScreenCTM();
+  if (!m) return 0;
+  return Math.atan2(m.b, m.a) * 180 / Math.PI;
+}
+// Zvýrazňovač se staví ve souřadnicích OBRAZOVKY (noty jsou tam vodorovně),
+// ale ukládá se do souřadnic vrstvy, aby zůstal přilepený k notám. Vrstva je
+// vůči obrazovce pootočená o -rot, proto se čtyřúhelník počítá v obrazovém
+// rámci a teprve výsledné rohy se převedou zpět do vrstvy.
+// Vrací 4 rohy [levý-horní, pravý-horní, pravý-dolní, levý-dolní] ve vrstvě.
+function hlCorners(pts) {
+  if (pts.length < 3) return null;
+  const [a, b, c] = pts;
+  // Obrazové souřadnice bodů (cx, cy); když chybí (starý zápis), vezmeme vrstvu
+  const ax = a.cx != null ? a.cx : a.x, ay = a.cy != null ? a.cy : a.y;
+  const bx = b.cx != null ? b.cx : b.x, by = b.cy != null ? b.cy : b.y;
+  const cx = c.cx != null ? c.cx : c.x, cy = c.cy != null ? c.cy : c.y;
+  // Body 1+2 určují (vodorovnou) výšku pásu, bod 3 pravý okraj.
+  const left = ax;
+  const top = Math.min(ay, by);
+  const bottom = Math.max(ay, by);
+  const right = cx;
+  const screen = [
+    { x: left, y: top }, { x: right, y: top },
+    { x: right, y: bottom }, { x: left, y: bottom },
+  ];
+  // Převod obraz → vrstva inverzí matice vrstvy
+  const svg = layerSvgEl.value;
+  const ctm = svg && svg.getScreenCTM();
+  if (!ctm || typeof DOMPoint === 'undefined') {
+    // bez matice (nemělo by nastat) – vrať aspoň obdélník ve vrstvě
+    return [
+      { x: a.x, y: Math.min(a.y, b.y) }, { x: c.x, y: Math.min(a.y, b.y) },
+      { x: c.x, y: Math.max(a.y, b.y) }, { x: a.x, y: Math.max(a.y, b.y) },
+    ];
+  }
+  const inv = ctm.inverse();
+  return screen.map(pt => {
+    const q = new DOMPoint(pt.x, pt.y).matrixTransform(inv);
+    return { x: q.x, y: q.y };
+  });
+}
+// SVG cesta pro vyplněný čtyřúhelník zvýrazňovače
+function hlPathD(it) {
+  const p = it.poly;
+  if (!p || p.length < 4) return '';
+  return 'M' + p.map(q => `${q.x},${q.y}`).join('L') + 'Z';
+}
+// Střed zvýrazňovače (pro náhled a popisky)
+function hlCenter(it) {
+  if (it.poly && it.poly.length) {
+    const n = it.poly.length;
+    return {
+      x: it.poly.reduce((s, q) => s + q.x, 0) / n,
+      y: it.poly.reduce((s, q) => s + q.y, 0) / n,
+    };
+  }
+  return { x: (it.x1 + it.x2) / 2, y: (it.y1 + it.y2) / 2 };
 }
 
 function onLayerDown(e) {
@@ -1828,27 +1917,33 @@ function onLayerDown(e) {
   }
 
   // Zvýrazňovač: 3 body klepnutím → levý spodní, levý horní, vpravo → přesný obdélník.
-  // Levá vertikála z prvního bodu, horní/dolní horizontála z 1.+2., pravá vertikála z 3.
+  // POZOR: obdélník se počítá v souřadnicích OBRAZOVKY, ne otočené vrstvy.
+  // Vrstva se otáčí s papírem, takže obdélník zarovnaný podle vrstvy je na
+  // obrazovce nakloněný o úhel rotace — Jan: „zvýrazňovač se po rotaci chová
+  // zvláštně, jak kdyby byl z kopce; měl by být stále naprosto vodorovně."
+  // Uživatel klepá body vodorovně se čtečkou, proto se obdélník staví tam
+  // a do vrstvy se uloží jako čtyřúhelník (aby zůstal přilepený k notám).
   if (tool.value === 'highlighter') {
     _activePointerId = null;   // guard by jinak zablokoval 2. a 3. klik
-    hlPoints.value.push({ x: p.x, y: p.y });
+    hlPoints.value.push({ x: p.x, y: p.y, cx: e.clientX, cy: e.clientY });
     if (hlPoints.value.length === 3) {
-      const [a, b, c] = hlPoints.value;
-      const x1 = a.x;                 // levá vertikála z prvního bodu
-      const y1 = Math.min(a.y, b.y);  // horní horizontála
-      const y2 = Math.max(a.y, b.y);  // dolní horizontála
-      const x2 = c.x;                 // pravá vertikála z třetího bodu
-      const it = {
-        id: crypto.randomUUID(), page: currentPage.value,
-        tool: 'highlighter', color: annotColor.value,
-        opacity: 1,
-        width: Math.max(1, Math.round(annotSize.value)),
-        x1, y1, x2, y2,
-      };
+      const corners = hlCorners(hlPoints.value);
+      if (corners) {
+        const xs = corners.map(c => c.x), ys = corners.map(c => c.y);
+        const it = {
+          id: crypto.randomUUID(), page: currentPage.value,
+          tool: 'highlighter', color: annotColor.value,
+          opacity: 1,
+          width: Math.max(1, Math.round(annotSize.value)),
+          poly: corners,               // čtyřúhelník ve souřadnicích vrstvy
+          x1: Math.min(...xs), y1: Math.min(...ys),
+          x2: Math.max(...xs), y2: Math.max(...ys),   // bounding box (hledání, guma)
+        };
+        annotations.value.items.push(it);
+        pushHistory();
+        saveAnnotations();
+      }
       hlPoints.value = [];
-      pushHistory();
-      annotations.value.items.push(it);
-      saveAnnotations();
     }
     _activePointerId = null;
     _prev = p;
@@ -1947,6 +2042,8 @@ function onLayerMove(e) {
       it.x2 = s.x2 + dx; it.y2 = s.y2 + dy;
       it.x3 = s.x3 + dx; it.y3 = s.y3 + dy;
     } else if (it.tool === 'highlighter') {
+      // Čtyřúhelník zvýrazňovače se posouvá celý (i jeho bounding box)
+      if (it.poly) it.poly = s.poly.map(q => ({ x: q.x + dx, y: q.y + dy }));
       it.x1 = s.x1 + dx; it.y1 = s.y1 + dy;
       it.x2 = s.x2 + dx; it.y2 = s.y2 + dy;
     }
@@ -2160,9 +2257,17 @@ function itemBox(it) {
     x1 = Math.min(...xs); x2 = Math.max(...xs);
     y1 = Math.min(...ys); y2 = Math.max(...ys);
   } else if (it.tool === 'highlighter') {
-    if (it.x1 == null) return null;
-    x1 = Math.min(it.x1, it.x2); x2 = Math.max(it.x1, it.x2);
-    y1 = Math.min(it.y1, it.y2); y2 = Math.max(it.y1, it.y2);
+    if (it.poly && it.poly.length) {
+      // čtyřúhelník: box z jeho skutečných rohů (x1/x2 je jen hrubý bounding box)
+      for (const q of it.poly) {
+        if (q.x < x1) x1 = q.x; if (q.y < y1) y1 = q.y;
+        if (q.x > x2) x2 = q.x; if (q.y > y2) y2 = q.y;
+      }
+    } else {
+      if (it.x1 == null) return null;
+      x1 = Math.min(it.x1, it.x2); x2 = Math.max(it.x1, it.x2);
+      y1 = Math.min(it.y1, it.y2); y2 = Math.max(it.y1, it.y2);
+    }
   } else {
     return null;
   }
@@ -2296,8 +2401,22 @@ function distSegSeg(a1x, a1y, a2x, a2y, b1x, b1y, b2x, b2y) {
 // Dotkne se guma (fine-segment o poloměru r) prvku it? (klín/text/dynamika/zvýrazňovač)
 function segOnUnder(fine, r, it) {
   const pts = [];
-  if (it.tool === 'highlighter' && it.x1 != null) {
-    // zvýrazňovač = obdélník: smaže se, když guma protne jeho box
+  if (it.tool === 'highlighter' && (it.poly || it.x1 != null)) {
+    // zvýrazňovač = čtyřúhelník/obdélník: smaže se, když guma protne jeho plochu
+    const fineSeg = fine;
+    if (it.poly && it.poly.length >= 3) {
+      // protne guma mnohoúhelník? (test hran + bod uvnitř)
+      for (let j = 0; j < fineSeg.length - 1; j++) {
+        const a = fineSeg[j], b = fineSeg[j + 1];
+        for (let k = 0; k < it.poly.length; k++) {
+          const p1 = it.poly[k], p2 = it.poly[(k + 1) % it.poly.length];
+          if (distSegSeg(a.x, a.y, b.x, b.y, p1.x, p1.y, p2.x, p2.y) < 1.5) return true;
+        }
+      }
+      // guma začala uvnitř pásu
+      const c = hlCenter(it);
+      return distToPoly(c.x, c.y, fineSeg) < 12;
+    }
     const x1 = Math.min(it.x1, it.x2), y1 = Math.min(it.y1, it.y2);
     const x2 = Math.max(it.x1, it.x2), y2 = Math.max(it.y1, it.y2);
     // zkontroluj, jestli guma přejela přes obdélník (segment protne box)
@@ -2790,6 +2909,13 @@ async function deleteBookmark(b) {
   transform-origin: center center;
 }
 .pdf-canvas { display: block; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,0.6); border-radius: 6px; touch-action: none; }
+/* Stín papíru při rotaci: měkký stín canvasu kopíruje OTOČENÝ okraj papíru, takže
+   přes bílé plátno (.stage::before, které má obrys opsaného obdélníku) prosvítá
+   šikmá tmavá hrana a je vidět, že je to pootočený papír na jiném podkladu (Jan).
+   Proto při rotaci stín canvasu vypneme a stín nese samo plátno — obrys papíru
+   i stín tak mají stejný, vodorovně zarovnaný tvar. */
+.stage.rotated .pdf-canvas { box-shadow: none; }
+.stage.rotated::before { box-shadow: 0 2px 14px rgba(0,0,0,0.6); }
 .annot-layer { position: absolute; top: 0; left: 0; touch-action: none; cursor: crosshair; }
 /* V anotaci vrstva přijímá dotyk, ale stránkování okrajovými klepnutími se
    rozhoduje už v onTouchEnd (musí vidět pointerType i poloměr dotyku). */
