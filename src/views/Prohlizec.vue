@@ -475,22 +475,29 @@
       </button>
     </div>
 
-    <!-- Slider stránek s miniaturami -->
+    <!-- Slider stránek s miniaturami.
+         POZOR: pás se vykresluje VIRTUÁLNĚ — v DOM jsou jen prvky okolo
+         aktuální stránky (viz visibleThumbs). Dřív tu byl prvek pro KAŽDOU
+         stránku a `thumbs` (reaktivní Mapa) se četla přes thumbs.get(i-1)
+         v každém z nich, takže každá dorazivší miniatura přerenderovala celý
+         pás stovek prvků → při rychlém tažení sliderem se appka zhroutila. -->
     <div v-if="sliderOpen" class="slider-panel">
       <div class="thumb-strip" ref="thumbStripEl">
+        <div class="thumb-spacer" :style="{ width: thumbPadLeft + 'px' }" aria-hidden="true" />
         <button
-          v-for="i in totalPages"
-          :key="i"
+          v-for="i in visibleThumbs"
+          :key="i.idx"
           class="thumb-item"
-          :class="{ on: (i - 1) === pageSlider }"
-          :data-idx="i - 1"
-          @click="gotoPage(i - 1)"
-          :title="'Stránka ' + i"
+          :class="{ on: i.idx === pageSlider }"
+          :data-idx="i.idx"
+          @click="gotoPage(i.idx)"
+          :title="'Stránka ' + (i.idx + 1)"
         >
-          <img v-if="thumbs.get(i - 1)" :src="thumbs.get(i - 1)" alt="Stránka {{ i }}" />
+          <img v-if="i.src" :src="i.src" :alt="'Stránka ' + (i.idx + 1)" />
           <div v-else class="thumb-loading">…</div>
-          <span class="thumb-num">{{ i }}</span>
+          <span class="thumb-num">{{ i.idx + 1 }}</span>
         </button>
+        <div class="thumb-spacer" :style="{ width: thumbPadRight + 'px' }" aria-hidden="true" />
       </div>
       <input
         type="range"
@@ -927,9 +934,38 @@ const annotations = ref({ items: [] });
 // Slider stránek + miniatury
 const pageSlider = ref(0);        // 0-based, vázaný na currentPage
 const sliderOpen = ref(false);    // zobrazení slideru
-const thumbs = reactive(new Map()); // pageIdx -> dataURL miniatury
+const thumbs = new Map();           // pageIdx -> dataURL miniatury (NEREAKTIVNÍ: viz thumbTick)
+const thumbTick = ref(0);           // bump při nové miniatuře → překreslí se jen pás
 const thumbPromises = new Map();    // pageIdx -> Promise (probíhající render miniatury)
 let thumbObserver = null;           // IntersectionObserver pro lazy-load miniatur
+// Virtuální pás miniatur: v DOM držíme jen okno kolem aktuální stránky.
+// Šířka jednoho prvku je 72 px + 8 px mezera = 80 px (viz .thumb-item CSS).
+const THUMB_ITEM_W = 80;
+const THUMB_WINDOW = 21;            // počet prvků v DOM (lichý → uprostřed aktuální)
+const visibleThumbs = computed(() => {
+  thumbTick.value;                  // závislost: dorazila nová miniatura
+  const total = totalPages.value;
+  if (!total) return [];
+  const cur = pageSlider.value;
+  const half = Math.floor(THUMB_WINDOW / 2);
+  let from = Math.max(0, cur - half);
+  let to = Math.min(total - 1, from + THUMB_WINDOW - 1);
+  from = Math.max(0, to - THUMB_WINDOW + 1);
+  const out = [];
+  for (let i = from; i <= to; i++) out.push({ idx: i, src: thumbs.get(i) || '' });
+  return out;
+});
+// Prázdné pruhy po stranách drží geometrii pásu (scroll i slider sedí na
+// skutečný počet stránek, i když je v DOM jen okno).
+const thumbPadLeft = computed(() => {
+  const v = visibleThumbs.value;
+  return v.length ? v[0].idx * THUMB_ITEM_W : 0;
+});
+const thumbPadRight = computed(() => {
+  const v = visibleThumbs.value;
+  if (!v.length) return 0;
+  return Math.max(0, (totalPages.value - 1 - v[v.length - 1].idx) * THUMB_ITEM_W);
+});
 let thumbDebounce = null;           // debounce pro rychlé tažení sliderem
 let thumbQueue = [];                // fronta stránek čekajících na render miniatury
 let thumbActive = 0;                // počet právě renderovaných miniatur
@@ -1388,6 +1424,7 @@ async function renderCurrent() {
   canvasEl.value.style.height = h + 'px';
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(off, 0, 0, canvasEl.value.width, canvasEl.value.height);
+  evictCache(page);          // držet jen okno kolem aktuální stránky
   prefetchSiblings(page);
 }
 
@@ -1423,6 +1460,32 @@ function getOrCreateCacheCanvas(i, w, h) {
   c.height = Math.round(h);
   cached.set(i, c);
   return c;
+}
+
+// Cache stránek smí držet jen omezený počet offscreen canvasů. Každý je
+// plnorozlišťový (A4 na dpr 2 ≈ 2,6 Mpx ≈ 10 MB), takže bez omezení jich
+// prohlížeč po prolistování dokumentu drží stovky (měřeno: 47 stránek = 630 MB)
+// a aplikace se „čím dál více seká" (Jan). Držíme okno kolem aktuální stránky
+// (aktuální ±2 a sousedy pro přednačtení) a starší uvolňujeme — při návratu
+// zpět se stránka jen znovu vykreslí, což je levnější než držet gigabajty.
+const CACHE_KEEP = 7;   // ±3 stránky od aktuální
+function evictCache(center) {
+  if (cached.size <= CACHE_KEEP) return;
+  const keep = new Set();
+  for (let d = -3; d <= 3; d++) {
+    const p = center + d;
+    if (p >= 0 && p < totalPages.value) keep.add(p);
+  }
+  for (const k of [...cached.keys()]) {
+    const page = Number(String(k).split('@')[0]);
+    if (!keep.has(page)) {
+      const c = cached.get(k);
+      if (c) { c.width = 0; c.height = 0; }   // uvolnit bitmapu hned, ne až s GC
+      cached.delete(k);
+      preRendered.delete(k);
+      renderPromises.delete(k);
+    }
+  }
 }
 
 function onResize() { computeFit(); renderCurrent(); }
@@ -1467,8 +1530,7 @@ function toggleSlider() {
     nextTick(() => {
       const strip = thumbStripEl.value;
       if (strip) {
-        const item = strip.children[currentPage.value];
-        if (item) item.scrollIntoView({ inline: 'center', block: 'nearest' });
+        scrollThumbIntoView(currentPage.value);
         setupThumbObserver(strip);
       }
     });
@@ -1480,7 +1542,9 @@ function toggleSlider() {
     thumbQueue = [];
   }
 }
-// Lazy-load miniatur: načte se, když se miniatura přiblíží do viewportu pásu
+// Lazy-load miniatur: načte se, když se miniatura přiblíží do viewportu pásu.
+// Pás je virtuální, takže se observer musí znovu zapojit po každé změně okna
+// (jinak by se nové prvky nikdy nenačetly).
 function setupThumbObserver(strip) {
   disconnectThumbObserver();
   if (!('IntersectionObserver' in window)) return;
@@ -1494,7 +1558,9 @@ function setupThumbObserver(strip) {
     }
   }, { root: strip, rootMargin: '200px' });
   for (const child of strip.children) {
-    if (!thumbs.has(Number(child.dataset.idx))) thumbObserver.observe(child);
+    if (child.dataset.idx != null && !thumbs.has(Number(child.dataset.idx))) {
+      thumbObserver.observe(child);
+    }
   }
 }
 function disconnectThumbObserver() {
@@ -1502,23 +1568,29 @@ function disconnectThumbObserver() {
 }
 // Slidování → živý náhled (hodnota + miniatura), bez navigace.
 // Debounce: při rychlém tažení se renderuje jen POSLEDNÍ pozice, ne každá mezilehlá.
+// Virtuální pás se při tažení posouvá oknem, takže se musí znovu zapojit observer
+// a přednačíst miniatury okna — jinak by přišel prázdný pás.
 function onSliderInput(e) {
   const v = Math.round(Number(e.target.value));
   pageSlider.value = v;
-  scrollThumbIntoView(v);
   if (thumbDebounce) clearTimeout(thumbDebounce);
   thumbDebounce = setTimeout(() => {
     thumbDebounce = null;
-    ensureThumb(v);
-  }, 120);
+    for (let i = Math.max(0, v - 3); i <= Math.min(totalPages.value - 1, v + 3); i++) ensureThumb(i);
+    nextTick(() => {
+      const strip = thumbStripEl.value;
+      if (strip) { scrollThumbIntoView(v); setupThumbObserver(strip); }
+    });
+  }, 90);
 }
 // Puštění slideru → NIKAM neskočit; skok jen kliknutím na miniaturu nebo stránku.
 // (slidování jen zvýrazní náhled přes pageSlider)
-// Posunout pás miniatur tak, aby byla aktuální miniatura na očích
+// Posunout pás miniatur tak, aby byla aktuální miniatura na očích.
+// Pás je virtuální → prvek se hledá podle data-idx, ne podle pořadí v DOM.
 function scrollThumbIntoView(idx) {
   const strip = thumbStripEl.value;
   if (!strip) return;
-  const item = strip.children[idx];
+  const item = strip.querySelector(`[data-idx="${idx}"]`);
   if (item) item.scrollIntoView({ inline: 'center', block: 'nearest' });
 }
 // Zajistit miniaturu stránky (render do malého canvasu → dataURL).
@@ -1555,6 +1627,24 @@ async function renderThumb(i) {
   const h = w / ar;
   await renderPage(song, i + 1, c, h);
   thumbs.set(i, c.toDataURL('image/jpeg', 0.7));
+  // Uvolnit bitmapu miniaturního canvasu hned (drží se jen dataURL) a dát vědět
+  // pásu, ať překreslí jen okno — ne celý dokument.
+  c.width = 0; c.height = 0;
+  thumbTick.value++;
+  pruneThumbs(i);
+}
+// Miniatury držíme jen v okně kolem aktuální stránky — u velkých skladbách by
+// dataURL za všechny stránky zbytečně bobtnaly (a každá nová miniatura by
+// rozhýbala celý pás).
+const THUMB_KEEP = 60;
+function pruneThumbs(center) {
+  if (thumbs.size <= THUMB_KEEP) return;
+  const keep = new Set();
+  for (let d = -THUMB_KEEP / 2; d <= THUMB_KEEP / 2; d++) {
+    const p = center + d;
+    if (p >= 0 && p < totalPages.value) keep.add(p);
+  }
+  for (const k of [...thumbs.keys()]) if (!keep.has(k)) thumbs.delete(k);
 }
 
 // Přepnutí na jinou skladbu ve skupině (setlist)
@@ -3287,6 +3377,9 @@ async function deleteBookmark(b) {
   background: #fff; padding: 0; cursor: pointer; touch-action: manipulation;
 }
 .thumb-item.on { border-color: var(--accent); }
+/* Mezera virtuálního pásu — drží geometrii pro scroll i slider (prvky v DOM
+   jsou jen okolo aktuální stránky). */
+.thumb-spacer { flex: 0 0 auto; height: 96px; }
 .thumb-item img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .thumb-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-dim); font-size: 0.9rem; }
 .thumb-num {
