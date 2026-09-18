@@ -175,6 +175,8 @@ export function dbGetJumps(songId) {
 }
 
 // --- Záložky (konkrétní stránky) ---
+// Nová záložka se řadí vzestupně podle stránky; jakmile si uživatel pořadí
+// přetáhne ručně, přepne se na ruční pořadí (bmManualOrder) a to se uloží.
 export function dbSaveBookmarks(bookmarks) {
   return tx('bookmarks', 'readwrite', (s) => s.put(cloneForDb(bookmarks)));
 }
@@ -183,8 +185,9 @@ export function dbGetBookmarks(songId) {
   return tx('bookmarks', 'readonly', (s) => s.get(songId));
 }
 
-// --- Nastavení zobrazení skladby (per-skladba: výchozí zoom) ---
-// Klíč 'view:<songId>' v meta store → { songId, zoom } (nenastaveno = fit 1.0)
+// --- Nastavení zobrazení skladby (per-skladba: výchozí zoom, pozice, rotace) ---
+// Klíč 'view:<songId>' v meta store → { songId, zoom, panX, panY, rot }
+// (nenastaveno = fit 1.0, bez posunu, bez rotace)
 export function dbSaveSongView(view) {
   return tx('meta', 'readwrite', (s) => s.put(cloneForDb(view), 'view:' + view.songId));
 }
@@ -192,4 +195,47 @@ export function dbSaveSongView(view) {
 export async function dbGetSongView(songId) {
   const val = await tx('meta', 'readonly', (s) => s.get('view:' + songId));
   return val === undefined ? null : val;
+}
+
+// --- Nastavení zobrazení KONKRÉTNÍ stránky (per skladba + stránka) ---
+// Klíč 'pview:<songId>:<page>' v meta store → { songId, page, zoom, panX, panY, rot, manual }
+// `manual` = uživatel tuhle stránku nastavil ručně. Při vycentrování má přednost
+// před globálním nastavením skladby (Janovo rozhodnutí).
+export function dbSavePageView(view) {
+  return tx('meta', 'readwrite', (s) => s.put(cloneForDb(view), 'pview:' + view.songId + ':' + view.page));
+}
+
+export async function dbGetPageView(songId, page) {
+  const val = await tx('meta', 'readonly', (s) => s.get('pview:' + songId + ':' + page));
+  return val === undefined ? null : val;
+}
+
+export async function dbDeletePageView(songId, page) {
+  return tx('meta', 'readwrite', (s) => s.delete('pview:' + songId + ':' + page));
+}
+
+// Všechny uložené pohledy stránek dané skladby (pro hromadné načtení)
+export async function dbGetAllPageViews(songId) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction('meta', 'readonly');
+    const store = t.objectStore('meta');
+    const req = store.getAllKeys();
+    req.onsuccess = () => {
+      const prefix = 'pview:' + songId + ':';
+      const keys = (req.result || []).filter(k => typeof k === 'string' && k.startsWith(prefix));
+      if (!keys.length) { resolve([]); return; }
+      const out = [];
+      let left = keys.length;
+      for (const k of keys) {
+        const r = store.get(k);
+        r.onsuccess = () => {
+          if (r.result) out.push(r.result);
+          if (--left === 0) resolve(out);
+        };
+        r.onerror = () => { if (--left === 0) resolve(out); };
+      }
+    };
+    req.onerror = () => reject(req.error);
+  });
 }

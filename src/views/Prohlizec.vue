@@ -60,17 +60,48 @@
       <span class="zp-val">{{ Math.round(zoom * 100) }} %</span>
       <button class="zp-btn" @click="zoomIn" title="Přiblížit">+</button>
       <span class="zp-sep" />
-      <button class="zp-btn" @click="resetView" title="Vycentrovat">
+      <!-- Otočení stránky: hrubé po 90° (na šířku) a jemné po 1° (křivý sken).
+           Úhel se sčítá, takže se dá dostat na libovolnou hodnotu. -->
+      <button class="zp-btn" @click="rotateBy(-90)" title="Otočit vlevo o 90°">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+      </button>
+      <button class="zp-btn" @click="rotateBy(-1)" title="Otočit vlevo o 1°">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <button class="zp-rot" @click="resetRotation" title="Klepnutím zrušit otočení">{{ Math.round(rot) }}°</button>
+      <button class="zp-btn" @click="rotateBy(1)" title="Otočit vpravo o 1°">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <button class="zp-btn" @click="rotateBy(90)" title="Otočit vpravo o 90°">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+      </button>
+      <span class="zp-sep" />
+      <!-- Vycentrovat = uložené výchozí zobrazení (stránka má přednost před skladbou) -->
+      <button class="zp-btn" @click="resetView" title="Vycentrovat (uložené výchozí zobrazení)">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
       </button>
-      <button class="zp-btn" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit zoom jako výchozí">
+      <!-- Uložit jako výchozí pro CELOU skladbu -->
+      <button class="zp-btn" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit jako výchozí pro celou skladbu">
         <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
+      </button>
+      <!-- Uložit jako výchozí jen pro TUTO stránku (při vycentrování má přednost) -->
+      <button class="zp-btn" :class="{ on: hasSavedPageView }" @click="savePageViewAsDefault" title="Uložit jako výchozí jen pro tuto stránku (má přednost)">
+        <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedPageView ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4z"/><path d="M15 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+      </button>
+      <button v-if="hasSavedPageView || hasSavedZoom" class="zp-btn" @click="clearPageView" title="Zrušit nastavení této stránky">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
 
     <!-- Aktivní stránka (vlastní oblast pod lištou — lišta noty nepřekrývá) -->
     <div class="page-area" ref="pageAreaEl">
-    <div class="stage" :style="{ transform: 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')' }">
+    <!-- .stage = vnější box, jehož rozměry odpovídají tomu, jak stránka zabírá
+         na obrazovce PO OTOČENÍ (při 90°/270° prohozené). Nese zoom a posun.
+         .rotor uvnitř je přesně velký jako neotočená stránka a otáčí se kolem
+         svého středu — díky tomu se canvas, anotační vrstva I tlačítka skoků
+         otočí SPOLU a poznámky zůstanou přilepené k notám. -->
+    <div class="stage" :style="stageStyle">
+     <div class="rotor" :style="rotorStyle">
       <canvas ref="canvasEl" class="pdf-canvas" />
       <!-- Anotační vrstva nad PDF -->
       <svg
@@ -207,6 +238,7 @@
             :width="(hlPoints.length >= 3 ? hlPoints[2].x : hlPoints[0].x + 60) - hlPoints[0].x"
             :height="Math.abs(hlPoints[1].y - hlPoints[0].y)"
             :fill="annotColor" opacity="0.3" :stroke="annotColor" stroke-width="1.5" stroke-dasharray="4 3"
+            class="hl-preview"
           />
           <circle
             v-for="(pt, i) in hlPoints" :key="'o'+i"
@@ -250,12 +282,12 @@
       <!-- NÁHLED umístění: hned po naklepání tří bodů je vidět, kde a jak velké
            tlačítko bude. Dřív se ukázalo až po uložení skoku — uživatel tedy
            po "Umístění: hotovo" neviděl nic a nevěděl, co se stalo. -->
-      <div v-if="jumpPlace" class="jump-on-page">
+      <div v-if="jumpPlace" class="jump-on-page" :class="{ 'edit-mode': annotMode && tool === 'edit' }">
         <div class="jump-on-btn preview" :style="jumpBoxStyle({ place: jumpPlace })">
           {{ (jumpLabel || '').trim() || 'Skok' }}
         </div>
       </div>
-      <div v-if="placerJumps.length" class="jump-on-page">
+      <div v-if="placerJumps.length" class="jump-on-page" :class="{ 'edit-mode': annotMode && tool === 'edit' }">
         <button
           v-for="j in placerJumps"
           :key="j.id"
@@ -265,6 +297,7 @@
           :title="'Skok na str. ' + (j.toPage + 1)"
         >{{ j.label }}</button>
       </div>
+    </div>
     </div>
     </div>
 
@@ -590,7 +623,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
-import { dbGetSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView } from '../db.js';
+import { dbGetSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView } from '../db.js';
 import { renderPage, getPageWidthHeight, getPageCount } from '../pdf.js';
 
 const props = defineProps({ id: { type: String, required: true } });
@@ -613,10 +646,18 @@ const song = reactive({ data: null, name: '', fileName: '', id: props.id });
 const totalPages = ref(0);
 const currentPage = ref(0); // 0-based
 const loading = ref(true);  // loading overlay při prvním načtení / přechodu mezi skladbami
-const zoom = ref(1.0);     // výchozí zoom 100 % (1 = fit výšce)
-const songZoom = ref(1.0); // uložený výchozí zoom aktuální skladby (per-skladba), fallback 1.0
-// True, když má aktuální skladba nastavený (uložený) výchozí zoom ≠ fit 1.0
+const zoom = ref(1.0);     // výchozí zoom 100 % (1 = fit šířce)
+const rot = ref(0);        // otočení stránky ve stupních (libovolný úhel, kladné = vpravo)
+// Uložené výchozí zobrazení SKLADBY (globální): { zoom, panX, panY, rot }
+// null = nic uloženo → fit 100 %, bez posunu, bez rotace
+const songView = ref(null);
+const songZoom = ref(1.0); // odvozeně: uložený výchozí zoom skladby (fallback 1.0)
+// True, když má aktuální skladba nastavený (uložený) výchozí pohled
 const hasSavedZoom = ref(false);
+// Uložená zobrazení JEDNOTLIVÝCH stránek: Map(pageIdx -> {zoom,panX,panY,rot,manual}).
+// Mají přednost před globálním nastavením skladby (Jan: „v případě vycentrování prioritu").
+const pageViews = reactive(new Map());
+const hasSavedPageView = ref(false);
 const panX = ref(0);        // posun stránky (dvouprstý pan)
 const panY = ref(0);
 
@@ -625,9 +666,43 @@ const tool = ref('pencil');
 const activeItem = ref(null);
 
 // Rozšířené anotace
-const colors = ['#1a1a1a', '#c05a4a', '#e5d7a6', '#f2c4b6', '#bcd3b6', '#a8c4e0', '#e5c9a8', '#d9b6d9', '#1a2a4a'];
+// Výrazná paleta (Jan: „barvy jsou příliš jemné a splývají" — nejde o krytí,
+// ale o sytost odstínu). Zvýrazňovač se navíc kreslí PLNĚ (bez '80'), takže
+// přes noty prosvítá jen díky multiply, ne díky poloprůhlednosti.
+const colors = ['#111111', '#c0392b', '#e8a300', '#e8622a', '#2e8b57', '#1f6fd0', '#d4a017', '#d81b7a', '#0f3d6e'];
+// Stará jemná paleta → nová výrazná. Existující poznámky se přebarví rovnou
+// (Jan: „existující poznámky už rovnou obarvíme dle nových barev").
+const COLOR_UPGRADE = {
+  '#1a1a1a': '#111111',
+  '#c05a4a': '#c0392b',
+  '#e5d7a6': '#e8a300',
+  '#f2c4b6': '#e8622a',
+  '#bcd3b6': '#2e8b57',
+  '#a8c4e0': '#1f6fd0',
+  '#e5c9a8': '#d4a017',
+  '#d9b6d9': '#d81b7a',
+  '#1a2a4a': '#0f3d6e',
+};
+// Přepíše uloženou barvu na výraznou. Zvládne i 8znakový zápis s alfou
+// (zvýrazňovač ukládal 'RRGGBB80') — u zvýrazňovače se alfa zahodí úplně,
+// protože průhlednost nahrazuje multiply.
+function upgradeColor(color) {
+  if (!color || typeof color !== 'string') return color;
+  const base = color.slice(0, 7).toLowerCase();
+  return COLOR_UPGRADE[base] || base;
+}
+// Přebarví všechny existující anotace (idempotentní — klidně opakovaně)
+function upgradeAnnotationColors() {
+  let changed = false;
+  for (const it of annotations.value.items) {
+    if (!it || typeof it.color !== 'string') continue;
+    const next = upgradeColor(it.color);
+    if (next !== it.color) { it.color = next; changed = true; }
+  }
+  return changed;
+}
 const sizes = [1, 2, 3, 4, 6, 8, 12];
-const annotColor = ref('#1a1a1a'); // aktuální barva pera
+const annotColor = ref('#111111'); // aktuální barva pera
 const annotSize = ref(1);          // aktuální velikost pera (výchozí = nejmenší 1)
 const annotOpacity = ref(100);     // aktuální opacity tahu v % (100 = plné krytí)
 const annotCollapsed = ref(false); // anotační panel sbalený (jen přepínač)
@@ -857,6 +932,26 @@ let renderToken = 0;                      // generační token: zruší zastaral
 
 const songName = computed(() => song.name || song.fileName || '');
 
+// Rotace jde na .rotor, ne na canvas — anotační vrstva i tlačítka skoků jsou
+// jeho sourozenci, takže se otočí SPOLU s notami a zůstanou přilepené k místu,
+// kam je uživatel naklepal. Kdyby se otáčel jen canvas, kreslilo by se vedle.
+// .stage jen nese zoom a posun a má rozměry podle toho, jak stránka po otočení
+// zabírá (při 90°/270° prohozené) — tím se otočená stránka správně vejde.
+const stageStyle = computed(() => ({
+  width: visW.value + 'px',
+  height: visH.value + 'px',
+  transform: 'translate(' + panX.value + 'px,' + panY.value + 'px) scale(' + zoom.value + ')',
+  transformOrigin: 'center center',
+}));
+const rotorStyle = computed(() => ({
+  width: cssW.value + 'px',
+  height: cssH.value + 'px',
+  transform: 'translate(-50%, -50%)' + (rot.value ? ' rotate(' + rot.value + 'deg)' : ''),
+}));
+// Rozměry, jak stránka po otočení zabírá na obrazovce
+const visW = computed(() => Math.round(rotAvail(cssW.value, cssH.value, rot.value).w));
+const visH = computed(() => Math.round(rotAvail(cssW.value, cssH.value, rot.value).h));
+
 function pathD(it) {
   // 1-bodový díl (zbytek tahu rozdělený gumou) se vykreslí jako tečka
   if (it.points.length === 1) {
@@ -895,6 +990,10 @@ onMounted(async () => {
 
   const saved = await dbGetAnnotations(props.id);
   if (saved && Array.isArray(saved.items)) annotations.value.items = saved.items;
+  // Staré jemné barvy → nová výrazná paleta (rovnou, bez zásahu uživatele)
+  if (upgradeAnnotationColors()) {
+    await dbSaveAnnotations({ songId: song.id, items: annotations.value.items });
+  }
 
   // Načíst skoky (Da Capo / VIDE)
   const savedJumps = await dbGetJumps(props.id);
@@ -902,11 +1001,22 @@ onMounted(async () => {
 
   // Načíst záložky (konkrétní stránky)
   const savedBookmarks = await dbGetBookmarks(props.id);
-  if (savedBookmarks && Array.isArray(savedBookmarks.items)) bookmarks.value = savedBookmarks.items;
+  if (savedBookmarks && Array.isArray(savedBookmarks.items)) {
+    bookmarks.value = savedBookmarks.items;
+    // Pořadí přežije reload: ruční přerovnání (manualOrder) se ukládá do DB.
+    // Bez něj se záložky srovnají vzestupně podle stránky.
+    bmManualOrder.value = !!savedBookmarks.manualOrder;
+    if (!bmManualOrder.value) bookmarks.value.sort((a, b) => a.page - b.page);
+  }
+
+  // Načíst uložená zobrazení jednotlivých stránek (zoom/posun/rotace)
+  pageViews.clear();
+  const pvs = await dbGetAllPageViews(song.id);
+  for (const pv of pvs) if (pv && pv.page != null) pageViews.set(pv.page, pv);
 
   // Velikost stránky aby se vešla na výšku
   computeFit();
-  // Aplikovat uložený výchozí zoom skladby (pokud existuje), jinak fit 1.0
+  // Aplikovat uložené výchozí zobrazení (stránka → skladba → fit), jinak fit 1.0
   await applySongView();
   await renderCurrent();
   loading.value = false; // první stránka vykreslena → skrýt loading
@@ -973,22 +1083,99 @@ function releaseWakeLock() {
 
 let availW = 800, availH = 1100;
 
+// Rozměry, jak stránka PO OTOČENÍ zabere na obrazovce (pro fit a centrování)
+function rotAvail(baseW, baseH, deg) {
+  if (!deg) return { w: baseW, h: baseH };
+  const a = Math.abs(deg) * Math.PI / 180;
+  const cos = Math.abs(Math.cos(a)), sin = Math.abs(Math.sin(a));
+  return { w: baseW * cos + baseH * sin, h: baseW * sin + baseH * cos };
+}
+// Měřítko stránky. Bez otočení zůstává ZABĚHNUTÉ fit-na-šířku (Jan: „ze všeho
+// vejde celá stránka" je moc malé); s otočením se musí otočená stránka vejít
+// CELÁ, jinak by její okraje zašly pod horní lištu.
+// `zoom` zůstává násobitel nad tímhle měřítkem (1 = přesně tohle).
+function fitScale(baseW, baseH, deg) {
+  if (!baseW || !baseH) return 1;
+  if (!deg) return availW / baseW;
+  const r = rotAvail(baseW, baseH, deg);
+  return Math.min(availW / r.w, availH / r.h) * 0.985;
+}
+
+// Uložené výchozí zobrazení skladby (globální) — zoom, posun i rotace
 async function applySongView() {
   const view = await dbGetSongView(song.id);
+  songView.value = view || null;
   songZoom.value = (view && view.zoom) ? view.zoom : 1.0;
-  hasSavedZoom.value = !!(view && view.zoom);
-  // Vycentrovat = uložený výchozí (ne vždy 1.0)
-  zoom.value = songZoom.value;
-  panX.value = 0; panY.value = 0;
+  hasSavedZoom.value = !!view;
+  await applyPageView();
+  updatePageViewFlag();
 }
-
-// Uloží aktuální zoom jako výchozí zobrazení pro DANOU skladbu
+// Uložené zobrazení AKTUÁLNÍ stránky má přednost; jinak globální nastavení
+// skladby; jinak fit 100 %. Uložená hodnota `null` = „tuhle položku zdediť
+// z globálního nastavení" (aby stránka s uloženým zoomem nepotlačila
+// globální rotaci).
+async function applyPageView() {
+  const pv = pageViews.get(currentPage.value) || null;
+  const v = songView.value;
+  zoom.value = (pv && pv.zoom != null) ? pv.zoom : ((v && v.zoom) ? v.zoom : 1.0);
+  rot.value  = (pv && pv.rot  != null) ? pv.rot  : ((v && v.rot)  ? v.rot  : 0);
+  panX.value = (pv && pv.panX != null) ? pv.panX : ((v && v.panX) ? v.panX : 0);
+  panY.value = (pv && pv.panY != null) ? pv.panY : ((v && v.panY) ? v.panY : 0);
+}
+// Je aktuální stránka nastavená zvlášť?
+function updatePageViewFlag() {
+  const pv = pageViews.get(currentPage.value);
+  hasSavedPageView.value = !!(pv && (pv.zoom != null || pv.rot != null || pv.panX != null || pv.panY != null));
+}
+// Uloží aktuální zoom + posun + rotaci jako výchozí pro CELOU skladbu
 async function saveZoomAsDefault() {
+  songView.value = { zoom: zoom.value, panX: panX.value, panY: panY.value, rot: rot.value };
   songZoom.value = zoom.value;
   hasSavedZoom.value = true;
-  await dbSaveSongView({ songId: song.id, zoom: zoom.value });
+  await dbSaveSongView({
+    songId: song.id, zoom: zoom.value, panX: panX.value, panY: panY.value, rot: rot.value,
+  });
 }
-
+// Uloží aktuální zoom + posun + rotaci jako výchozí pro TUTO stránku.
+// Při vycentrování má přednost před globálním nastavením skladby.
+async function savePageViewAsDefault() {
+  const page = currentPage.value;
+  const view = {
+    songId: song.id, page, zoom: zoom.value, panX: panX.value, panY: panY.value,
+    rot: rot.value,
+  };
+  pageViews.set(page, view);
+  hasSavedPageView.value = true;
+  await dbSavePageView(view);
+}
+// Zruší zvláštní nastavení této stránky → zpět na globální / fit
+async function clearPageView() {
+  pageViews.delete(currentPage.value);
+  await dbDeletePageView(song.id, currentPage.value);
+  await applyPageView();
+  updatePageViewFlag();
+  await renderCurrent();
+}
+// Otočení stránky o delta stupňů (kladné = vpravo). Měřítko se přepočítá, aby
+// se otočená stránka vešla CELÁ — jinak by její okraje zašly pod horní lištu.
+async function rotateBy(delta) {
+  rot.value = ((rot.value + delta) % 360 + 360) % 360;
+  const d = await getPageWidthHeight(song, currentPage.value + 1);
+  baseDims = { w: d.width, h: d.height };
+  zoom.value = 1.0;          // `zoom` je násobitel nad fitScale (který rotaci zná)
+  panX.value = 0; panY.value = 0;
+  // Cache je klíčovaná rotací, takže staré canvasy už neplatí — uvolníme je,
+  // ať zbytečně nedrží paměť (jinak by se při každém otočení hromadily).
+  cached.clear(); preRendered.clear(); renderPromises.clear();
+  renderCurrent();
+}
+// Zruší rotaci a vrátí stránku do výchozího zobrazení
+async function resetRotation() {
+  rot.value = 0;
+  zoom.value = 1.0;
+  panX.value = 0; panY.value = 0;
+  renderCurrent();
+}
 function computeFit() {
   // .page-area je přes celou výšku (lišta je overlay), ale má padding-top o výšce
   // lišty. Odečteme ho, aby se noty vešly POD lištu a nepod ni nezajely.
@@ -1000,36 +1187,47 @@ function computeFit() {
   }
 }
 
+// Základní (neotočené) rozměry aktuální stránky v PDF bodech — z nich se počítá
+// fit pro otočenou stránku i inverzní rotace souřadnic pero → canvas.
+let baseDims = { w: 0, h: 0 };
+
 async function renderCurrent() {
   const doc = song.data;
   if (!doc) return;
   // Nárok na tuto generaci renderu — při rychlém listování se starší render zruší
   const myToken = ++renderToken;
   const page = currentPage.value;
+  const myRot = rot.value;
   const dim = await getPageWidthHeight(song, page + 1);
   if (myToken !== renderToken) return; // mezitím se listovalo dál
-  const ar = dim.width / dim.height;
-  // Fit na šířku: vyplnit šířku, výška se může oříznout
-  const w = availW;
-  const h = w / ar;
-  cssW.value = Math.round(w);
-  cssH.value = Math.round(h);
+  baseDims = { w: dim.width, h: dim.height };
+  // Měřítko stránky (otočená stránka se musí vejít celá, neotočená drží fit na šířku).
+  // Rotace se aplikuje až na .stage (canvas i anotační vrstva společně), takže
+  // tady zůstávají rozměry NEOTOČENÉ stránky — anotace tak žijí v soustavě
+  // stránky a po otočení se vezmou s sebou.
+  const s = fitScale(dim.width, dim.height, myRot);
+  const w = Math.round(dim.width * s);
+  const h = Math.round(dim.height * s);
+  cssW.value = w;
+  cssH.value = h;
   await nextTick();
   if (myToken !== renderToken) return;
   // Render vždy do offscreen canvasu, pak zkopírovat na viditelný.
   // Dva souběžné rendery tak nikdy nepíšou do stejného canvasu.
-  const off = getOrCreateCacheCanvas(page, w, h);
-  if (!preRendered.has(page)) {
-    const pending = renderPromises.get(page);
+  // Cache je klíčovaná i rotací — při otočení se mění měřítko stránky, takže
+  // staré canvasy by měly špatnou velikost (a kopírování by obraz rozmázlo).
+  const off = getOrCreateCacheCanvas(keyFor(page, myRot), w, h);
+  if (!preRendered.has(keyFor(page, myRot))) {
+    const pending = renderPromises.get(keyFor(page, myRot));
     if (pending) {
       await pending;
       if (myToken !== renderToken) return;
     } else {
       const p = renderPage(song, page + 1, off, h).then(() => {
-        preRendered.add(page);
-        renderPromises.delete(page);
+        preRendered.add(keyFor(page, myRot));
+        renderPromises.delete(keyFor(page, myRot));
       });
-      renderPromises.set(page, p);
+      renderPromises.set(keyFor(page, myRot), p);
       await p;
       if (myToken !== renderToken) return;
     }
@@ -1037,10 +1235,10 @@ async function renderCurrent() {
   // Zkopírovat offscreen canvas na viditelný (scalovaně podle dpr)
   const ctx = canvasEl.value.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  canvasEl.value.width = Math.round(cssW.value * dpr);
-  canvasEl.value.height = Math.round(cssH.value * dpr);
-  canvasEl.value.style.width = cssW.value + 'px';
-  canvasEl.value.style.height = cssH.value + 'px';
+  canvasEl.value.width = Math.round(w * dpr);
+  canvasEl.value.height = Math.round(h * dpr);
+  canvasEl.value.style.width = w + 'px';
+  canvasEl.value.style.height = h + 'px';
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(off, 0, 0, canvasEl.value.width, canvasEl.value.height);
   prefetchSiblings(page);
@@ -1050,23 +1248,26 @@ async function renderCurrent() {
 async function prefetchSiblings(center) {
   const doc = song.data;
   if (!doc) return;
+  const myRot = rot.value;
   for (const i of [center - 1, center + 1, center - 2, center + 2]) {
     if (i < 0 || i >= totalPages.value) continue;
-    if (preRendered.has(i)) continue;
-    if (renderPromises.has(i)) continue; // už probíhá
+    if (preRendered.has(keyFor(i, myRot))) continue;
+    if (renderPromises.has(keyFor(i, myRot))) continue; // už probíhá
     // Cache canvas musí mít rozměry TÉ stránky (jiný poměr stran → při kopírování by se natáhlo/ořízlo)
     const dim = await getPageWidthHeight(song, i + 1);
-    const ar = dim.width / dim.height;
-    const w = availW;
-    const h = w / ar;
-    const off = getOrCreateCacheCanvas(i, w, h);
+    const s = fitScale(dim.width, dim.height, myRot);
+    const w = Math.round(dim.width * s);
+    const h = Math.round(dim.height * s);
+    const off = getOrCreateCacheCanvas(keyFor(i, myRot), w, h);
     const p = renderPage(song, i + 1, off, h).then(() => {
-      preRendered.add(i);
-      renderPromises.delete(i);
+      preRendered.add(keyFor(i, myRot));
+      renderPromises.delete(keyFor(i, myRot));
     });
-    renderPromises.set(i, p);
+    renderPromises.set(keyFor(i, myRot), p);
   }
 }
+// Klíč cache = stránka + rotace (při otočení se mění měřítko, cache by neseděla)
+function keyFor(pageIdx, deg) { return pageIdx + '@' + deg; }
 
 function getOrCreateCacheCanvas(i, w, h) {
   if (cached.has(i)) return cached.get(i);
@@ -1092,7 +1293,9 @@ function gotoPage(i) {
   endEdit();   // listování = konec výběru prvku (rámeček patří jiné stránce)
   currentPage.value = i;
   pageSlider.value = i;
-  panX.value = 0; panY.value = 0; // nová stránka = bez posunu
+  // Nová stránka má vlastní uložené zobrazení (nebo se použije globální skladby)
+  applyPageView();
+  updatePageViewFlag();
   // Okamžitá navigace: vyčistit canvas (nezobrazovat starou stránku) a
   // spustit render na pozadí. NEčekáme na dokončení — při rychlém listování
   // by se každý tap zablokoval. Token v renderCurrent zajistí, že se vykreslí
@@ -1219,7 +1422,11 @@ async function switchSong(idx, toEnd) {
   // načíst novou skladbu
   song.id = s.id; song.data = s.data; song.name = s.name; song.fileName = s.fileName;
   groupIndex.value = idx;
-  // Uložený výchozí zoom nové skladby (vycentruje a nastaví zoom), jinak fit 1.0
+  // Uložená zobrazení nové skladby (per-stránková i globální) — vycentruje,
+  // nastaví zoom, posun i rotaci
+  pageViews.clear();
+  const pvsNew = await dbGetAllPageViews(s.id);
+  for (const pv of pvsNew) if (pv && pv.page != null) pageViews.set(pv.page, pv);
   await applySongView();
   // vyčistit cache a anotace
   cached.clear(); preRendered.clear(); renderPromises.clear();
@@ -1229,8 +1436,17 @@ async function switchSong(idx, toEnd) {
   loading.value = true; // loading overlay při přechodu mezi skladbami
   const saved = await dbGetAnnotations(s.id);
   annotations.value.items = (saved && Array.isArray(saved.items)) ? saved.items : [];
+  // Staré jemné barvy → nová výrazná paleta i při přechodu mezi skladbami
+  if (upgradeAnnotationColors()) {
+    await dbSaveAnnotations({ songId: song.id, items: annotations.value.items });
+  }
   totalPages.value = await getPageCount(song);
   currentPage.value = toEnd ? totalPages.value - 1 : 0;
+  // Aplikovat zobrazení až TEĎ, kdy je známá cílová stránka (applySongView výše
+  // pracuje s currentPage, který se nastavuje až tady — jinak by se vzalo
+  // nastavení předchozí stránky).
+  await applyPageView();
+  updatePageViewFlag();
   await renderCurrent();
   loading.value = false;
 }
@@ -1264,7 +1480,11 @@ let _touchStart = null;
 let _pinchDist = null;
 let _pinchMid = null; // střed dvou prstů (pro pan)
 function onTouchStart(e) {
-  if (annotMode.value) return; // v anotaci swipe nekreslí listování
+  // V anotačním režimu se listovat SMÍ (Jan: „když je otevřený anotační režim,
+  // nedá se listovat, musí se vždy zavřít anotace"). Rozlišíme pero a prst:
+  // pero nastaví _activePointerId (kreslí), prst ne → prstem se listuje.
+  // Zahájení tahu perem ukončí čekající swipe (přiložená ruka nesmí otočit stránku).
+  if (_activePointerId !== null) { _touchStart = null; return; }
   // Tah na liště záložek (horizontální scroll) nekreslí jako swipe stránky
   if (e.target && e.target.closest && e.target.closest('.bookmark-strip')) return;
   if (e.touches.length === 2) {
@@ -1279,7 +1499,7 @@ function onTouchStart(e) {
   }
 }
 function onTouchMove(e) {
-  if (annotMode.value) return;
+  if (_activePointerId !== null) return;   // pero kreslí → neposouvat ani zoomovat
   if (e.touches.length === 2 && _pinchDist) {
     const d = dist(e.touches[0], e.touches[1]);
     const ratio = d / _pinchDist;
@@ -1295,7 +1515,7 @@ function onTouchMove(e) {
   }
 }
 function onTouchEnd(e) {
-  if (annotMode.value) return;
+  if (_activePointerId !== null) { _pinchDist = null; _pinchMid = null; return; } // pero kreslí
   _pinchDist = null;
   _pinchMid = null;
   if (!_touchStart) return;
@@ -1305,7 +1525,22 @@ function onTouchEnd(e) {
   const dt = Date.now() - _touchStart.t;
   const tapped = Math.abs(dx) < 20 && Math.abs(dy) < 20 && dt < 400;
   _touchStart = null;
-  if (tapped) return; // tap řeší onTap
+  // Během tohoto dotyku pero kreslilo → dotyk patřil opřené ruce, ne listování
+  if (_penDrewDuringTouch) { _penDrewDuringTouch = false; return; }
+  if (tapped) {
+    // V anotaci si okrajová klepnutí řešíme tady — vrstva je nad plátnem a click
+    // tam řeší nástroje, takže by se klepnutí na okraj k listování nedostalo.
+    if (annotMode.value) {
+      const el = viewerEl.value;
+      if (el) {
+        const x = t.clientX - el.getBoundingClientRect().left;
+        const edge = el.clientWidth * 0.2;
+        if (x < edge) prevPage();
+        else if (x > el.clientWidth - edge) nextPage();
+      }
+    }
+    return; // v režimu čtení tap řeší onTap
+  }
   if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
     if (dx < 0) nextPage(); // swipe vlevo → další stránka/nota
     else prevPage();        // swipe vpravo → předchozí stránka/nota
@@ -1360,9 +1595,18 @@ function setTool(t) { endEdit(); tool.value = t; wedgePoints.value = []; hlPoint
 function toLayerCoords(e) {
   const svg = layerSvgEl.value;
   const rect = svg.getBoundingClientRect();
-  const scale = cssW.value / rect.width; // zoom korekce
   const clientX = e.touches ? e.touches[0].clientX : e.clientX;
   const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  // Přes převodní matici SVG (getScreenCTM) — ta zná zoom, posun I ROTACI stage.
+  // Dřív se měřilo jen podle poměru šířek, takže na otočené stránce pero kreslilo
+  // mimo kurzor (a ruka neuchopila, na co uživatel klepl).
+  const ctm = svg.getScreenCTM();
+  if (ctm && typeof DOMPoint !== 'undefined') {
+    const p = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+    return { x: p.x, y: p.y };
+  }
+  // Záložní cesta (kdyby matice nebyla k dispozici) — bez rotace jako dřív
+  const scale = cssW.value / rect.width;
   return {
     x: (clientX - rect.left) * scale,
     y: (clientY - rect.top) * scale,
@@ -1379,9 +1623,15 @@ function onLayerDown(e) {
     return;
   }
   if (!annotMode.value) return;
-  // Pen-only mód: ignorovat dotyk prstem/rukou (palm-rejection), kreslit jen stylusem
+  // Pen-only mód: dotyk prstem/rukou NEKRESLÍ (palm-rejection) — kreslí jen pero.
+  // Listování prstem v anotaci řeší touch obsluha na .viewer (onTouchStart/End),
+  // která pozná, že pero zrovna kreslí, přes _activePointerId.
   if (penOnly.value && e.pointerType !== 'pen') return;
   if (_activePointerId !== null) return; // už kreslí jiný tah (např. druhá ruka)
+  // Pero začíná kreslit. Když v tu chvíli běží dotykový tah (opřená ruka),
+  // označíme ho — jeho dokončení NESMÍ otočit stránku (na reálném tabletu
+  // může touchend dorazit až po tahu perem).
+  if (_touchStart) _penDrewDuringTouch = true;
   _activePointerId = e.pointerId;
   const p = toLayerCoords(e);
 
@@ -1465,7 +1715,7 @@ function onLayerDown(e) {
       const x2 = c.x;                 // pravá vertikála z třetího bodu
       const it = {
         id: crypto.randomUUID(), page: currentPage.value,
-        tool: 'highlighter', color: annotColor.value + '80',
+        tool: 'highlighter', color: annotColor.value,
         opacity: 1,
         width: Math.max(1, Math.round(annotSize.value)),
         x1, y1, x2, y2,
@@ -1512,13 +1762,19 @@ function onLayerDown(e) {
   activeItem.value = {
     id: crypto.randomUUID(), page: currentPage.value,
     tool: tool.value,
-    color: pen ? annotColor.value + '80' : annotColor.value,   // '80'=50% alfa: výraznější, noty se stále prosvítají
+    // Zvýrazňovač už není poloprůhledný ('80') — výraznost řeší sytý odstín
+    // + mix-blend-mode: multiply, takže noty pod ním zůstanou čitelné.
+    color: annotColor.value,
     opacity: pen ? 1 : annotOpacity.value / 100,
     width: w,
     points: [p],
   };
   _prev = p;
 }
+// Listování prstem během anotačního režimu zajišťuje touch obsluha .viewer —
+// pero kreslí (blokuje swipe přes _activePointerId), prst listuje.
+// _penDrewDuringTouch: během dotyku pero kreslilo → dotyk nesmí listovat.
+let _penDrewDuringTouch = false;
 let _prev = null;
 let _activePointerId = null;
 let _dragAnnot = null;
@@ -1787,16 +2043,22 @@ function itemBox(it) {
 // Skok, jehož obdélník je pod daným bodem (pro tažení i pro klepnutí)
 function jumpAtPoint(p) {
   for (const j of jumps.value) {
-    if (!j.place) continue;
-    if (j.fromPage !== currentPage.value) continue;
     const b = j.place;
+    if (!b) continue;
+    // Obdélník se kreslí na stránce, na které ho uživatel naklepal (b.page).
+    // Dřív se tu porovnávalo j.fromPage — jenže umístění se dá naklepat i na
+    // JINÉ stránce, než odkud skok vede (typicky dopředu na stránce, kde má
+    // být tlačítko). Pak tlačítko bylo vidět, ale ruka ho nemohla uchopit.
+    const onPage = (b.page != null) ? b.page : j.fromPage;
+    if (onPage !== currentPage.value) continue;
     if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return { j };
   }
   return null;
 }
 // Skoky na aktuální stránce rozdělené podle toho, zda mají umístění na notách
 const jumpsOnPage = computed(() => jumps.value.filter(j =>
-  j.fromPage === currentPage.value || (j.place && j.place.page === currentPage.value)
+  j.fromPage === currentPage.value
+  || (j.place && (j.place.page != null ? j.place.page : j.fromPage) === currentPage.value)
 ));
 const placerJumps = computed(() => jumpsOnPage.value.filter(j => j.place));
 const edgeJumps = computed(() => jumpsOnPage.value.filter(j => !j.place));
@@ -1995,7 +2257,9 @@ function redoAnnot() {
 // zoom — vždy po 5 % (sčítání, ne násobení → pravidelné a symetrické kroky)
 function zoomIn() { zoom.value = Math.min(zoom.value + 0.05, 2.5); }
 function zoomOut() { zoom.value = Math.max(zoom.value - 0.05, 1); }
-function resetView() { zoom.value = songZoom.value; panX.value = 0; panY.value = 0; }
+// Vycentrovat = vrátit se na uložené výchozí zobrazení; uložené nastavení
+// KONKRÉTNÍ stránky má přednost před globálním nastavením skladby.
+function resetView() { applyPageView(); }
 
 // save
 let saveTimer = null;
@@ -2112,8 +2376,15 @@ async function saveBookmark() {
   } else {
     if (bookmarks.value.some(x => x.page === currentPage.value)) { openBookmark(); return; }
     bookmarks.value.push({ id: crypto.randomUUID(), page: currentPage.value, label });
+    // Nová záložka se zařadí vzestupně podle stránky — ale jen dokud si uživatel
+    // pořadí nepřerovnal ručně (od té chvíle si drží své pořadí, Janovo rozhodnutí).
+    // POZOR: v <script setup> se ref v JS NEODVÍJÍ sám — musí se přes .value,
+    // jinak je `!bmManualOrder` vždy false a řazení se nikdy neprovede.
+    if (!bmManualOrder.value) {
+      bookmarks.value.sort((a, b) => a.page - b.page);
+    }
   }
-  await dbSaveBookmarks({ songId: song.id, items: bookmarks.value }); // ruční pořadí
+  await dbSaveBookmarks({ songId: song.id, items: bookmarks.value, manualOrder: bmManualOrder.value }); // ruční pořadí
   bookmarkMode.value = false;
   bookmarkLabel.value = '';
   bookmarkEditing.value = null;
@@ -2126,6 +2397,7 @@ function startEditBookmark(b) {
 // Jan: v úpravě záložek chce měnit pořadí tažením, ne šipkami.
 // Řádek se přesouvá živě podle polohy prstu; do IndexedDB se ukládá až po puštění (jeden zápis).
 const bmDragId = ref(null);       // id záložky, která se právě táhne (jen vizuální stav)
+const bmManualOrder = ref(false); // uživatel si pořadí přerovnal ručně → už needit podle stránky
 let _bmDrag = null;               // { id, lastY, moved }
 let _bmSaveTimer = null;
 
@@ -2177,7 +2449,10 @@ function bmDragEnd() {
   if (!d) return;
   _bmDrag = null;
   bmDragId.value = null;
-  if (d.moved) bmSaveNow();                          // jeden zápis po dokončení tažení
+  if (d.moved) {
+    bmManualOrder.value = true;                      // ruční přerovnání → držet toto pořadí
+    bmSaveNow();                                      // jeden zápis po dokončení tažení
+  }
 }
 function bmScheduleSave() {
   clearTimeout(_bmSaveTimer);
@@ -2186,7 +2461,7 @@ function bmScheduleSave() {
 function bmSaveNow() {
   clearTimeout(_bmSaveTimer);
   _bmSaveTimer = null;
-  return dbSaveBookmarks({ songId: song.id, items: bookmarks.value });
+  return dbSaveBookmarks({ songId: song.id, items: bookmarks.value, manualOrder: bmManualOrder.value });
 }
 async function goBookmark(b) {
   await gotoPage(b.page);
@@ -2194,7 +2469,7 @@ async function goBookmark(b) {
 async function deleteBookmark(b) {
   if (confirm(`Smazat záložku „${b.label || 'str. ' + (b.page + 1)}"?`)) {
     bookmarks.value = bookmarks.value.filter(x => x.id !== b.id);
-    await dbSaveBookmarks({ songId: song.id, items: bookmarks.value });
+    await dbSaveBookmarks({ songId: song.id, items: bookmarks.value, manualOrder: bmManualOrder.value });
   }
 }
 </script>
@@ -2334,6 +2609,14 @@ async function deleteBookmark(b) {
 .zp-btn.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
 .zp-val { min-width: 56px; text-align: center; font-size: 1rem; font-weight: 600; color: var(--text); }
 .zp-sep { width: 1px; height: 26px; background: var(--border); }
+/* Úhel otočení — klepnutím se zruší (ploché, jen :active feedback) */
+.zp-rot {
+  min-width: 48px; padding: 4px 6px; text-align: center;
+  background: transparent; border: 1px solid var(--border); border-radius: 14px;
+  font: inherit; font-size: 0.92rem; font-weight: 600; color: var(--text-dim);
+  cursor: pointer; touch-action: manipulation;
+}
+.zp-rot:active { background: var(--bg-elev2); }
 
 /* Oblast stránky pod lištou — z její velikosti se počítá fit not */
 .page-area {
@@ -2357,12 +2640,22 @@ async function deleteBookmark(b) {
   overscroll-behavior-x: none;
 }
 .stage { position: relative; touch-action: none; }
+/* Vnitřní otočný box — přesně velký jako (neotočená) stránka, otáčí se kolem
+   svého středu. Obsahuje canvas, anotační vrstvu i tlačítka skoků, takže se
+   vše otočí společně a poznámky zůstanou na svém místě v notách. */
+.rotor {
+  position: absolute; top: 50%; left: 50%;
+  transform-origin: center center;
+}
 .pdf-canvas { display: block; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,0.6); border-radius: 6px; touch-action: none; }
 .annot-layer { position: absolute; top: 0; left: 0; touch-action: none; cursor: crosshair; }
 .annot-layer.active { pointer-events: auto; }
 .annot-layer.active + .stage {  }
 .annot-layer:not(.active) { pointer-events: none; }
 .annot-layer .hl { mix-blend-mode: multiply; opacity: 0.9; }
+/* Náhled zvýrazňovače při sytých barvách: ať je vidět, že jde o zvýraznění,
+   a ne o přebarvení not — náhled multiplikuje stejně jako hotový tvar. */
+.annot-layer .hl-preview { mix-blend-mode: multiply; opacity: 0.55; }
 
 /* ===== Panely a modaly se kotví POD horní lištu (tlačítko i panel u sebe) ===== */
 
@@ -2374,6 +2667,12 @@ async function deleteBookmark(b) {
   pointer-events: none;   /* samotná vrstva nesmí blokovat kreslení/gesta */
   z-index: 19;
 }
+/* V nástroji Ruka (Upravit) musí tlačítko skoku pustit klepnutí až na anotační
+   vrstvu — jinak ho ruka „neuchopí": tlačítko má pointer-events: auto a leží NAD
+   vrstvou, takže pointerdown skončil na něm a na vrstvě se vůbec nespustil
+   (uživatel sice viděl rámeček, ale tlačítko nešlo přesunout). */
+.jump-on-page.edit-mode { pointer-events: none; }
+.jump-on-page.edit-mode .jump-on-btn { pointer-events: none; }
 .jump-on-btn {
   position: absolute; pointer-events: auto;
   display: flex; align-items: center; justify-content: center;
