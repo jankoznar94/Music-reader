@@ -1070,11 +1070,12 @@ const songName = computed(() => song.name || song.fileName || '');
 //     zrovna otočená jakkoli. Cache tedy nemusí být klíčovaná rotací a otočení
 //     neinvaliduje ani jeden canvas → žádné překreslování při rotaci.
 //   * `.rotor` se jen otočí (`rotate(Ndeg)`) a `.stage` přeškáluje hotovou
-//     bitmapu (`liveFit`) tak, aby se otočená stránka vešla CELÁ.
+//     bitmapu (`liveFit`) — ale JEN u čtvrtvrtových orientací (±90° tlačítko),
+//     kde se papír musí vejít. Rotace prsty je rigidní (měřítko 1).
 //   * `liveFit` = poměr měřítka, které má papír po otočení mít (`fitScale`),
-//     k měřítku, ve kterém je bitmapa nakreslená. Otočená stránka se vždy
-//     ZMENŠUJE (rotAvail je monotonní), takže bitmapa má vždy dost pixelů —
-//     ostrá je i bez překreslení.
+//     k měřítku, ve kterém je bitmapa nakreslená. Otočený papír se ZMENŠUJE jen
+//     při vědomé změně orientace; meziúhly se jen otáčejí a smí přesáhnout okraj
+//     (Jan: „Může být mimo okraje. Případně si to pak zmenším.“).
 //   * DŮSLEDEK: zoom ani posun uživatele se otočením NESMÍ hnout. Uživatel
 //     vidí přesně ten stav, který měl pod rukama, jen otočený.
 const stageStyle = computed(() => ({
@@ -1084,50 +1085,53 @@ const stageStyle = computed(() => ({
   transformOrigin: 'center center',
   willChange: 'transform',
 }));
-// Přeškálování už vykreslené bitmapy při rotaci — bez zásahu do pdf.js.
-// `exact` = poměr měřítka, které má papír po otočení mít (`fitScale`), k měřítku
-// nakreslené bitmapy. V nule plynule přechází v 1 (při 0° je fitScale(0) ==
-// měřítko bitmapy), takže žádný zlom pravidla v nule neexistuje.
+// `liveFit` = přeškálování už vykreslené bitmapy. Je to OBYČEJNÝ REF, ne computed
+// z úhlu — a v tom je celá oprava Janovy stížnosti „po dokončení rotace se obraz
+// pohne. Zoom i pozici.“
 //
-// Zbývá jediný skok, a ten je geometrický: když se gesto ROZHODNE pro rotaci
-// (ROT_GESTURE_COMMIT_DEG), úhel přeskočí z 0 na ~8° a papír se v tu chvíli musí
-// zmenšit — u A4 na výšku v oblasti na výšku to dělá ~17 %. Jeden snímek s 17%
-// cuknutím je přesně to, co je na rotaci cítit jako „ne plynulé“. Proto se cíl
-// zapíná PLYNULE přes prvních ROT_EASE_DEG stupňů ZMĚNY.
+// CO BYLO ŠPATNĚ (naměřeno v headless Chrome, sonda probe-release-snap.py):
+//   Dřív se `liveFit` počítal Z ÚHLU (contain-fit otočeného papíru dělený
+//   měřítkem bitmapy), a aby nebyl vidět skok v okamžiku, kdy se gesto rozhodne
+//   pro rotaci, byl zpožděný „rampou“ (ROT_EASE_DEG = 30°). Jenže tím se skok
+//   jen PŘESUNUL na konec gesta: dokud rampa běžela, držel `liveFit` vyhlazenou
+//   (a tedy ŠPATNOU) hodnotu, a v okamžiku puštění prstu se přepnul na přesnou —
+//   naměřeno 0,9097 → 0,7741 v JEDNOM SNÍMKU, tj. **−14,9 % skok**. Uživatel to
+//   vidí přesně tak, jak to popsal: po dokončení rotace (při „přegenerování“)
+//   se papír zmenší a s ním se posune i střed obrazu. U krátkého gesta (12°) je
+//   rampa nejvíc mimo, takže skok je největší.
 //
-// 30° je ZMĚŘENÉ minimum pro skok pod 6 % při kroku reálného prstu (~1,5°).
-// Kratší rampa (zkoušeno 12°) cuknutí NEODSTRANÍ — naopak: čím kratší rampa,
-// tím větší díl skoku se musí stihnout v jednom snímku (naměřeno 12° → 8,0 %,
-// 30° → 4,9 %).
-//
-// ⚠️ Rampu smí zapnout JEN GESTO (`beginRotChange` z onTouchMove). Tlačítka
-// a tween ji musí mít vypnutou (`rotChanging = false`), protože tam je změna
-// úhlu spojitá a zpožděný fit by se projevil jako „papír se po ťuknutí o 1°
-// nezměnil a pak cuknul, až se rampa dohnala“.
-// ⚠️ `rotEaseFrom` NESMÍ být `renderedRot` (rotace, se kterou je bitmapa
-// nakreslená). V tom byla chyba dřívějšího kódu: když byla bitmapa nakreslená
-// v NEnulové rotaci, rampa nezačínala v 1 a fit se počítal ŠPATNĚ (naměřeno:
-// 30° → živý fit 0,58 místo 0,88, tj. papír skočil o 30 %).
-const ROT_EASE_DEG = 30;
-const rotEaseFrom = ref(0);       // úhel, od kterého se počítá současná změna
-const rotChanging = ref(false);   // probíhá ROTAČNÍ GESTO (jen tam má rampa smysl)
-function beginRotChange() {
-  if (rotChanging.value) return;
-  rotEaseFrom.value = rot.value;
-  rotChanging.value = true;
-}
-const liveFit = computed(() => {
+// SPRÁVNÝ MODEL (a Jan ho popsal slovy „obraz po rotaci zkrátka zůstal přesně
+// tak jak je, jak si ho uživatel nastavil“): **rotace je RIGIDNÍ — mění jen
+// úhel, měřítko ani posun nikdy.** `liveFit` proto mění VÝHRADNĚ ±90° TLAČÍTKO
+// (vědomá změna orientace stránky, kde se papír opravdu musí vejít) a vycentrování;
+// žádná rotační cesta (gesto prsty, 1°, 0,1°, držení) na něj nesahá.
+//   * Gesto: `liveFit` se nemění vůbec → není co skákat, ani na začátku, ani po
+//     puštění. Zbývá jediná práce na snímek = `rotate()` na `.rotor` (GPU), takže
+//     je to plynulejší i výkonnostně — vypadla reaktivní závislost stage na úhlu.
+//   * Otočený papír na velký úhel přesahuje čtecí plochu (ořez) — to je záměr
+//     a je to vidět; na srovnání křivého skenu i na 90° orientaci slouží tlačítka.
+//   * Strop 2,5 je jen pojistka proti absurdnímu roztažení; reálně je cíl <= 1.
+const liveFit = ref(1);
+// Měřítko, které má papír po otočení na `deg` mít (poměr k nakreslené bitmapě).
+// V nule vychází přesně 1 (fitScale(0) == měřítko bitmapy), takže návrat do 0°
+// nemá zlom pravidla.
+function fitFor(deg) {
   const bd = baseDims.value;
   if (!bd.w || !bd.h) return 1;
   const drawn = cssW.value / bd.w;          // měřítko nakreslené bitmapy
   if (!(drawn > 0)) return 1;
-  // Strop 2,5 je jen pojistka proti absurdnímu roztažení; reálně je cíl <= 1.
-  const exact = Math.min(2.5, fitScale(bd.w, bd.h, rot.value) / drawn);
-  if (!rotChanging.value) return exact;     // tlačítka/držení/tween: vždy přesně
-  const moved = Math.abs(angleDelta(rot.value, rotEaseFrom.value));
-  const ease = Math.min(1, moved / ROT_EASE_DEG);
-  return 1 + (exact - 1) * ease;
-});
+  return Math.min(2.5, fitScale(bd.w, bd.h, deg) / drawn);
+}
+// Cílové měřítko pro daný úhel. „Vejít se CELÁ" má smysl jen u ČTVRTVRTOVÝCH
+// orientací (tlačítko ±90°, uložené zobrazení stránky na šířku) — tam se papír
+// opravdu musí vejít, jinak by na šířku přetékal. U MEZIÚHLŮ (křivý sken
+// srovnávaný prsty o 2°) by „vejít se celá" znamenalo, že se papír při každém
+// stupni zmenšuje a zase zvětšuje — přesně to cuknutí, které Jan nechce.
+// Meziúhly proto jedou RIGIDNĚ: měřítko 1, papír se jen otáčí.
+function fitTargetFor(deg) {
+  const whole = Math.abs(deg % 90) < 0.001 || Math.abs(Math.abs(deg % 90) - 90) < 0.001;
+  return whole ? fitFor(deg) : 1;
+}
 const rotorStyle = computed(() => ({
   width: cssW.value + 'px',
   height: cssH.value + 'px',
@@ -1321,6 +1325,11 @@ async function applyPageView() {
   rot.value  = (pv && pv.rot  != null) ? pv.rot  : ((v && v.rot)  ? v.rot  : 0);
   panX.value = (pv && pv.panX != null) ? pv.panX : ((v && v.panX) ? v.panX : 0);
   panY.value = (pv && pv.panY != null) ? pv.panY : ((v && v.panY) ? v.panY : 0);
+  // Měřítko musí odpovídat právě nastavenému úhlu — uložená stránka na šířku
+  // (nebo vrácení na 0°) se musí správně vejít, ne zdědit měřítko z jiné orientace.
+  liveFit.value = fitTargetFor(rot.value);
+  // Až se canvas po případném renderu dovykreslí, dorovnat jeho rozměry.
+  nextTick(() => commitRotation());
 }
 // Je aktuální stránka nastavená zvlášť?
 function updatePageViewFlag() {
@@ -1362,8 +1371,12 @@ async function clearPageView() {
 // Otočení stránky o delta stupňů (kladné = vpravo) — z TLAČÍTEK.
 // Rotace je ČISTĚ CSS záležitost (bitmapa je vždy neotočená), takže velký skok
 // (90°) se dá plynule DOBĚHNOUT animací úhlu — nic se přitom nepočítá z pdf.js
-// a nic se nepřekresluje. Bez toho papír na jeden snímek skočí a je to cítit
-// jako cuknutí; s tweenem se otočí stejně plynule jako prsty.
+// a nic se nepřekresluje. Bez toho papír na jeden snímek skočí a je cítit
+// cuknutí; s tweenem se otočí stejně plynule jako prsty.
+// ⚠️ Tween mění i měřítko (`liveFit`) — je to vědomá změna orientace, kdy se
+// otočená stránka musí vejít do čtecí plochy. Proto se cíl měřítka nastaví JEDNOU
+// na začátku animace (papír se plynule zmenšuje/zvětšuje spolu s otáčením)
+// a snímky animace do něj už nesahají.
 function rotateBy(delta) {
   if (Math.abs(delta) >= ROT_TWEEN_MIN_DEG) { tweenRotation(delta); return; }
   setRotation(normDeg(rot.value + delta));
@@ -1373,11 +1386,16 @@ let _rotTween = null;            // { from, delta, dur, start, raf }
 function tweenRotation(delta) {
   cancelRotTween(true);
   const from = rot.value;
+  const to = normDeg(from + delta);
   // Trvání roste s úhlem, ale drží se v rozumných mezích (delší už působí loudavě).
   const dur = Math.max(140, Math.min(340, Math.abs(delta) * 3.0));
-  // Úhel jde spojitě, takže fit NEMÁ být zpožděný — náběh (rotChanging) patří
-  // jen skokovému rozhodnutí gesta, tady by dělal druhý, falešný skok.
-  rotChanging.value = false;
+  // ⚠️ Měřítko se musí animovat SPOLU s úhlem — kdyby se nastavilo na cílovou
+  // hodnotu hned na začátku, papír by v jednom snímku skočil (naměřeno −30 %)
+  // a teprve pak se otáčel. Oba konce drží `fitTargetFor`: u meziúhlů je to 1
+  // (rigidní), u ±90° fit otočené stránky, takže se papír plynule zmenšuje.
+  const fitFrom = fitTargetFor(from);
+  const fitTo = fitTargetFor(to);
+  liveFit.value = fitFrom;
   const start = performance.now();
   const state = { from, delta, dur, start, raf: 0 };
   _rotTween = state;
@@ -1385,11 +1403,13 @@ function tweenRotation(delta) {
     const t = Math.min(1, (now - start) / dur);
     const e = t * t * (3 - 2 * t);            // smoothstep — rozjezd i doběh
     rot.value = normDeg(from + delta * e);
+    liveFit.value = fitFrom + (fitTo - fitFrom) * e;
     if (t < 1) {
       state.raf = requestAnimationFrame(step);
     } else {
       if (_rotTween === state) _rotTween = null;
-      rot.value = normDeg(from + delta);
+      rot.value = to;
+      liveFit.value = fitTo;
       if (_rotCommitTimer) { window.clearTimeout(_rotCommitTimer); _rotCommitTimer = null; }
       commitRotation();
     }
@@ -1407,12 +1427,14 @@ function cancelRotTween(settle = false) {
 }
 // Jediné místo, které mění úhel po MALÝCH krocích (tlačítka 1°/0,1°, držení):
 // nastaví úhel a po chvíli nečinnosti (tj. po skončení držení) dorovná cache.
-// Rampu tady ZÁMĚRNĚ vypínáme — krok 1° nebo 0,1° je spojitý sám a zpožděný
-// fit by se projevil jako „po ťuknutí se nic nezměnilo, a pak to cuklo“.
+// ⚠️ Měřítko (`liveFit`) tady ZÁMĚRNĚ neměníme. Rotace je rigidní: když si
+// uživatel drží prstem nebo tlačítkem 1° papír v nějakém přiblížení, papír se
+// jen otáčí a nikdy se mu nezmění měřítko ani posun (Jan: „obraz po rotaci
+// zkrátka zůstal přesně tak jak je, jak si ho uživatel nastavil“). Měřítko mění
+// pouze ±90° tlačítko (vědomá změna orientace) — viz tweenRotation.
 let _rotCommitTimer = null;
 const ROT_COMMIT_MS = 450;
 function setRotation(deg) {
-  rotChanging.value = false;
   rot.value = deg;
   if (_rotCommitTimer) window.clearTimeout(_rotCommitTimer);
   _rotCommitTimer = window.setTimeout(() => { _rotCommitTimer = null; commitRotation(); }, ROT_COMMIT_MS);
@@ -1424,7 +1446,6 @@ function setRotation(deg) {
 // nezměnil). Kontrolujeme proto jedinou věc, která reálně může nesedět: rozměry
 // viditelného canvasu (např. po změně velikosti okna) — a jen tehdy vykreslíme.
 function commitRotation() {
-  rotChanging.value = false;
   syncViewerW();
   const c = canvasEl.value;
   if (!c) return;
@@ -1501,6 +1522,7 @@ const rotLabel = computed(() => {
 // nastavili) — a zoom/posun uživatele zůstávají, stejně jako u ostatních cest.
 async function resetRotation() {
   cancelRotTween(false);
+  liveFit.value = fitTargetFor(0);   // zpět do svislé orientace → znovu fit na šířku
   setRotation(0);
 }
 function computeFit() {
@@ -1516,11 +1538,10 @@ function computeFit() {
 
 // Základní (neotočené) rozměry aktuální stránky v PDF bodech — z nich se počítá
 // fit pro otočenou stránku i inverzní rotace souřadnic pero → canvas.
-// MUSÍ být reaktivní: `liveFit` je computed, který se poprvé vyhodnotí dřív, než
-// jsou rozměry známé, a vrátí 1 — s nereaktivní proměnnou by si pak NIKDY
-// nezaregistroval závislost na `rot` a zůstal by navždy v cache (měřeno: během
-// celého gesta se měřítko nezměnilo). S refem se po naplnění rozměrů přepočítá
-// a závislost na rotaci si zaregistruje.
+// Musí být reaktivní, protože z něj počítá `fitFor` (a přes něj měřítko pro ±90°).
+// Původní past: dokud `liveFit` byl computed s ranou návratovou cestou nad
+// NEREAKTIVNÍ proměnnou, dependency tracking se nikdy nezapnul a měřítko zůstalo
+// navždy v cache (naměřeno: během celého gesta se nezměnilo). Ref to drží.
 const baseDims = ref({ w: 0, h: 0 });
 
 async function renderCurrent() {
@@ -1875,11 +1896,23 @@ let _touchStart = null;
 let _pinchDist = null;
 let _pinchMid = null; // střed dvou prstů (pro pan)
 let _rotGesture = null; // stav dvouprstového gesta (idle → rotate / pinch)
-// Dva prsty: přiblížení, posun a OTÁČENÍ. Gesto se rozhodne až podle pohybu —
-// když se úhel změní o aspoň 8°, otáčí se; když se vzdálenost změní aspoň
-// o 20 %, zoomuje se. Do té doby jen posun.
-const ROT_GESTURE_COMMIT_DEG = 8;
-const ZOOM_GESTURE_COMMIT = 0.20;
+// Dva prsty: přiblížení, posun a OTÁČENÍ. O režimu se rozhoduje podle POMĚRU
+// pohybu — což je menší úhel, to se dělá. Prahy jsou proto MALÉ: rotace musí
+// začít OKAMŽITĚ, ne po mrtvém úseku.
+//
+// CO BYLO ŠPATNĚ: prahy 8° a 20 % znamenaly, že se gesto několik snímků jen
+// POSOUVALO (režim 'idle' = pan), takže uživatel viděl, jak papír nejdřív ujíždí
+// a „až po určitých stupních najednou cukne a začne rotovat“. Naměřeno v headless
+// Chrome (sonda probe-rotation-paths.py): při kroku reálného prstu 1,5° se úhel
+// NEZMĚNIL prvních 6 snímků (0°, 0°, 0°, 0°, 0°, 0° → pak skok na −10,4°), tedy
+// ~9° mrtvé dráhy.
+//
+// Teď: první pohyb prstem (u skutečného prstu 2–5°) režim rozhodne, takže rotace
+// nabíhá od prvního snímku. Chyba v rozhodnutí je přitom NEŠKODNÁ — rotace je
+// rigidní (nemění měřítko ani posun), takže i když gesto začne rotovat a ukáže se,
+// že šlo o pinch, uživatel jen o pár stupňů pootočí a pokračuje v zoomu.
+const ROT_GESTURE_COMMIT_DEG = 2.5;
+const ZOOM_GESTURE_COMMIT = 0.06;
 // Pero právě kreslí / kreslilo = stránku NELISTOVAT (Jan: „anotace se dělají perem“).
 // _lastPenAt drží čas posledního tahu perem — chrání i proti zpožděnému touchendu,
 // který na reálném tabletu dorazí až po uvolnění pera.
@@ -1955,10 +1988,9 @@ function onTouchMove(e) {
     }
     if (g.mode === 'rotate') {
       // Úhel se bere od ZAČÁTKU gesta (ne po krocích) — jinak by se chyba
-      // s každým pohybem nasčítala a stránka by ujížděla. Náběh měřítka se
-      // kotví na začátek ZMĚNY rotace (beginRotChange), ne na začátek gesta —
-      // do rozhodnutí se gesto jen posouvá a papír se zvětšovat nemá.
-      beginRotChange();
+      // s každým pohybem nasčítala a stránka by ujížděla.
+      // Rotace je RIGIDNÍ: mění jen úhel. Měřítko ani posun se jí nehýbou, takže
+      // se papír otáčí přesně ve stavu, v jakém si ho uživatel nastavil.
       rot.value = normDeg(g.rot0 + dA);
     } else {
       // zoom s minimem na výchozí (1) — jen skutečná změna vzdálenosti
