@@ -40,8 +40,16 @@
         <!-- Pravá skupina -->
         <div class="tb-side right">
         <button class="tb-btn" @click="toggleAnnot" :class="{ on: annotMode }" title="Anotace / listování">✏️</button>
-        <button class="tb-btn zoom-btn" @click="toggleZoomPanel" :class="{ on: zoomPanelOpen }" title="Zvětšení">
+        <!-- Zvětšení a posun — vlastní nabídka (dropdown). Gesto se v ní věnuje
+             JEN zoomu a posunu, nikdy rotaci. -->
+        <button class="tb-btn zoom-btn" @click="toggleZoomPanel" :class="{ on: zoomPanelOpen }" title="Zvětšení a posun">
           {{ Math.round(zoom * 100) }}%
+        </button>
+        <!-- Rotace — samostatná nabídka s vlastními tlačítky. Gesto se v ní věnuje
+             JEN rotaci (žádný zoom ani posun). -->
+        <button class="tb-btn zoom-btn" @click="toggleRotPanel" :class="{ on: rotPanelOpen }" title="Rotace stránky">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+          <span class="tb-rot-deg">{{ rotLabel }}</span>
         </button>
         <button class="tb-btn" @click="toggleSlider" :class="{ on: sliderOpen }" title="Slider stránek">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
@@ -54,12 +62,38 @@
       </button>
     </div>
 
-    <!-- Panel zvětšení — otevírá se z tlačítka s procenty v liště -->
+    <!-- Panel ZVĚTŠENÍ A POSUNU — otevírá se z tlačítka s procenty v liště.
+         Dokud je otevřený, gesto dvěma prsty dělá POUZE zoom a posun
+         (rotace je vypnutá) — Jan: „Při otevření nabídky zoomu se bude dělat
+         zoom a změna pozice.“ -->
     <div v-if="zoomPanelOpen" class="zoom-panel">
       <button class="zp-btn" @click="zoomOut" title="Oddálit">−</button>
       <span class="zp-val">{{ Math.round(zoom * 100) }} %</span>
       <button class="zp-btn" @click="zoomIn" title="Přiblížit">+</button>
       <span class="zp-sep" />
+      <!-- Vycentrovat = uložené výchozí zobrazení (stránka má přednost před skladbou) -->
+      <button class="zp-btn" @click="resetView" title="Vycentrovat (uložené výchozí zobrazení)">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+      </button>
+      <!-- Uložit jako výchozí pro CELOU skladbu -->
+      <button class="zp-btn" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit jako výchozí pro celou skladbu">
+        <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
+      </button>
+      <!-- Uložit jako výchozí jen pro TUTO stránku (při vycentrování má přednost) -->
+      <button class="zp-btn" :class="{ on: hasSavedPageView }" @click="savePageViewAsDefault" title="Uložit jako výchozí jen pro tuto stránku (má přednost)">
+        <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedPageView ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4z"/><path d="M15 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+      </button>
+      <button v-if="hasSavedPageView || hasSavedZoom" class="zp-btn" @click="clearPageView" title="Zrušit nastavení této stránky">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <!-- Panel ROTACE — samostatná nabídka s VLASTNÍM tlačítkem v liště.
+         Vše, co souvisí s otáčením stránky, je jen tady (dřív to bylo společně
+         s zoomem v jednom panelu a gesto pak nevědělo, co má dělat).
+         Dokud je otevřený, gesto dvěma prsty dělá POUZE rotaci.
+         Referenční mřížka se zobrazuje JEN u rotace, u zoomu ne. -->
+    <div v-if="rotPanelOpen" class="zoom-panel rot-panel">
       <!-- Otočení stránky: hrubé po 90° (na šířku), jemné po 1° a nejjemnější
            po 0,1° (křivý sken). Tlačítka 1° a 0,1° jdou DRŽET — úhel plynule
            nabíhá, takže se dostane i na velký úhel bez mnoha klepání. -->
@@ -85,22 +119,6 @@
       </button>
       <button class="zp-btn" @click="rotateBy(90)" title="Otočit vpravo o 90°">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
-      </button>
-      <span class="zp-sep" />
-      <!-- Vycentrovat = uložené výchozí zobrazení (stránka má přednost před skladbou) -->
-      <button class="zp-btn" @click="resetView" title="Vycentrovat (uložené výchozí zobrazení)">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
-      </button>
-      <!-- Uložit jako výchozí pro CELOU skladbu -->
-      <button class="zp-btn" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit jako výchozí pro celou skladbu">
-        <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
-      </button>
-      <!-- Uložit jako výchozí jen pro TUTO stránku (při vycentrování má přednost) -->
-      <button class="zp-btn" :class="{ on: hasSavedPageView }" @click="savePageViewAsDefault" title="Uložit jako výchozí jen pro tuto stránku (má přednost)">
-        <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedPageView ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4z"/><path d="M15 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
-      </button>
-      <button v-if="hasSavedPageView || hasSavedZoom" class="zp-btn" @click="clearPageView" title="Zrušit nastavení této stránky">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
     </div>
 
@@ -365,9 +383,10 @@
          každém skutečném zápisu do DB ukáže tahle krátká zpráva. -->
     <div v-if="toast" class="viewer-toast">{{ toast }}</div>
 
-    <!-- Referenční mřížka při ladění rotace — ukazuje, co je vodorovně a co svisle.
-         Je vázaná na panel zoomu, takže zmizí, jakmile uživatel panel zavře. -->
-    <div v-if="zoomPanelOpen" class="rot-grid" aria-hidden="true" />
+    <!-- Referenční mřížka pro srovnání horizontální rovnosti not. Patří VÝHRADNĚ
+         k rotaci (Jan: „Mřížka pro porovnání horizontální rovnosti se zobrazí jen
+         u rotace. U zoomu ne.") — u zoomu a posunu by jen překážela. -->
+    <div v-if="rotPanelOpen" class="rot-grid" aria-hidden="true" />
 
     <div v-if="edgeJumps.length" class="jump-strip">
       <button
@@ -941,10 +960,25 @@ const topBarH = ref(96);
 let barObs = null;
 // Panel zvětšení (z tlačítka s procenty v liště) — z lišty zmizela 4 samostatná
 // tlačítka zoomu, která zabírala skoro polovinu šířky a nutila zbytek na 35 px.
+// Od Sep 2026 je to nabídka ZVĚTŠENÍ A POSUNU: rotace má vlastní tlačítko
+// i vlastní panel, protože jedno gesto nemůže dělat obojí najednou.
 const zoomPanelOpen = ref(false);
 function toggleZoomPanel() {
   zoomPanelOpen.value = !zoomPanelOpen.value;
-  if (zoomPanelOpen.value) { annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; endEdit(); }
+  if (zoomPanelOpen.value) { annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; rotPanelOpen.value = false; endEdit(); }
+}
+// Panel ROTACE — samostatná nabídka. Otevřením se zoom zavře a naopak; gesto
+// se pak věnuje jen tomu, co má uživatel otevřené (Jan: „Při otevření nabídky
+// rotace se budem gestem pouze rotovat. Při otevření nabídky zoomu se bude
+// dělat zoom a změna pozice.“).
+const rotPanelOpen = ref(false);
+function toggleRotPanel() {
+  rotPanelOpen.value = !rotPanelOpen.value;
+  if (rotPanelOpen.value) {
+    annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false;
+    sliderOpen.value = false; zoomPanelOpen.value = false; endEdit();
+    cancelRotTween(true);        // ať úhel nevisí mezi polohami
+  }
 }
 
 const cssW = ref(800);
@@ -1699,6 +1733,7 @@ function toggleSlider() {
   if (sliderOpen.value) {
     annotMode.value = false; // jiný panel → vypnout anotaci
     zoomPanelOpen.value = false;
+    rotPanelOpen.value = false;
     endEdit();               // a zrušit výběr prvku (rámeček by zůstal viset)
     pageSlider.value = currentPage.value;
     // Přednačíst miniatury okolí aktuální stránky
@@ -1977,13 +2012,20 @@ function onTouchMove(e) {
     const m = mid(t0, t1);
     const dA = angleDelta(angleOf(t0, t1), g.angle0);
     const scale = g.d0 ? d / g.d0 : 1;
-    // Rozhodnutí, který režim gesto dělá: dokud se nepřekročí práh ani
-    // jednoho, zůstává 'idle' (= posun). Když se překročí oba, vyhraje ten,
-    // který je poměrově dál — aby se rotace a zoom neprali.
+    // Rozhodnutí, který režim gesto dělá. Když má uživatel otevřenou nabídku
+    // ROTACE, gesto rotuje VÝHRADNĚ (žádný souboj se zoomem) — a když má
+    // otevřenou nabídku ZOOMU, zoomuje a posouvá a NIKDY nerotuje. Teprve když
+    // není otevřená ani jedna, rozhoduje se jako dřív podle poměru pohybu.
     if (g.mode === 'idle') {
       const rotCross = Math.abs(dA) / ROT_GESTURE_COMMIT_DEG;
       const zoomCross = Math.abs(scale - 1) / ZOOM_GESTURE_COMMIT;
-      if (rotCross >= 1 && rotCross >= zoomCross) g.mode = 'rotate';
+      if (rotPanelOpen.value) {
+        if (rotCross >= 1) g.mode = 'rotate';
+      } else if (zoomPanelOpen.value) {
+        // Bez prahu: v nabídce zoomu reaguje zoom okamžitě. Posun se tím
+        // nerozbije — při čistém přesunu se vzdálenost prstů nemění.
+        g.mode = 'pinch';
+      } else if (rotCross >= 1 && rotCross >= zoomCross) g.mode = 'rotate';
       else if (zoomCross >= 1) g.mode = 'pinch';
     }
     if (g.mode === 'rotate') {
@@ -2176,7 +2218,7 @@ function onTap(e) {
 // --- Anotace ---
 function toggleAnnot() {
   annotMode.value = !annotMode.value;
-  if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; } // jiné panely zavřít
+  if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false; } // jiné panely zavřít
   // vypnutí řeší watch na annotMode níže (pokrývá i cesty, které by na endEdit zapomněly)
 }
 
@@ -2209,7 +2251,7 @@ function setTool(t) {
   }
   tool.value = t;
   wedgePoints.value = []; hlPoints.value = []; annotMode.value = true;
-  jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false;
+  jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
 }
 
 function toLayerCoords(e) {
@@ -3005,7 +3047,7 @@ function goBack() { router.push('/'); }
 // --- Skoky (Da Capo / VIDE) ---
 function toggleJumpMode() {
   jumpMode.value = !jumpMode.value;
-  if (jumpMode.value) { annotMode.value = false; endEdit(); zoomPanelOpen.value = false; } // jiný panel → vypnout anotaci i výběr prvku
+  if (jumpMode.value) { annotMode.value = false; endEdit(); zoomPanelOpen.value = false; rotPanelOpen.value = false; } // jiný panel → vypnout anotaci i výběr prvku
   if (!jumpMode.value) { jumpStart.value = null; jumpEnd.value = null; jumpLabel.value = ''; }
 }
 // Krok 1: označit výchozí stránku (kde skok začíná)
@@ -3090,6 +3132,7 @@ function openBookmark() {
   bookmarkMode.value = true;
   annotMode.value = false;  // jiný panel → vypnout anotaci
   zoomPanelOpen.value = false;
+  rotPanelOpen.value = false;
   endEdit();               // a zrušit výběr prvku (rámeček by zůstal viset)
   bookmarkLabel.value = '';
   bookmarkEditing.value = null;
@@ -3278,7 +3321,11 @@ async function deleteBookmark(b) {
 .tb-btn.sm svg { width: calc(var(--tb, 38px) * 0.46); height: calc(var(--tb, 38px) * 0.46); }
 /* Tlačítko zvětšení má místo ikony text s procenty — potřebuje víc šířky */
 .tb-btn.zoom-btn { width: auto; min-width: calc(var(--tb, 38px) + 8px); padding: 0 7px;
-  font-size: clamp(0.75rem, 1.9vw, 0.9rem); font-weight: 600; border-radius: 16px; }
+  font-size: clamp(0.75rem, 1.9vw, 0.9rem); font-weight: 600; border-radius: 16px;
+  gap: 4px; }
+/* Tlačítko ROTACE: ikona + aktuální úhel. Úhel musí být vidět i se zavřenou
+   nabídkou — jinak uživatel nepozná, že je stránka pootočená. */
+.tb-rot-deg { font-size: clamp(0.7rem, 1.7vw, 0.84rem); font-weight: 600; }
 .tb-btn.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
 .tb-btn:disabled { opacity: 0.3; pointer-events: none; }
 .tb-btn:active { background: var(--bg-elev); }
@@ -3317,6 +3364,23 @@ async function deleteBookmark(b) {
   font-size: 0.8rem; font-weight: 600; color: var(--text);
   min-width: 32px; text-align: center;
 }
+/* Úzký displej (telefon na výšku): lišta má 7 tlačítek a přidáním rotace se
+   pravá skupina roztáhla až POD počítadlo stránek (naměřeno na 390 px: Anotace
+   186,5–225,5 vs počítadlo 169,3–220,7 = překryv 34 px, klepnutí na počítadlo
+   by trefilo Anotaci). Proto se na úzkém displeji všechno o pár px zúží:
+   úhel u rotace zůstává v nabídce (tlačítko je ikonové) a tlačítka i mezery
+   se zmenší. Ověřuje probe-topbar-rotation.py a probe-counter-overlap.py. */
+@media (max-width: 430px) {
+  /* --tb 33,5 px na 390 px: pravá skupina (4 tlačítka) se tím zúží na ~143 px,
+     takže začíná na ~239 px a počítadlo končící na ~218 px je volné (předtím
+     začínala na 216,6 px = překryv). Menší tlačítko než 32 px už je na dotyk
+     nepříjemné, proto se zbytek ubere z mezer a paddingu. */
+  .top-bar { --tb: clamp(32px, 8.6vw, 40px); }
+  .tb-side { gap: 2px; }
+  .tb-btn.zoom-btn { padding: 0 4px; min-width: calc(var(--tb, 38px) + 2px); }
+  .tb-rot-deg { display: none; }
+  .tb-page { padding: 3px 5px; font-size: 0.78rem; }
+}
 
 /* Panel zvětšení — otevírá se z tlačítka s procenty, kotví se POD lištu */
 .zoom-panel {
@@ -3346,6 +3410,10 @@ async function deleteBookmark(b) {
   cursor: pointer; touch-action: manipulation;
 }
 .zp-rot:active { background: var(--bg-elev2); }
+
+/* Panel rotace — na užším displeji se řada tlačítek musí vejít, proto povolíme
+   zalomení (zoom panel má prvků málo a zůstává v jednom řádku). */
+.rot-panel { flex-wrap: wrap; justify-content: center; max-width: min(96vw, 620px); }
 
 /* Hláška o uložení — plochá, teplá, bez glow (Jan: mobilní PWA, žádné efekty).
    Sedí dole nad lištou záložek, aby nepřekážela v čtení not. */
