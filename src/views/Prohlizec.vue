@@ -2,7 +2,7 @@
   <div
     class="viewer"
     ref="viewerEl"
-    :style="{ '--topbar-h': topBarH + 'px' }"
+    :style="{ '--topbar-h': topBarH + 'px', '--edge-w': edgeW + 'px' }"
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
     @touchend.passive="onTouchEnd"
@@ -114,7 +114,9 @@
          bez ohledu na to, jak je papír zrovna transformovaný. -->
     <div v-if="sheetBackdropOn" class="sheet-backdrop" aria-hidden="true" />
     <!-- Pruhy u okrajů = místo, kde se listuje PRSTEM (jen při čtení).
-         Vizuální pomůcka, nedrží dotyk — ten dojde až na .viewer. -->
+         Vizuální pomůcka, nedrží dotyk — ten dojde až na .viewer.
+         Šířku drží --edge-w, aby vizuál odpovídal přesně tomu, kde listování
+         opravdu funguje (edgeWidth() v JS). -->
     <div v-if="!annotMode && !jumpPlaceMode" class="edge-hint left" />
     <div v-if="!annotMode && !jumpPlaceMode" class="edge-hint right" />
     <!-- .stage = vnější box, jehož rozměry odpovídají tomu, jak stránka zabírá
@@ -1280,11 +1282,19 @@ async function rotateBy(delta) {
   await refreshAfterRotation();
 }
 // Přepočet měřítka + invalidace cache + překreslení po změně úhlu.
-async function refreshAfterRotation() {
+// keepUserView = true → NEMÁ se sáhnout na zoom ani posun uživatele (přímá
+// manipulace prsty pod rukama nic nevrací). Tlačítka otáčení posílají false.
+// POZOR: příznak musí být PARAMETR, ne globální proměnná — tahle funkce je
+// async a čeká na getPageWidthHeight; globální příznak by volající stihl
+// vynulovat dřív, než se funkce dostane k rozhodnutí (přesně to se stalo:
+// po gestu zoom spadl na 100 %, i když měl zůstat).
+async function refreshAfterRotation(keepUserView = false) {
   const d = await getPageWidthHeight(song, currentPage.value + 1);
   baseDims = { w: d.width, h: d.height };
-  zoom.value = 1.0;          // `zoom` je násobitel nad fitScale (který rotaci zná)
-  panX.value = 0; panY.value = 0;
+  if (!keepUserView) {
+    zoom.value = 1.0;        // `zoom` je násobitel nad fitScale (který rotaci zná)
+    panX.value = 0; panY.value = 0;
+  }
   // Cache je klíčovaná rotací, takže staré canvasy už neplatí — uvolníme je,
   // ať zbytečně nedrží paměť (jinak by se při každém otočení hromadily).
   cached.clear(); preRendered.clear(); renderPromises.clear();
@@ -1316,11 +1326,11 @@ function rotHoldStart(delta) {
     }, ROT_HOLD_STEP_MS);
   }, ROT_HOLD_DELAY_MS);
 }
-function scheduleRotRender() {
+function scheduleRotRender(keepUserView = false) {
   if (_rotRenderTimer) return;
   _rotRenderTimer = window.setTimeout(() => {
     _rotRenderTimer = null;
-    refreshAfterRotation();
+    refreshAfterRotation(keepUserView);
   }, ROT_RENDER_MS);
 }
 function rotHoldCancel() {
@@ -1716,6 +1726,12 @@ async function nextSong() {
 let _touchStart = null;
 let _pinchDist = null;
 let _pinchMid = null; // střed dvou prstů (pro pan)
+let _rotGesture = null; // stav dvouprstového gesta (idle → rotate / pinch)
+// Dva prsty: přiblížení, posun a OTÁČENÍ. Gesto se rozhodne až podle pohybu —
+// když se úhel změní o aspoň 8°, otáčí se; když se vzdálenost změní aspoň
+// o 20 %, zoomuje se. Do té doby jen posun.
+const ROT_GESTURE_COMMIT_DEG = 8;
+const ZOOM_GESTURE_COMMIT = 0.20;
 // Pero právě kreslí / kreslilo = stránku NELISTOVAT (Jan: „anotace se dělají perem“).
 // _lastPenAt drží čas posledního tahu perem — chrání i proti zpožděnému touchendu,
 // který na reálném tabletu dorazí až po uvolnění pera.
@@ -1734,12 +1750,25 @@ function onTouchStart(e) {
   // V anotačním režimu se listovat SMÍ, ale JEN prstem na kraji displeje.
   // Rozlišení je na úrovni pointerType (viz onLayerDown), tady rozhoduje jen
   // to, že pero zrovna kreslí nebo kreslilo → dotyk patří opřené ruce.
-  if (blockedNav()) { _touchStart = null; _pinchDist = null; _pinchMid = null; return; }
+  if (blockedNav()) { _touchStart = null; _pinchDist = null; _pinchMid = null; _rotGesture = null; return; }
   // Tah na liště záložek (horizontální scroll) nekreslí jako swipe stránky
   if (e.target && e.target.closest && e.target.closest('.bookmark-strip')) return;
   if (e.touches.length === 2) {
-    _pinchDist = dist(e.touches[0], e.touches[1]);
-    _pinchMid = mid(e.touches[0], e.touches[1]);
+    // Dva prsty umí TŘI věci: přiblížení, posun a OTÁČENÍ stránky. O tom,
+    // které z nich gesto dělá, se rozhodne až podle toho, co se pohne víc
+    // (viz onTouchMove) — dokud není jasno, posouvá se jako dosud.
+    const d0 = dist(e.touches[0], e.touches[1]);
+    const m0 = mid(e.touches[0], e.touches[1]);
+    _pinchDist = d0;
+    _pinchMid = m0;
+    _rotGesture = {
+      mode: 'idle',
+      angle0: angleOf(e.touches[0], e.touches[1]),
+      rot0: rot.value,
+      d0,
+      lastD: d0,
+      lastM: m0,
+    };
     _touchStart = null;
     return;
   }
@@ -1760,17 +1789,39 @@ function onTouchStart(e) {
 }
 function onTouchMove(e) {
   if (blockedNav()) return;   // pero kreslí → neposouvat ani zoomovat
-  if (e.touches.length === 2 && _pinchDist) {
-    const d = dist(e.touches[0], e.touches[1]);
-    const ratio = d / _pinchDist;
-    _pinchDist = d;
-    // zoom s minimem na výchozí (1)
-    zoom.value = Math.min(3.5, Math.max(1, zoom.value * ratio));
-    // pan: posun středu dvou prstů
-    const m = mid(e.touches[0], e.touches[1]);
-    panX.value += m.x - _pinchMid.x;
-    panY.value += m.y - _pinchMid.y;
-    _pinchMid = m;
+  if (e.touches.length === 2 && _rotGesture) {
+    const g = _rotGesture;
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const d = dist(t0, t1);
+    const m = mid(t0, t1);
+    const dA = angleDelta(angleOf(t0, t1), g.angle0);
+    const scale = g.d0 ? d / g.d0 : 1;
+    // Rozhodnutí, který režim gesto dělá: dokud se nepřekročí práh ani
+    // jednoho, zůstává 'idle' (= posun). Když se překročí oba, vyhraje ten,
+    // který je poměrově dál — aby se rotace a zoom neprali.
+    if (g.mode === 'idle') {
+      const rotCross = Math.abs(dA) / ROT_GESTURE_COMMIT_DEG;
+      const zoomCross = Math.abs(scale - 1) / ZOOM_GESTURE_COMMIT;
+      if (rotCross >= 1 && rotCross >= zoomCross) g.mode = 'rotate';
+      else if (zoomCross >= 1) g.mode = 'pinch';
+    }
+    if (g.mode === 'rotate') {
+      // Úhel se bere od ZAČÁTKU gesta (ne po krocích) — jinak by se chyba
+      // s každým pohybem nasčítala a stránka by ujížděla.
+      rot.value = normDeg(g.rot0 + dA);
+      scheduleRotRender(true);     // fit + překreslení, throttlovaně (ne na každý krok)
+    } else {
+      // zoom s minimem na výchozí (1) — jen skutečná změna vzdálenosti
+      if (d !== g.lastD) {
+        zoom.value = Math.min(3.5, Math.max(1, zoom.value * (d / g.lastD)));
+        g.lastD = d;
+      }
+      // pan: posun středu dvou prstů
+      panX.value += m.x - g.lastM.x;
+      panY.value += m.y - g.lastM.y;
+      _pinchDist = d; _pinchMid = m;
+    }
+    g.lastM = m;
     return;
   }
 }
@@ -1798,6 +1849,14 @@ function edgeWidth() {
   if (!el) return 90;
   return Math.max(48, Math.min(el.clientWidth * 0.2, 90));
 }
+// Šířka okrajové zóny jako reaktivní hodnota pro vizuál (--edge-w). Musí být
+// přesně stejná, jako počítá edgeWidth() — jinak by pruh ukazoval jinou hranu,
+// než kde listování opravdu funguje. Zvlášť důležité teď, když je pruh vidět.
+const edgeW = computed(() => {
+  const el = viewerEl.value;
+  if (!el) return 90;
+  return Math.max(48, Math.min(el.clientWidth * 0.2, 90));
+});
 function inEdgeZone(clientX) {
   const el = viewerEl.value;
   if (!el) return false;
@@ -1831,6 +1890,15 @@ function annotEdgeTap(x, y, target) {
 function onTouchEnd(e) {
   _pinchDist = null;
   _pinchMid = null;
+  const g = _rotGesture;
+  _rotGesture = null;
+  // Dvouprstové gesto: po otáčení se musí jednou dorovnat fit a překreslit
+  // (během tahu se jen throttlovalo). keepUserView = true → zoom a posun
+  // uživatele ZŮSTANOU; přímá manipulace prsty pod rukama nic nevrací.
+  if (g) {
+    if (g.mode === 'rotate') refreshAfterRotation(true);
+    return;
+  }
   const t = e.changedTouches && e.changedTouches[0];
   const st = _touchStart;
   _touchStart = null;
@@ -1867,6 +1935,22 @@ function dist(a, b) {
 }
 function mid(a, b) {
   return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+}
+// Úhel spojnice dvou prstů (stupně, 0 = vodorovně doprava). Slouží k otáčení
+// stránky dvěma prsty — měří se ZMĚNA úhlu proti začátku gesta.
+function angleOf(a, b) {
+  return Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI;
+}
+// Nejkratší rozdíl dvou úhlů v rozsahu (-180, 180] — aby přechod přes 180°
+// (nebo 0°) neudělal skok o 350°.
+function angleDelta(now, start) {
+  let d = (now - start) % 360;
+  if (d > 180) d -= 360;
+  if (d <= -180) d += 360;
+  return d;
+}
+function normDeg(v) {
+  return ((v % 360) + 360) % 360;
 }
 
 // Tap: okraje → listování (jen mimo anotaci, tlačítka, lištu a formuláře).
@@ -3171,10 +3255,19 @@ async function deleteBookmark(b) {
    nesmí chytat dotyk — ten musí dojít až na .viewer. */
 .edge-hint {
   position: absolute; top: 0; bottom: 0; left: 0;
-  width: 90px;
+  width: var(--edge-w, 90px);
   max-width: 20%; pointer-events: none; z-index: 18;
+  /* Lehké průhledné vybarvení + čárkovaný vnitřní okraj — uživatel přesně
+     vidí, kde okrajová zóna pro listování začíná. Hrana je na vnitřní straně
+     pruhu, tedy přesně tam, kde přestává platit edgeWidth() v JS. */
+  background: rgba(201, 168, 124, 0.07);
+  border-right: 1px dashed rgba(201, 168, 124, 0.38);
 }
-.edge-hint.right { left: auto; right: 0; }
+.edge-hint.right {
+  left: auto; right: 0;
+  border-right: none;
+  border-left: 1px dashed rgba(201, 168, 124, 0.38);
+}
 .annot-layer .hl { mix-blend-mode: multiply; opacity: 0.9; }
 /* Náhled zvýrazňovače při sytých barvách: ať je vidět, že jde o zvýraznění,
    a ne o přebarvení not — náhled multiplikuje stejně jako hotový tvar. */
@@ -3277,43 +3370,45 @@ async function deleteBookmark(b) {
    position: fixed → kotví proti viewportu (obrazovce), ne proti výšce plátna,
    takže se nemůže dostat pod obraz, ať je canvas jakkoli velký. */
 .bookmark-strip {
-  position: fixed; left: 16px; right: 16px; bottom: calc(12px + var(--sab));
-  display: flex; flex-wrap: nowrap; gap: 8px; align-items: center;
+  position: fixed; left: 16px; right: 16px; bottom: calc(4px + var(--sab));
+  display: flex; flex-wrap: nowrap; gap: 6px; align-items: center;
   justify-content: flex-start; z-index: 22;
   overflow-x: auto; overflow-y: hidden;    /* jediný řádek, při přetečení horizontální scroll */
   scrollbar-width: none;                   /* skrýt scrollbar (Firefox) */
   -ms-overflow-style: none;                /* (IE) */
-  padding: 8px 12px;
+  padding: 3px 6px;
   pointer-events: auto;                     /* lišta musí reagovat, aby šla horizontálně scrollovat */
   /* .viewer má touch-action: none (obrana proti gestu zpět), takže posun
      musíme povolit tady — jinak by lišta přestala scrollovat. */
   touch-action: pan-x;
-  background: rgba(28,25,23,0.85);          /* podbarvení panelu záložek */
-  border: 1px solid var(--border);
-  border-radius: 24px;
-  backdrop-filter: blur(2px);
-  box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+  /* Lišta má být JEN jemný pruh záložek nad notami, ne panel — skoro průhledná,
+     bez výrazného stínu a s minimálním vnitřním okrajem. */
+  background: rgba(28,25,23,0.28);
+  border: 1px solid rgba(58,53,50,0.55);
+  border-radius: 20px;
+  backdrop-filter: blur(3px);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
 }
 .bookmark-strip::-webkit-scrollbar { display: none; }  /* skrýt scrollbar (Chrome/Safari) */
 .bookmark-btn {
-  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px;
-  background: var(--bg-elev); border: 1px solid var(--border);
-  border-radius: 20px; padding: 6px 12px;
-  font-size: 0.92rem; font-weight: 600; color: var(--text);
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(38,34,32,0.55); border: 1px solid rgba(58,53,50,0.7);
+  border-radius: 16px; padding: 3px 9px;
+  font-size: 0.85rem; font-weight: 600; color: var(--text);
   cursor: pointer; touch-action: manipulation; pointer-events: auto;
 }
 .bookmark-btn.circle {
   border-radius: 50%;
-  width: 38px; height: 38px; padding: 0;
+  width: 30px; height: 30px; padding: 0;
   justify-content: center;
 }
-.bookmark-btn.on { border-color: var(--accent); background: var(--bg-elev2); }
-.bookmark-btn:active { background: var(--bg-elev2); }
+.bookmark-btn.on { border-color: var(--accent); background: rgba(51,46,43,0.75); }
+.bookmark-btn:active { background: rgba(51,46,43,0.8); }
 .bk-num {
   display: inline-flex; align-items: center; justify-content: center;
-  min-width: 22px; height: 22px; padding: 0 4px;
+  min-width: 18px; height: 18px; padding: 0 3px;
   background: var(--accent); color: #17130f; border-radius: 50%;
-  font-size: 0.8rem; font-weight: 700;
+  font-size: 0.72rem; font-weight: 700;
 }
 .bk-label { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
