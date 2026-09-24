@@ -37,9 +37,30 @@
         </div>
         <!-- Rezerva: drží místo pro počítadlo, které je na přesném středu lišty -->
         <div class="tb-mid-space" />
+        <!-- Počítadlo stránek — na PŘESNÉM středu lišty (klik otevře zadání stránky).
+             Je UVNITŘ .tb-row (ne jako sourozenec), aby se na úzkém displeji dalo
+             přepnout do toku a nikdy nepřekrylo tlačítka — absolutní pozicování
+             se pořád počítá proti .top-bar, protože .tb-row je statický. -->
+        <button class="tb-page tb-page-center" @click="openPageGo" title="Přejít na stránku">
+          {{ currentPage + 1 }} / {{ totalPages }}
+        </button>
         <!-- Pravá skupina -->
         <div class="tb-side right">
         <button class="tb-btn" @click="toggleAnnot" :class="{ on: annotMode }" title="Anotace / listování">✏️</button>
+        <!-- Uložení stavu a vycentrování — na HLAVNÍ LIŠTĚ, ne v panelu zoomu.
+             Ukládací tlačítka měla dosud stejnou podobu jako ostatní akce panelu
+             a uživatel nerozeznal, které z nich ukládá STRÁNKU a které CELOU
+             SKLADBU (Jan: „když ho teď sdílí dvě různé funkce“). Na liště jsou
+             vidět trvale a jejich stav (uloženo / neuloženo) je po ruce. -->
+        <button class="tb-btn sm" @click="resetView" title="Vycentrovat (uložené výchozí zobrazení)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+        </button>
+        <button class="tb-btn sm" :class="{ on: hasSavedPageView }" @click="savePageViewAsDefault" title="Uložit jako výchozí jen pro tuto stránku (má přednost)">
+          <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedPageView ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4z"/><path d="M15 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+        </button>
+        <button class="tb-btn sm" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit jako výchozí pro celou skladbu">
+          <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
+        </button>
         <!-- Zvětšení a posun — vlastní nabídka (dropdown). Gesto se v ní věnuje
              JEN zoomu a posunu, nikdy rotaci. -->
         <button class="tb-btn zoom-btn" @click="toggleZoomPanel" :class="{ on: zoomPanelOpen }" title="Zvětšení a posun">
@@ -56,10 +77,7 @@
         </button>
         </div>
       </div>
-      <!-- Počítadlo stránek — na přesném středu lišty (klik otevře zadání stránky) -->
-      <button class="tb-page tb-page-center" @click="openPageGo" title="Přejít na stránku">
-        {{ currentPage + 1 }} / {{ totalPages }}
-      </button>
+      <!-- Počítadlo stránek se přesunulo DOVNITŘ .tb-row (viz výše) — tady už není. -->
     </div>
 
     <!-- Panel ZVĚTŠENÍ A POSUNU — otevírá se z tlačítka s procenty v liště.
@@ -67,22 +85,18 @@
          (rotace je vypnutá) — Jan: „Při otevření nabídky zoomu se bude dělat
          zoom a změna pozice.“ -->
     <div v-if="zoomPanelOpen" class="zoom-panel">
+      <!-- Vycentrovat a ukládání stavu jsou na HLAVNÍ LIŠTĚ (jsou to akce
+           k celému zobrazení, ne k zoomu) — a `clearPageView` je tam taky,
+           aby se tři ukládací akce nepletly dohromady v jednom panelu.
+           Panel zoomu teď obsahuje jen dvě tlačítka (− a +) — ať nezabírá
+           na obrazovce místo, které patří notám. -->
       <button class="zp-btn" @click="zoomOut" title="Oddálit">−</button>
       <span class="zp-val">{{ Math.round(zoom * 100) }} %</span>
       <button class="zp-btn" @click="zoomIn" title="Přiblížit">+</button>
       <span class="zp-sep" />
-      <!-- Vycentrovat = uložené výchozí zobrazení (stránka má přednost před skladbou) -->
-      <button class="zp-btn" @click="resetView" title="Vycentrovat (uložené výchozí zobrazení)">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
-      </button>
-      <!-- Uložit jako výchozí pro CELOU skladbu -->
-      <button class="zp-btn" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit jako výchozí pro celou skladbu">
-        <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
-      </button>
-      <!-- Uložit jako výchozí jen pro TUTO stránku (při vycentrování má přednost) -->
-      <button class="zp-btn" :class="{ on: hasSavedPageView }" @click="savePageViewAsDefault" title="Uložit jako výchozí jen pro tuto stránku (má přednost)">
-        <svg width="20" height="20" viewBox="0 0 24 24" :fill="hasSavedPageView ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4z"/><path d="M15 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
-      </button>
+      <!-- Vycentrovat a ukládání stavu jsou na HLAVNÍ LIŠTĚ (jsou to akce
+           k celému zobrazení, ne k zoomu) — a `clearPageView` je tam taky,
+           aby se tři ukládací akce nepletly dohromady v jednom panelu. -->
       <button v-if="hasSavedPageView || hasSavedZoom" class="zp-btn" @click="clearPageView" title="Zrušit nastavení této stránky">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
@@ -3307,9 +3321,7 @@ async function deleteBookmark(b) {
            flex: 0 1 auto; min-width: 0; }
 .tb-side.left { justify-content: flex-start; }
 .tb-side.right { justify-content: flex-end; }
-/* Rezerva na středu: roste a drží odstup tlačítek od počítadla.
-   min-width musí být VŽDY větší než šířka počítadla, aby se nikdy nepřekryla. */
-.tb-mid-space { flex: 1 1 auto; min-width: clamp(60px, 16vw, 90px); }
+.tb-mid-space { flex: 1 1 auto; min-width: clamp(16px, 4vw, 40px); }
 .tb-btn {
   width: var(--tb, 38px); height: var(--tb, 38px); flex: 0 0 auto; padding: 0;
   border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
@@ -3339,11 +3351,40 @@ async function deleteBookmark(b) {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Počítadlo stránek — na PŘESNÉM středu lišty (nezávisle na šířce skupin).
-   Klik otevře ruční zadání stránky. */
+   Klik otevře ruční zadání stránky. Je to absolutní prvek UVNITŘ .tb-row
+   (statický), takže se pozicuje proti .top-bar — stejně jako dřív. */
 .tb-page-center {
   position: absolute; left: 50%; top: 50%;
   transform: translate(-50%, -50%);
   z-index: 1;
+}
+/* ÚZKÝ DISPLEJ: absolutní střed přestane být bezpečný — lišta má po vytažení
+   ukládacích tlačítek 10 tlačítek a pravá skupina se dostane POD počítadlo.
+   Naměřeno (probe-breakpoint.py): volné místo mezi počítadlem a skupinami
+   108,9 px na 1100, 16,2 px na 900, ale UŽ −0,9 px na 860 a −26,6 px na 800.
+   Proto se od 960 px dolů počítadlo přesune do TOKU (mezi obě skupiny): pak
+   tlačítka nemají kam zajet a nic se nepřekryje. Nad 960 zůstává na přesném
+   středu — to je vzhled, který Jan odsouhlasil.
+   ⚠️ Breakpoint NEstanovuj odhadem: hranice je daná skutečnou šířkou 10 tlačítek,
+   mezer a počítadla, a posouvá se s každým dalším tlačítkem v liště.
+   S počítadlem v toku musí ubrat i tlačítka — proto se tu zmenší `--tb` a mezery. */
+@media (max-width: 960px) {
+  .tb-page-center {
+    position: static; transform: none;
+    margin-left: auto; margin-right: auto;
+  }
+  .tb-mid-space { min-width: 0; }
+}
+@media (max-width: 620px) {
+  .top-bar { --tb: clamp(30px, 7.8vw, 44px); }
+  .tb-side { gap: 2px; }
+  .tb-btn.zoom-btn { padding: 0 4px; min-width: calc(var(--tb, 38px) + 2px); }
+  .tb-page { padding: 3px 5px; font-size: 0.78rem; }
+}
+/* Ještě užší telefon: úhel u rotace se schová (je vidět v nabídce rotace) —
+   jinak by tlačítko bylo širší než ostatní a lišta by přetekla. */
+@media (max-width: 430px) {
+  .tb-rot-deg { display: none; }
 }
 /* Počítadlo stránek — klik otevře ruční zadání stránky */
 .tb-page {
@@ -3358,29 +3399,21 @@ async function deleteBookmark(b) {
   flex: 0 0 auto; min-width: 34px; text-align: center;
   font-size: clamp(0.74rem, 1.5vw, 0.9rem); color: var(--text-dim); font-weight: 600;
 }
+/* Úzký displej (telefon na výšku): lišta má 10 tlačítek (po vytažení ukládacích
+   na lištu) a s absolutním počítadlem se pravá skupina dostala POD něj
+   (naměřeno na 390 px: Anotace 216,6 vs počítadlo do 217,7 — klepnutí na
+   počítadlo by trefilo Anotaci). Zúžení je proto součástí breakpointu 620 px
+   výše (počítadlo do toku + menší --tb); tady se už jen schová úhel u rotace,
+   aby tlačítko nebylo širší než ostatní. Ověřuje probe-topbar-rotation.py
+   a probe-counter-overlap.py. */
 .tb-sep { display: none; }
 .tb-nav { display: flex; align-items: center; gap: 3px; }
 .tb-grp {
   font-size: 0.8rem; font-weight: 600; color: var(--text);
   min-width: 32px; text-align: center;
 }
-/* Úzký displej (telefon na výšku): lišta má 7 tlačítek a přidáním rotace se
-   pravá skupina roztáhla až POD počítadlo stránek (naměřeno na 390 px: Anotace
-   186,5–225,5 vs počítadlo 169,3–220,7 = překryv 34 px, klepnutí na počítadlo
-   by trefilo Anotaci). Proto se na úzkém displeji všechno o pár px zúží:
-   úhel u rotace zůstává v nabídce (tlačítko je ikonové) a tlačítka i mezery
-   se zmenší. Ověřuje probe-topbar-rotation.py a probe-counter-overlap.py. */
-@media (max-width: 430px) {
-  /* --tb 33,5 px na 390 px: pravá skupina (4 tlačítka) se tím zúží na ~143 px,
-     takže začíná na ~239 px a počítadlo končící na ~218 px je volné (předtím
-     začínala na 216,6 px = překryv). Menší tlačítko než 32 px už je na dotyk
-     nepříjemné, proto se zbytek ubere z mezer a paddingu. */
-  .top-bar { --tb: clamp(32px, 8.6vw, 40px); }
-  .tb-side { gap: 2px; }
-  .tb-btn.zoom-btn { padding: 0 4px; min-width: calc(var(--tb, 38px) + 2px); }
-  .tb-rot-deg { display: none; }
-  .tb-page { padding: 3px 5px; font-size: 0.78rem; }
-}
+/* (Duplikát breakpointu 430 px byl odstraněn — zúžení lišty drží JEDEN
+   breakpoint 620 px výše, tady zůstává jen skrytí úhlu u rotace.) */
 
 /* Panel zvětšení — otevírá se z tlačítka s procenty, kotví se POD lištu */
 .zoom-panel {
