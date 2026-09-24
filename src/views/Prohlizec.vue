@@ -1061,12 +1061,45 @@ const songName = computed(() => song.name || song.fileName || '');
 // kam je uživatel naklepal. Kdyby se otáčel jen canvas, kreslilo by se vedle.
 // .stage jen nese zoom a posun a má rozměry podle toho, jak stránka po otočení
 // zabírá (při 90°/270° prohozené) — tím se otočená stránka správně vejde.
+//
+// ŽIVÁ rotace (prsty / držení tlačítka) NESMÍ překreslovat PDF (Jan: „obrázek se
+// neustále přegenerovává, hrozně se to seká“). Papír se proto během gesta jen
+// OTOČÍ a přeškáluje v CSS (`liveFit`), a až po puštění se JEDNOU překreslí
+// v přesném měřítku. `liveFit` = poměr měřítka, které má stránka po otočení mít,
+// k měřítku, ve kterém je ZROVNA nakreslená bitmapa.
+const renderedRot = ref(0);        // rotace, se kterou je bitmapa vykreslená
 const stageStyle = computed(() => ({
   width: visW.value + 'px',
   height: visH.value + 'px',
-  transform: 'translate(' + panX.value + 'px,' + panY.value + 'px) scale(' + zoom.value + ')',
+  transform: 'translate(' + panX.value + 'px,' + panY.value + 'px) scale(' + (zoom.value * liveFit.value) + ')',
   transformOrigin: 'center center',
 }));
+// Přeškálování už vykreslené bitmapy při živé rotaci — bez zásahu do pdf.js.
+//  1) Cíl = poměr měřítka, které má stránka po otočení mít (`fitScale`, otočená
+//     se vejde CELÁ), k měřítku nakreslené bitmapy. Může být i > 1: při otáčení
+//     ZPĚT k nule se papír zvětšuje a překreslovat se během gesta nesmí — raději
+//     ho chvíli zobrazíme mírně měkce a po puštění se vykreslí ostře. Strop 2,5
+//     je jen pojistka proti absurdnímu roztažení.
+//  2) Náběh: `fitScale` má v nule jiné pravidlo (fit-na-šířku) než při otočení,
+//     takže první stupně rotace by skočily tvrdým zmenšením. Změřeno: samotný
+//     ZLOM PRAVIDLA v nule dělá ~8–9 % měřítka naráz, a gesto se navíc rozhodne
+//     pro rotaci až při 8° (ROT_GESTURE_COMMIT_DEG) — v ten okamžik úhel přeskočí
+//     z 0 na ~9°, takže cuknutí by bylo přesně tam, kde si ho uživatel všimne.
+//     Proto se cíl zapíná plynule přes prvních ROT_LIVE_FIT_RAMP_DEG stupňů.
+//     30° je změřené minimum, které udrží skok pod 6 % i při hrubém kroku testu;
+//     reálný prst posílá ~1,5° na snímek, takže na zařízení je to jemnější.
+// Po dokončení gesta se stránka překreslí v cílovém měřítku → liveFit = 1.
+const ROT_LIVE_FIT_RAMP_DEG = 30;
+const liveFit = computed(() => {
+  const bd = baseDims.value;
+  if (!bd.w || !bd.h) return 1;
+  const drawn = cssW.value / bd.w;          // měřítko nakreslené bitmapy
+  if (!(drawn > 0)) return 1;
+  const target = Math.min(2.5, fitScale(bd.w, bd.h, rot.value) / drawn);
+  const turned = Math.abs(angleDelta(rot.value, renderedRot.value));
+  const ramp = Math.min(1, turned / ROT_LIVE_FIT_RAMP_DEG);
+  return 1 + (target - 1) * ramp;
+});
 const rotorStyle = computed(() => ({
   width: cssW.value + 'px',
   height: cssH.value + 'px',
@@ -1140,6 +1173,7 @@ onMounted(async () => {
 
   // Velikost stránky aby se vešla na výšku
   computeFit();
+  syncViewerW();   // šířka okna pro --edge-w (okrajové pruhy nesmí lhát o hraně)
   // Aplikovat uložené výchozí zobrazení (stránka → skladba → fit), jinak fit 1.0
   await applySongView();
   await renderCurrent();
@@ -1312,11 +1346,17 @@ async function rotateBy(delta) {
 // vynulovat dřív, než se funkce dostane k rozhodnutí (přesně to se stalo:
 // po gestu zoom spadl na 100 %, i když měl zůstat).
 async function refreshAfterRotation(keepUserView = false) {
-  const d = await getPageWidthHeight(song, currentPage.value + 1);
-  baseDims = { w: d.width, h: d.height };
   if (!keepUserView) {
     zoom.value = 1.0;        // `zoom` je násobitel nad fitScale (který rotaci zná)
     panX.value = 0; panY.value = 0;
+  }
+  // Rozměry stránky známe už z posledního renderu (rotace je nemění). Čekat na
+  // `getPageWidthHeight` je proto zbytečné — a u tlačítek otáčení i škodlivé,
+  // protože by se reset zoomu/posunu provedl až po čekání a uživatel by na
+  // okamžik viděl staré měřítko. Měříme jen tehdy, když rozměry ještě nemáme.
+  if (!baseDims.value.w || !baseDims.value.h) {
+    const d = await getPageWidthHeight(song, currentPage.value + 1);
+    baseDims.value = { w: d.width, h: d.height };
   }
   // Cache je klíčovaná rotací, takže staré canvasy už neplatí — uvolníme je,
   // ať zbytečně nedrží paměť (jinak by se při každém otočení hromadily).
@@ -1329,12 +1369,10 @@ async function refreshAfterRotation(keepUserView = false) {
 // Překresluje se jen ~6× za sekundu, jinak by malé kroky škubaly.
 let _rotHoldTimer = null;
 let _rotDelayTimer = null;
-let _rotRenderTimer = null;
 let _rotHoldValue = 0;
 let _rotHoldRepeats = 0;
 const ROT_HOLD_DELAY_MS = 400;   // jak dlouho držet, než se rozjede opakování
 const ROT_HOLD_STEP_MS = 60;
-const ROT_RENDER_MS = 160;
 function rotHoldStart(delta) {
   rotHoldCancel();
   _rotHoldValue = rot.value;
@@ -1345,21 +1383,14 @@ function rotHoldStart(delta) {
       _rotHoldValue = ((_rotHoldValue + delta) % 360 + 360) % 360;
       rot.value = _rotHoldValue;
       _rotHoldRepeats++;
-      scheduleRotRender();
+      // Žádné překreslování během držení — papír se jen otočí a přeškáluje
+      // v CSS (`liveFit`); ostrou podobu dostane jednou po puštění tlačítka.
     }, ROT_HOLD_STEP_MS);
   }, ROT_HOLD_DELAY_MS);
-}
-function scheduleRotRender(keepUserView = false) {
-  if (_rotRenderTimer) return;
-  _rotRenderTimer = window.setTimeout(() => {
-    _rotRenderTimer = null;
-    refreshAfterRotation(keepUserView);
-  }, ROT_RENDER_MS);
 }
 function rotHoldCancel() {
   if (_rotDelayTimer) { window.clearTimeout(_rotDelayTimer); _rotDelayTimer = null; }
   if (_rotHoldTimer) { window.clearInterval(_rotHoldTimer); _rotHoldTimer = null; }
-  if (_rotRenderTimer) { window.clearTimeout(_rotRenderTimer); _rotRenderTimer = null; }
 }
 // Dokončení držení: doladit přesně. Když se opravdu opakovalo, klik, který po
 // pointerup následuje, se zahodí (jinak by přidal ještě jeden krok navíc).
@@ -1405,7 +1436,12 @@ function computeFit() {
 
 // Základní (neotočené) rozměry aktuální stránky v PDF bodech — z nich se počítá
 // fit pro otočenou stránku i inverzní rotace souřadnic pero → canvas.
-let baseDims = { w: 0, h: 0 };
+// MUSÍ být reaktivní: `liveFit` je computed, který se poprvé vyhodnotí dřív, než
+// jsou rozměry známé, a vrátí 1 — s nereaktivní proměnnou by si pak NIKDY
+// nezaregistroval závislost na `rot` a zůstal by navždy v cache (měřeno: během
+// celého gesta se měřítko nezměnilo). S refem se po naplnění rozměrů přepočítá
+// a závislost na rotaci si zaregistruje.
+const baseDims = ref({ w: 0, h: 0 });
 
 async function renderCurrent() {
   const doc = song.data;
@@ -1416,7 +1452,7 @@ async function renderCurrent() {
   const myRot = rot.value;
   const dim = await getPageWidthHeight(song, page + 1);
   if (myToken !== renderToken) return; // mezitím se listovalo dál
-  baseDims = { w: dim.width, h: dim.height };
+  baseDims.value = { w: dim.width, h: dim.height };
   // Měřítko stránky (otočená stránka se musí vejít celá, neotočená drží fit na šířku).
   // Rotace se aplikuje až na .stage (canvas i anotační vrstva společně), takže
   // tady zůstávají rozměry NEOTOČENÉ stránky — anotace tak žijí v soustavě
@@ -1457,6 +1493,9 @@ async function renderCurrent() {
   canvasEl.value.style.height = h + 'px';
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(off, 0, 0, canvasEl.value.width, canvasEl.value.height);
+  // Bitmapa je teď nakreslená v této rotaci → živé přeškálování (`liveFit`)
+  // se od ní počítá; shodná rotace = žádné přeškálování.
+  renderedRot.value = myRot;
   evictCache(page);          // držet jen okno kolem aktuální stránky
   prefetchSiblings(page);
 }
@@ -1521,7 +1560,13 @@ function evictCache(center) {
   }
 }
 
-function onResize() { computeFit(); renderCurrent(); }
+function onResize() { syncViewerW(); computeFit(); renderCurrent(); }
+// Šířka okna pro výpočet okrajové zóny (--edge-w). Musí se aktualizovat při
+// každé změně rozměru, jinak by vizuál zůstal na staré hodnotě.
+function syncViewerW() {
+  const el = viewerEl.value;
+  if (el) viewerW.value = el.clientWidth;
+}
 
 // Vyčistí viditelný canvas — při přechodu na novou stránku se nezobrazuje stará
 function clearCanvas() {
@@ -1831,8 +1876,10 @@ function onTouchMove(e) {
     if (g.mode === 'rotate') {
       // Úhel se bere od ZAČÁTKU gesta (ne po krocích) — jinak by se chyba
       // s každým pohybem nasčítala a stránka by ujížděla.
+      // Během tahu se PDF NEPŘEKRESLUJE (to bylo to „neustálé přegenerovávání“,
+      // které gesto sekalo) — papír se jen otočí a přeškáluje v CSS (`liveFit`
+      // v stageStyle). Přesné překreslení proběhne jednou po puštění prstů.
       rot.value = normDeg(g.rot0 + dA);
-      scheduleRotRender(true);     // fit + překreslení, throttlovaně (ne na každý krok)
     } else {
       // zoom s minimem na výchozí (1) — jen skutečná změna vzdálenosti
       if (d !== g.lastD) {
@@ -1867,18 +1914,33 @@ function isControlTarget(el) {
 // Jan: „stránky se přepínají jen prstem, a to jen na krajích displeje.“
 // Dřívějších 20 % šířky je na tabletu zbytečně široké pruh (u 800 px = 160 px)
 // a krade místo pro anotace → strop 90 px (na mobilu zůstává 20 %).
+// (Jan, Sep 2026: „trochu bych ji zmenšil, třeba o 10 px. Teď je zbytečně
+// široká.“ → strop 90 → 80 px (na tabletu přesně −10 px) a podíl šířky okna
+// 20 % → 15 %. Samotný strop na mobil nestačil: 20 % z 390 px = 78 px, tedy
+// beze změny — proto i to procento. Naměřeno: tablet 800 px → 80 px (bylo 90),
+// mobil 390 px → 58 px (bylo 78). Vnitřní hranice zůstává 48 px, aby pruh na
+// malém displeji nezmizel.)
+const EDGE_MAX_PX = 80;   // strop na tabletu
+const EDGE_SHARE = 0.15;  // podíl šířky okna
+const EDGE_MIN_PX = 48;   // podlaha na malém displeji
 function edgeWidth() {
   const el = viewerEl.value;
-  if (!el) return 90;
-  return Math.max(48, Math.min(el.clientWidth * 0.2, 90));
+  if (!el) return EDGE_MAX_PX;
+  return Math.max(EDGE_MIN_PX, Math.min(el.clientWidth * EDGE_SHARE, EDGE_MAX_PX));
 }
 // Šířka okrajové zóny jako reaktivní hodnota pro vizuál (--edge-w). Musí být
 // přesně stejná, jako počítá edgeWidth() — jinak by pruh ukazoval jinou hranu,
 // než kde listování opravdu funguje. Zvlášť důležité teď, když je pruh vidět.
+// POZOR: čtení `el.clientWidth` NENÍ reaktivní — computed by se vyhodnotil
+// jednou a svoje číslo by si držel i po změně velikosti okna (naměřeno: při
+// zúžení okna na 390 px zůstal --edge-w na 80 px, zatímco edgeWidth() už
+// počítala 58,5 px → vizuál LHAL o 20 px a klepnutí uvnitř pruhu nelistovalo).
+// Šířku proto držíme v `viewerW` a aktualizujeme ji při každé změně rozměru.
+const viewerW = ref(0);
 const edgeW = computed(() => {
-  const el = viewerEl.value;
-  if (!el) return 90;
-  return Math.max(48, Math.min(el.clientWidth * 0.2, 90));
+  const w = viewerW.value;
+  if (!w) return EDGE_MAX_PX;
+  return Math.max(EDGE_MIN_PX, Math.min(w * EDGE_SHARE, EDGE_MAX_PX));
 });
 function inEdgeZone(clientX) {
   const el = viewerEl.value;
@@ -3294,8 +3356,12 @@ async function deleteBookmark(b) {
    nesmí chytat dotyk — ten musí dojít až na .viewer. */
 .edge-hint {
   position: absolute; top: 0; bottom: 0; left: 0;
-  width: var(--edge-w, 90px);
-  max-width: 20%; pointer-events: none; z-index: 18;
+  width: var(--edge-w, 80px);
+  /* ŽÁDNÉ max-width v procentech! Dřívější `max-width: 20%` přebíjel vypočtenou
+     šířku: na okně 390 px držel pruh na 78 px, zatímco edgeWidth() už listoval
+     jen v 58,5 px — vizuál pak lhal o 20 px a klepnutí uvnitř pruhu nelistovalo.
+     Šířku drží VÝHRADNĚ `--edge-w` (jediný zdroj pravdy s JS). */
+  pointer-events: none; z-index: 18;
   /* Lehké průhledné vybarvení + čárkovaný vnitřní okraj — uživatel přesně
      vidí, kde okrajová zóna pro listování začíná. Hrana je na vnitřní straně
      pruhu, tedy přesně tam, kde přestává platit edgeWidth() v JS. */
