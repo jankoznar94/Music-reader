@@ -359,6 +359,12 @@
       <div class="loading-text">Načítám noty…</div>
     </div>
 
+    <!-- Hláška o uložení výchozího zobrazení. Tlačítko se sice vybarví, ale to
+         znamená jen „pro tuhle stránku/skladbu je něco uložené" — po dalším
+         stisknutí z vybarvení nepoznáš, že se uložil NOVÝ stav. Proto se po
+         každém skutečném zápisu do DB ukáže tahle krátká zpráva. -->
+    <div v-if="toast" class="viewer-toast">{{ toast }}</div>
+
     <!-- Referenční mřížka při ladění rotace — ukazuje, co je vodorovně a co svisle.
          Je vázaná na panel zoomu, takže zmizí, jakmile uživatel panel zavře. -->
     <div v-if="zoomPanelOpen" class="rot-grid" aria-hidden="true" />
@@ -701,6 +707,19 @@ const pageViews = reactive(new Map());
 const hasSavedPageView = ref(false);
 const panX = ref(0);        // posun stránky (dvouprstý pan)
 const panY = ref(0);
+
+// --- Hláška o uložení (toast) ---
+// Uložení výchozího zobrazení se musí uživateli POTVRDIT: tlačítko se sice
+// vybarví, ale to říká jen „něco je uložené" — při dalším stisku z něj
+// nepoznáš, že se uložil nový stav. Hláška se ukazuje až PO skutečném zápisu
+// do IndexedDB (await výše), takže nemůže lhát o neuloženém stavu.
+const toast = ref('');
+let toastTimer = null;
+function showToast(msg) {
+  toast.value = msg;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => { toast.value = ''; }, 2200);
+}
 
 const annotMode = ref(false);
 const tool = ref('pencil');
@@ -1148,6 +1167,7 @@ onUnmounted(() => {
   disconnectThumbObserver();
   releaseWakeLock();
   clearTimeout(_bmSaveTimer);
+  if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
   _bmDrag = null;
 });
 
@@ -1251,6 +1271,7 @@ async function saveZoomAsDefault() {
   await dbSaveSongView({
     songId: song.id, zoom: zoom.value, panX: panX.value, panY: panY.value, rot: rot.value,
   });
+  showToast('Výchozí zobrazení skladby uloženo');
 }
 // Uloží aktuální zoom + posun + rotaci jako výchozí pro TUTO stránku.
 // Při vycentrování má přednost před globálním nastavením skladby.
@@ -1263,6 +1284,7 @@ async function savePageViewAsDefault() {
   pageViews.set(page, view);
   hasSavedPageView.value = true;
   await dbSavePageView(view);
+  showToast('Výchozí zobrazení stránky ' + (page + 1) + ' uloženo');
 }
 // Zruší zvláštní nastavení této stránky → zpět na globální / fit
 async function clearPageView() {
@@ -1271,6 +1293,7 @@ async function clearPageView() {
   await applyPageView();
   updatePageViewFlag();
   await renderCurrent();
+  showToast('Nastavení stránky zrušeno');
 }
 // Otočení stránky o delta stupňů (kladné = vpravo). Měřítko se přepočítá, aby
 // se otočená stránka vešla CELÁ — jinak by její okraje zašly pod horní lištu.
@@ -3147,6 +3170,22 @@ async function deleteBookmark(b) {
   cursor: pointer; touch-action: manipulation;
 }
 .zp-rot:active { background: var(--bg-elev2); }
+
+/* Hláška o uložení — plochá, teplá, bez glow (Jan: mobilní PWA, žádné efekty).
+   Sedí dole nad lištou záložek, aby nepřekážela v čtení not. */
+.viewer-toast {
+  position: fixed; left: 50%; bottom: calc(48px + var(--sab));
+  transform: translateX(-50%);
+  z-index: 34;
+  background: var(--bg-elev2);
+  border: 1px solid var(--accent-dim);
+  color: var(--text);
+  border-radius: 20px;
+  padding: 8px 16px;
+  font-size: 0.88rem; font-weight: 600;
+  white-space: nowrap; pointer-events: none;
+  box-shadow: 0 3px 14px rgba(0,0,0,0.5);
+}
 
 /* Referenční mřížka při ladění rotace. Kreslí se PŘES CELÝ DISPLEJ (fixed), ne
    přes papír — je to pomůcka pro oko, aby uživatel viděl, co je na obrazovce
