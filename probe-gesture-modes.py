@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Ověření, že gesto respektuje otevřenou nabídku (zoom vs. rotace).
+"""Ověření, že gesta dělají to, co mají (počet prstů rozhoduje).
 
-Jan: „Při otevření nabídky rotace se budem gestem pouze rotovat. Při otevření
-nabídky zoomu se bude dělat zoom a změna pozice." + „Mřížka pro porovnání
-horizontální rovnosti se zobrazí jen u rotace. U zoomu ne."
+Jan (Sep 2026): „Zoom a přesun pozice bude pomocí gesta dvěma prsty, rotace
+bude pomocí gesta třema prsty." — tohle NAHRAZUJE starý model, kdy jedno
+dvouprsté gesto dělalo obojí a režim se hádal z poměru pohybu.
 
 Co se ověřuje (stav, ne kód):
   1. tlačítko rotace v liště existuje a nese aktuální úhel
   2. mřížka (.rot-grid) je vidět JEN s otevřenou nabídkou rotace
-  3. nabídka rotace: gesto otočí a NEZMĚNÍ zoom ani posun
-  4. nabídka zoomu: gesto zoomuje/posouvá a NEOTOČÍ
-  5. bez nabídky: staré chování (poměrové rozhodnutí) zůstává — rotace jde
-  6. zoom a rotace se navzájem vylučují (otevření jednoho zavře druhé)
+  3. DVĚMA prsty: zoom se změní, posun se změní, rotace se NEZMĚNÍ
+  4. TŘEMI prsty: rotace se změní, zoom a posun se NEZMĚNÍ (rigidní rotace)
+  5. zoom a rotace se navzájem vylučují (otevření jednoho zavře druhé)
+  6. tři prsty fungují i BEZ otevřené nabídky (režim neurčuje nabídka, ale počet prstů)
 """
 import asyncio
 import importlib.util
@@ -63,26 +63,29 @@ async def panel_close_all(h):
 
 
 async def rot_gesture(h, deg=40, radius=150):
-    """Dva prsty po KRUŽNICI (vzdálenost konstantní) → čistá rotace.
-    Po tětivě by se vzdálenost prstů měnila a idle fáze by legitimně zoomla
-    (falešný FAIL „rotace shodila zoom")."""
+    """TŘI prsty po KRUŽNICI (rozptyly konstantní) → čistá rotace, žádný zoom.
+    Dvěma prsty by to zoomovalo — režim určuje počet prstů, ne pohyb.
+    Tři prsty rozložené po 120°: rotace celé trojice o `deg`."""
     g = await h.geo()
     cx = g["left"] + g["w"] / 2
     cy = g["barBottom"] + (g["h"] - g["barBottom"]) / 2
-    await h.touch("touchStart", [(cx - radius, cy, 12), (cx + radius, cy, 12)])
+
+    def pts(a0):
+        return [(cx + radius * math.cos(a0 + k * 2 * math.pi / 3),
+                 cy + radius * math.sin(a0 + k * 2 * math.pi / 3), 12) for k in range(3)]
+
+    await h.touch("touchStart", pts(0.0))
     steps = 40
     for i in range(1, steps + 1):
-        a = math.radians(deg * i / steps)
-        await h.touch("touchMove", [
-            (cx - radius * math.cos(a), cy - radius * math.sin(a), 12),
-            (cx + radius * math.cos(a), cy + radius * math.sin(a), 12)])
+        await h.touch("touchMove", pts(math.radians(deg * i / steps)))
         await asyncio.sleep(0.015)
     await h.touch("touchEnd", [])
     await asyncio.sleep(1.6)
 
 
 async def pinch_gesture(h, factor=1.35, move=60):
-    """Dva prsty od sebe (zoom) + posun středu → zoom a změna pozice."""
+    """DVA prsty od sebe (zoom) + posun středu → zoom a změna pozice.
+    Rotace se u dvou prstů dělat NESMÍ (ta patří třem prstům)."""
     g = await h.geo()
     cx = g["left"] + g["w"] / 2
     cy = g["barBottom"] + (g["h"] - g["barBottom"]) / 2
@@ -130,44 +133,41 @@ async def main():
            not (await h.ev("!!document.querySelector('.zoom-panel:not(.rot-panel)')")),
            "zoom panel")
 
-        # ---------- 2) nabídka ROTACE: gesto jen rotuje ----------
-        before = await h.ev(READ_STATE)
-        await rot_gesture(h, deg=40)
-        after = await h.ev(READ_STATE)
-        print(f"  ROTACE gestem: {json.dumps(before)} -> {json.dumps(after)}")
-        turned = norm180(after["deg"] - before["deg"])
-        ok("ROTACE: gesto otočilo stránku (~40°)", abs(turned - 40) < 8, f"Δ {turned:.1f}°")
-        ok("ROTACE: zoom se NEPOHNL", abs(after["zoomFit"] - before["zoomFit"]) < 0.01,
-           f"{before['zoomFit']} -> {after['zoomFit']}")
-        ok("ROTACE: posun se NEPOHNL",
-           abs(after["panX"] - before["panX"]) < 1 and abs(after["panY"] - before["panY"]) < 1,
-           f"pan {before['panX']},{before['panY']} -> {after['panX']},{after['panY']}")
-        ok("ROTACE: tlačítko v liště hlásí nový úhel",
-           (await h.ev(READ_STATE))["rotBtnText"] not in ("0°", None),
-           str((await h.ev(READ_STATE))["rotBtnText"]))
-
-        # ---------- 3) nabídka ZOOMU: gesto jen zoomuje a posouvá ----------
-        await panel_open(h, "Rotace stránky")     # zavřít rotaci
-        ok("nabídka ZOOMU se otevřela", await panel_open(h, "Zvětšení a posun"))
-        s = await h.ev(READ_STATE)
-        ok("u ZOOMU mřížka zmizela", not s["grid"], f"grid={s['grid']}")
+        # ---------- 2) DVĚMA prsty = zoom + posun (rotace se nesmí hnout) ----------
+        await panel_close_all(h)
+        await asyncio.sleep(0.4)
         before = await h.ev(READ_STATE)
         await pinch_gesture(h, factor=1.35, move=70)
         after = await h.ev(READ_STATE)
-        print(f"  ZOOM gestem: {json.dumps(before)} -> {json.dumps(after)}")
-        ok("ZOOM: měřítko se ZVĚTŠILO", after["zoomFit"] > before["zoomFit"] + 0.05,
+        print(f"  2 PRSTY: {json.dumps(before)} -> {json.dumps(after)}")
+        ok("2 prsty: měřítko se ZVĚTŠILO", after["zoomFit"] > before["zoomFit"] + 0.05,
            f"{before['zoomFit']} -> {after['zoomFit']}")
-        ok("ZOOM: posun se pohnul",
+        ok("2 prsty: posun se pohnul",
            abs(after["panX"] - before["panX"]) > 5 or abs(after["panY"] - before["panY"]) > 5,
            f"pan {before['panX']},{before['panY']} -> {after['panX']},{after['panY']}")
-        ok("ZOOM: úhel se NEPOHNL (40° zůstává)",
+        ok("2 prsty: úhel se NEPOHNL",
            abs(norm180(after["deg"] - before["deg"])) < 1.5,
            f"{before['deg']}° -> {after['deg']}°")
 
-        # ---------- 4) bez nabídky: rozhodnutí podle pohybu (rotace) ----------
+        # ---------- 3) TŘEMI prsty = rotace (zoom/posun se nesmí hnout) ----------
+        before = await h.ev(READ_STATE)
+        await rot_gesture(h, deg=40)
+        after = await h.ev(READ_STATE)
+        print(f"  3 PRSTY: {json.dumps(before)} -> {json.dumps(after)}")
+        turned = norm180(after["deg"] - before["deg"])
+        ok("3 prsty: gesto otočilo stránku (~40°)", abs(turned - 40) < 8, f"Δ {turned:.1f}°")
+        ok("3 prsty: měřítko se NEPOHNL O (rigidní rotace)",
+           abs(after["zoomFit"] - before["zoomFit"]) < 0.01,
+           f"{before['zoomFit']} -> {after['zoomFit']}")
+        ok("3 prsty: posun se NEPOHNL",
+           abs(after["panX"] - before["panX"]) < 1 and abs(after["panY"] - before["panY"]) < 1,
+           f"pan {before['panX']},{before['panY']} -> {after['panX']},{after['panY']}")
+        ok("3 prsty: tlačítko v liště hlásí nový úhel",
+           (await h.ev(READ_STATE))["rotBtnText"] not in ("0°", None),
+           str((await h.ev(READ_STATE))["rotBtnText"]))
+
+        # ---------- 4) tři prsty fungují i BEZ otevřené nabídky ----------
         await panel_close_all(h)
-        await panel_open(h, "Zvětšení a posun")
-        await panel_open(h, "Zvětšení a posun")   # zavřít
         await asyncio.sleep(0.4)
         s = await h.ev(READ_STATE)
         ok("se zavřenými nabídkami mřížka zmizela", not s["grid"], f"grid={s['grid']}")
@@ -177,8 +177,17 @@ async def main():
         await rot_gesture(h, deg=35)
         after = await h.ev(READ_STATE)
         turned = norm180(after["deg"] - before["deg"])
-        ok("BEZ nabídky: gesto po kružnici rotuje i nadále", abs(turned - 35) < 8,
-           f"Δ {turned:.1f}°")
+        ok("BEZ nabídky: tři prsty rotují i nadále (režim = počet prstů, ne nabídka)",
+           abs(turned - 35) < 8, f"Δ {turned:.1f}°")
+
+        # ---------- 5) vylučování nabídek zoom/rotace ----------
+        ok("nabídka ZOOMU se otevřela", await panel_open(h, "Zvětšení a posun"))
+        ok("nabídka ROTACE se otevřela", await panel_open(h, "Rotace stránky"))
+        s = await h.ev(READ_STATE)
+        ok("u ROTACE se mřížka zobrazuje", s["grid"], f"grid={s['grid']}")
+        ok("otevřením ROTACE se ZOOM zavřel (vylučují se)",
+           not (await h.ev("!!document.querySelector('.zoom-panel:not(.rot-panel)')")),
+           "zoom panel")
 
     return ok.report()
 

@@ -42,7 +42,7 @@
              přepnout do toku a nikdy nepřekrylo tlačítka — absolutní pozicování
              se pořád počítá proti .top-bar, protože .tb-row je statický. -->
         <button class="tb-page tb-page-center" @click="openPageGo" title="Přejít na stránku">
-          {{ currentPage + 1 }} / {{ totalPages }}
+          {{ visibleIndex + 1 }} / {{ totalPages }}<span v-if="hiddenPages.length" class="tb-page-of"> (z {{ rawPageCount }})</span>
         </button>
         <!-- Pravá skupina -->
         <div class="tb-side right">
@@ -75,6 +75,10 @@
         <button class="tb-btn" @click="toggleSlider" :class="{ on: sliderOpen }" title="Slider stránek">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
         </button>
+        <!-- Odebrání stránek — vlastní nabídka (odebrat / vrátit). -->
+        <button class="tb-btn" @click="togglePagesPanel" :class="{ on: pagesPanelOpen }" title="Odebrat stránky">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 9h8M8 13h8M9 17h6"/><path d="M3 3l18 18"/></svg>
+        </button>
         </div>
       </div>
       <!-- Počítadlo stránek se přesunulo DOVNITŘ .tb-row (viz výše) — tady už není. -->
@@ -93,6 +97,12 @@
       <button class="zp-btn" @click="zoomOut" title="Oddálit">−</button>
       <span class="zp-val">{{ Math.round(zoom * 100) }} %</span>
       <button class="zp-btn" @click="zoomIn" title="Přiblížit">+</button>
+      <button class="zp-btn" @click="zoomFit" title="Zpět na 100 % (fit na šířku)">100 %</button>
+      <span class="zp-sep" />
+      <!-- Zoom dolů pod 100 % (Jan: „abych mohl oddálit stránku, když je
+           originál moc velký") — meze jsou v ZOOM_MIN/ZOOM_MAX. -->
+      <button class="zp-btn" @click="zoomOutBig" title="Oddálit po 10 %">−10</button>
+      <button class="zp-btn" @click="zoomInBig" title="Přiblížit po 10 %">+10</button>
       <span class="zp-sep" />
       <!-- Vycentrovat a ukládání stavu jsou na HLAVNÍ LIŠTĚ (jsou to akce
            k celému zobrazení, ne k zoomu) — a `clearPageView` je tam taky,
@@ -100,6 +110,33 @@
       <button v-if="hasSavedPageView || hasSavedZoom" class="zp-btn" @click="clearPageView" title="Zrušit nastavení této stránky">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
       </button>
+    </div>
+
+    <!-- Panel ODEBRÁNÍ STRÁNEK — vlastní nabídka v liště. Odebírání je VRATNÉ:
+         nic se nevyhazuje z PDF, jen se stránka přestane zobrazovat a listovat
+         přes ni (anotace, záložky a skoky na ní zůstávají v datech). -->
+    <div v-if="pagesPanelOpen" class="zoom-panel">
+      <button class="zp-btn" @click="removeCurrentPage" :disabled="totalPages <= 1" title="Odebrat tuto stránku ze skladby">−</button>
+      <span class="zp-val">Odebrat str. {{ currentPage + 1 }}</span>
+      <span class="zp-sep" />
+      <button class="zp-btn" @click="restoreRemovedPages" :disabled="!hiddenPages.length" title="Vrátit odebrané stránky">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+      </button>
+      <span class="zp-val" :class="{ dim: !hiddenPages.length }">odebráno {{ hiddenPages.length }}</span>
+      <span class="zp-sep" />
+      <button class="zp-btn" @click="pagesListOpen = !pagesListOpen" :class="{ on: pagesListOpen }" title="Seznam odebraných stránek">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+    </div>
+    <!-- Seznam odebraných stránek — jednotlivé navrácení (vždy jde o stránky
+         původního PDF, proto ukazujeme původní číslo, ne pořadí v oříznuté skladbě). -->
+    <div v-if="pagesPanelOpen && pagesListOpen" class="pages-list">
+      <div class="jp-subtitle">Odebrané stránky</div>
+      <div v-if="!hiddenPages.length" class="jp-hint">Žádná stránka není odebraná.</div>
+      <div v-for="p in hiddenPages" :key="p" class="jp-item">
+        <span class="jp-item-label">Původní str. {{ p + 1 }}</span>
+        <button class="jp-btn" @click="restorePage(p)" title="Vrátit tuto stránku">Vrátit</button>
+      </div>
     </div>
 
     <!-- Panel ROTACE — samostatná nabídka s VLASTNÍM tlačítkem v liště.
@@ -356,7 +393,7 @@
           class="jump-on-btn"
           :style="jumpBoxStyle(j)"
           @click="goJump(j)"
-          :title="'Skok na str. ' + (j.toPage + 1)"
+          :title="'Skok na str. ' + dispPage(j.toPage)"
         >{{ j.label }}</button>
       </div>
     </div>
@@ -382,6 +419,7 @@
           <button class="pg-btn primary" @click="goToTypedPage">Přejít</button>
           <button class="pg-btn" @click="closePageGo">Zavřít</button>
         </div>
+        <div v-if="hiddenPages.length" class="pg-hint">Stránky {{ hiddenLabel }} jsou odebrané — čísluje se {{ totalPages }} zobrazenými z {{ rawPageCount }} původních.</div>
       </div>
     </div>
 
@@ -403,19 +441,13 @@
     <div v-if="rotPanelOpen" class="rot-grid" aria-hidden="true" />
 
     <div v-if="edgeJumps.length" class="jump-strip">
-      <button
-        v-for="j in edgeJumps"
-        :key="j.id"
-        class="jump-btn"
-        @click="goJump(j)"
-        :title="'Skok na str. ' + (j.toPage + 1)"
-      >{{ j.label }}</button>
+      <button v-for="j in edgeJumps" :key="j.id" class="jump-btn" @click="goJump(j)" :title="'Skok na str. ' + dispPage(j.toPage)">{{ j.label }}</button>
     </div>
 
     <!-- Nápověda při umisťování — malá lišta, aby nezakrývala noty, na které se klepá -->
     <div v-if="jumpPlaceMode" class="jp-place-hint">
       <span>{{ jumpPlaceHint }}</span>
-      <span class="jp-place-count">{{ jumpPlacePoints.length }}/3</span>
+      <span class="jp-place-count">{{ jumpPlacePoints.length }}/3 · str. {{ dispPage(currentPage) }}</span>
     </div>
 
     <!-- Panel pro vytváření skoku (při umisťování se schová — jinak zakrývá noty) -->
@@ -442,14 +474,14 @@
       </div>
       <div v-if="jumpPlaceMode" class="jp-hint">{{ jumpPlaceHint }}</div>
       <div class="jp-row">
-        <span class="jp-item-pages">Str. {{ currentPage + 1 }}</span>
+        <span class="jp-item-pages">Str. {{ dispPage(currentPage) }}</span>
         <button class="jp-btn primary" @click="saveJump" :disabled="jumpStart === null || jumpEnd === null">Uložit skok</button>
       </div>
       <div v-if="jumps.length" class="jp-list">
         <div class="jp-subtitle">Existující skoky</div>
         <div v-for="j in jumps" :key="j.id" class="jp-item">
           <span class="jp-item-label">{{ j.label }}</span>
-          <span class="jp-item-pages">str. {{ j.fromPage + 1 }} → {{ j.toPage + 1 }}</span>
+          <span class="jp-item-pages">str. {{ dispPage(j.fromPage) }} → {{ dispPage(j.toPage) }}</span>
           <button class="jp-del" @click="deleteJump(j)" title="Smazat skok">🗑</button>
         </div>
       </div>
@@ -460,7 +492,7 @@
     <div v-if="bookmarkMode" class="jump-panel">
       <div class="jp-title">{{ bookmarkEditing ? 'Upravit záložku' : 'Nová záložka' }}</div>
       <div class="jp-row">
-        <span class="jp-cur">{{ bookmarkEditing ? 'Stránka ' + ((bookmarks.find(x => x.id === bookmarkEditing) || {}).page + 1) : 'Stránka ' + (currentPage + 1) }}</span>
+        <span class="jp-cur">{{ bookmarkEditing ? 'Stránka ' + dispPage((bookmarks.find(x => x.id === bookmarkEditing) || {}).page) : 'Stránka ' + dispPage(currentPage) }}</span>
       </div>
       <div class="jp-row">
         <input v-model="bookmarkLabel" class="jp-input" placeholder="Text záložky (např. Coda)" />
@@ -485,7 +517,7 @@
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/></svg>
           </button>
-          <span class="jp-item-label" :class="{ dim: !b.label }">str. {{ b.page + 1 }}<template v-if="b.label"> · {{ b.label }}</template></span>
+          <span class="jp-item-label" :class="{ dim: !b.label }">str. {{ dispPage(b.page) }}<template v-if="b.label"> · {{ b.label }}</template></span>
           <span class="jp-actions">
             <button class="jp-icon" @click="startEditBookmark(b)" title="Upravit">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
@@ -527,16 +559,19 @@
         <div class="thumb-spacer" :style="{ width: thumbPadLeft + 'px' }" aria-hidden="true" />
         <button
           v-for="i in visibleThumbs"
-          :key="i.idx"
+          :key="i.slot"
           class="thumb-item"
-          :class="{ on: i.idx === pageSlider }"
-          :data-idx="i.idx"
+          :class="{ on: i.slot === pageSlider }"
+          :data-idx="i.slot"
           @click="gotoPage(i.idx)"
-          :title="'Stránka ' + (i.idx + 1)"
+          :title="'Stránka ' + (i.slot + 1)"
         >
-          <img v-if="i.src" :src="i.src" :alt="'Stránka ' + (i.idx + 1)" />
+          <img v-if="i.src" :src="i.src" :alt="'Stránka ' + (i.slot + 1)" />
           <div v-else class="thumb-loading">…</div>
-          <span class="thumb-num">{{ i.idx + 1 }}</span>
+          <span class="thumb-num">{{ i.slot + 1 }}</span>
+          <!-- Odebrání stránky přímo z pásu miniatur (Jan chce odebrat
+               KONKRÉTNÍ stránky, ne jen tu, na které právě stojí). -->
+          <button class="thumb-x" @click.stop="removePage(i.idx)" title="Odebrat tuto stránku">✕</button>
         </button>
         <div class="thumb-spacer" :style="{ width: thumbPadRight + 'px' }" aria-hidden="true" />
       </div>
@@ -544,7 +579,7 @@
         type="range"
         class="slider"
         min="0"
-        :max="totalPages - 1"
+        :max="Math.max(0, totalPages - 1)"
         step="1"
         :value="pageSlider"
         @input="onSliderInput($event)"
@@ -703,7 +738,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
-import { dbGetSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView } from '../db.js';
+import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView } from '../db.js';
 import { renderPage, getPageWidthHeight, getPageCount } from '../pdf.js';
 
 const props = defineProps({ id: { type: String, required: true } });
@@ -724,7 +759,7 @@ const thumbStripEl = ref(null);
 const song = reactive({ data: null, name: '', fileName: '', id: props.id });
 
 const totalPages = ref(0);
-const currentPage = ref(0); // 0-based
+const currentPage = ref(0); // 0-based, INDEX DO PDF (viz hiddenPages — číslování se může lišit)
 const loading = ref(true);  // loading overlay při prvním načtení / přechodu mezi skladbami
 const zoom = ref(1.0);     // výchozí zoom 100 % (1 = fit šířce)
 const rot = ref(0);        // otočení stránky ve stupních (libovolný úhel, kladné = vpravo)
@@ -979,7 +1014,20 @@ let barObs = null;
 const zoomPanelOpen = ref(false);
 function toggleZoomPanel() {
   zoomPanelOpen.value = !zoomPanelOpen.value;
-  if (zoomPanelOpen.value) { annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; rotPanelOpen.value = false; endEdit(); }
+  if (zoomPanelOpen.value) { annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; endEdit(); }
+}
+// Panel ODEBRÁNÍ STRÁNEK — samostatná nabídka, vzájemně se vylučuje s ostatními
+// (jako všechny ostatní panely; Jan: „když kliknu na něco jiného, anotační mód
+// se automaticky vypne“).
+function togglePagesPanel() {
+  pagesPanelOpen.value = !pagesPanelOpen.value;
+  if (pagesPanelOpen.value) {
+    annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false;
+    sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
+    endEdit();
+  } else {
+    pagesListOpen.value = false;
+  }
 }
 // Panel ROTACE — samostatná nabídka. Otevřením se zoom zavře a naopak; gesto
 // se pak věnuje jen tomu, co má uživatel otevřené (Jan: „Při otevření nabídky
@@ -991,14 +1039,125 @@ function toggleRotPanel() {
   if (rotPanelOpen.value) {
     annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false;
     sliderOpen.value = false; zoomPanelOpen.value = false; endEdit();
+    pagesPanelOpen.value = false; pagesListOpen.value = false;
     cancelRotTween(true);        // ať úhel nevisí mezi polohami
   }
 }
 
 const cssW = ref(800);
 const cssH = ref(1100);
-const baseFit = ref(1);
 const annotations = ref({ items: [] });
+const pagesPanelOpen = ref(false); // nabídka odebírání stránek
+const pagesListOpen = ref(false);  // seznam odebraných stránek uvnitř té nabídky
+// --- ODEBRANÉ STRÁNKY (vratné) ---------------------------------------------
+// `currentPage` je dál INDEX DO PDF (0-based, přes všechny původní stránky) —
+// proto se nic nemusí přečíslovávat v anotacích, záložkách ani skocích.
+// Do světa se ale číslo stránky hlásí v POŘADÍ ZOBRAZENÝCH stránek, aby číslování
+// sedělo na to, co uživatel vidí („1 / 6" místo „1 / 7" s dírou).
+const hiddenPages = ref([]);        // [0-based indexy do PŮVODNÍHO PDF], vzestupně
+const rawPageCount = ref(0);        // počet stránek v PDF (včetně odebraných)
+// Viditelné stránky v pořadí (čísluje se 1..N přes ně) — zdroj pravdy pro UI.
+const visiblePages = computed(() => {
+  const out = [];
+  for (let i = 0; i < rawPageCount.value; i++) {
+    if (!hiddenPages.value.includes(i)) out.push(i);
+  }
+  return out;
+});
+// Pozice aktuální stránky mezi zobrazenými (pro počítadlo). Když je aktuální
+// stránka odebraná (nemělo by nastat), vrať 0.
+const visibleIndex = computed(() => {
+  const i = visiblePages.value.indexOf(currentPage.value);
+  return i < 0 ? 0 : i;
+});
+// Zobrazené číslo stránky pro daný index do PDF — s odebranými se počítá
+// v pořadí viditelných stránek.
+function dispPage(idx) {
+  if (idx == null) return '';
+  const i = visiblePages.value.indexOf(idx);
+  return i < 0 ? idx + 1 : i + 1;
+}
+// Výčet odebraných stránek pro dialog („3, 5, 8").
+const hiddenLabel = computed(() =>
+  hiddenPages.value.map(p => dispPage(p)).join(', ')
+);
+async function loadHiddenPages() {
+  const s = await dbGetSong(song.id);
+  hiddenPages.value = Array.isArray(s?.hiddenPages) ? [...s.hiddenPages].sort((a, b) => a - b) : [];
+}
+// Po jakékoli změně množiny odebraných stránek: přepočítat `totalPages`
+// (počítadlo, slider i pás miniatur pracují se ZOBRAZENÝMI stránkami).
+function recomputePageOrder() {
+  totalPages.value = visiblePages.value.length;
+}
+// Uloží seznam odebraných stránek na skladbu (nesahá na PDF ani na anotace).
+async function persistHiddenPages() {
+  const s = await dbGetSong(song.id);
+  if (!s) return;
+  s.hiddenPages = [...hiddenPages.value].sort((a, b) => a - b);
+  await dbSaveSong(s);
+}
+// Odebere stránku z listování (VRATNĚ). Když uživatel odebere stránku, na které
+// PRÁVĚ STOJÍ, přesune se na nejbližší viditelnou; když odebere jinou (třeba
+// z pásu miniatur), jeho místo v notách se NESMÍ hnout (Jan: čteš noty a ono to
+// odskočí jinam — to je přesně to, co u čtečky obtěžuje).
+async function removePage(idx) {
+  if (idx == null || idx < 0 || idx >= rawPageCount.value) return;
+  if (hiddenPages.value.includes(idx)) return;
+  if (visiblePages.value.length <= 1) { showToast('Poslední stránku odebrat nelze'); return; }
+  const wasCurrent = (idx === currentPage.value);
+  const dispNo = dispPage(idx);
+  hideCacheEntry(idx);
+  hiddenPages.value = [...hiddenPages.value, idx].sort((a, b) => a - b);
+  recomputePageOrder();
+  await persistHiddenPages();
+  if (wasCurrent) await moveToPage(nearestVisible(idx));
+  showToast(wasCurrent
+    ? 'Stránka odebrána — zobrazeno ' + totalPages.value + ' stránek'
+    : 'Odebrána stránka ' + dispNo + ' (původní ' + (idx + 1) + ') · zbývá ' + totalPages.value);
+}
+async function removeCurrentPage() {
+  await removePage(currentPage.value);
+}
+// Vrátí konkrétní odebranou stránku zpět do listování.
+async function restorePage(idx) {
+  if (!hiddenPages.value.includes(idx)) return;
+  hiddenPages.value = hiddenPages.value.filter(p => p !== idx);
+  recomputePageOrder();
+  await persistHiddenPages();
+  showToast('Stránka vrácena (celkem ' + totalPages.value + ')');
+}
+async function restoreRemovedPages() {
+  if (!hiddenPages.value.length) return;
+  hiddenPages.value = [];
+  recomputePageOrder();
+  await persistHiddenPages();
+  showToast('Všechny stránky vráceny (celkem ' + totalPages.value + ')');
+}
+// Nejbližší viditelná stránka k danému indexu (preferuj následující).
+function nearestVisible(idx) {
+  const vis = visiblePages.value;
+  if (!vis.length) return 0;
+  if (vis.includes(idx)) return idx;
+  let up = null, down = null;
+  for (const p of vis) {
+    if (p > idx && up === null) up = p;
+    if (p < idx) down = p;
+  }
+  return up !== null ? up : down;
+}
+// Uvolní cache odebrané stránky (ať nedrží bitmapu, když už ji nikdo neuvidí).
+function hideCacheEntry(idx) {
+  for (const k of [...cached.keys()]) {
+    const page = Number(String(k).split('@')[0]);
+    if (page === idx) {
+      const c = cached.get(k);
+      if (c) { c.width = 0; c.height = 0; }
+      cached.delete(k); preRendered.delete(k); renderPromises.delete(k);
+    }
+  }
+  clearCanvas();
+}
 
 // Slider stránek + miniatury
 const pageSlider = ref(0);        // 0-based, vázaný na currentPage
@@ -1013,27 +1172,32 @@ const THUMB_ITEM_W = 80;
 const THUMB_WINDOW = 21;            // počet prvků v DOM (lichý → uprostřed aktuální)
 const visibleThumbs = computed(() => {
   thumbTick.value;                  // závislost: dorazila nová miniatura
-  const total = totalPages.value;
+  const total = totalPages.value;   // počet ZOBRAZENÝCH stránek
   if (!total) return [];
-  const cur = pageSlider.value;
+  const cur = pageSlider.value;     // pozice mezi ZOBRAZENÝMI stránkami
   const half = Math.floor(THUMB_WINDOW / 2);
   let from = Math.max(0, cur - half);
   let to = Math.min(total - 1, from + THUMB_WINDOW - 1);
   from = Math.max(0, to - THUMB_WINDOW + 1);
   const out = [];
-  for (let i = from; i <= to; i++) out.push({ idx: i, src: thumbs.get(i) || '' });
+  const vis = visiblePages.value;
+  for (let slot = from; slot <= to; slot++) {
+    const idx = vis[slot];          // index do PDF (odebrané stránky v pásu nejsou)
+    if (idx == null) continue;
+    out.push({ slot, idx, src: thumbs.get(idx) || '' });
+  }
   return out;
 });
 // Prázdné pruhy po stranách drží geometrii pásu (scroll i slider sedí na
 // skutečný počet stránek, i když je v DOM jen okno).
 const thumbPadLeft = computed(() => {
   const v = visibleThumbs.value;
-  return v.length ? v[0].idx * THUMB_ITEM_W : 0;
+  return v.length ? v[0].slot * THUMB_ITEM_W : 0;
 });
 const thumbPadRight = computed(() => {
   const v = visibleThumbs.value;
   if (!v.length) return 0;
-  return Math.max(0, (totalPages.value - 1 - v[v.length - 1].idx) * THUMB_ITEM_W);
+  return Math.max(0, (totalPages.value - 1 - v[v.length - 1].slot) * THUMB_ITEM_W);
 });
 let thumbDebounce = null;           // debounce pro rychlé tažení sliderem
 let thumbQueue = [];                // fronta stránek čekajících na render miniatury
@@ -1223,7 +1387,10 @@ onMounted(async () => {
   }
 
   const dim = await getPageWidthHeight(song, 1);
-  totalPages.value = await getPageCount(song);
+  rawPageCount.value = await getPageCount(song);
+  // Odebrané stránky jsou uložené na skladbě (součást PDF, ne UI stav).
+  await loadHiddenPages();
+  recomputePageOrder();
 
   const saved = await dbGetAnnotations(props.id);
   if (saved && Array.isArray(saved.items)) annotations.value.items = saved.items;
@@ -1652,7 +1819,7 @@ async function prefetchSiblings(center) {
   const doc = song.data;
   if (!doc) return;
   for (const i of [center - 1, center + 1, center - 2, center + 2]) {
-    if (i < 0 || i >= totalPages.value) continue;
+    if (i < 0 || i >= rawPageCount.value) continue;
     const key = keyFor(i);
     if (preRendered.has(key)) continue;
     if (renderPromises.has(key)) continue; // už probíhá
@@ -1695,7 +1862,7 @@ function evictCache(center) {
   const keep = new Set();
   for (let d = -3; d <= 3; d++) {
     const p = center + d;
-    if (p >= 0 && p < totalPages.value) keep.add(p);
+    if (p >= 0 && p < rawPageCount.value) keep.add(p);
   }
   for (const k of [...cached.keys()]) {
     const page = Number(String(k).split('@')[0]);   // klíč je jen číslo stránky
@@ -1725,11 +1892,23 @@ function clearCanvas() {
   ctx.clearRect(0, 0, c.width, c.height);
 }
 
-function gotoPage(i) {
-  if (i < 0 || i >= totalPages.value || i === currentPage.value) return;
+// Přesun na stránku (await-ovatelný) — používá se tam, kde na dokončení záleží
+// (odebrání stránky, přechod mezi skladbami). `gotoPage` je synchronní varianta
+// pro gesta a tlačítka, kde čekat nelze.
+async function moveToPage(i) {
+  if (i == null || i < 0 || i >= rawPageCount.value) return;
+  if (hiddenPages.value.includes(i)) i = nearestVisible(i);
+  gotoPage(i);
+}
+function gotoPage(i, force) {
+  if (i < 0 || i >= rawPageCount.value) return;
+  // Odebranou stránku přeskoč na nejbližší viditelnou — jinak by zůstal
+  // prázdný canvas (stránka se sice vykreslí, ale do listování nepatří).
+  if (hiddenPages.value.includes(i)) i = nearestVisible(i);
+  if (i === currentPage.value && !force) return;
   endEdit();   // listování = konec výběru prvku (rámeček patří jiné stránce)
   currentPage.value = i;
-  pageSlider.value = i;
+  pageSlider.value = visibleIndex.value;
   // Nová stránka má vlastní uložené zobrazení (nebo se použije globální skladby)
   applyPageView();
   updatePageViewFlag();
@@ -1748,11 +1927,11 @@ function toggleSlider() {
     annotMode.value = false; // jiný panel → vypnout anotaci
     zoomPanelOpen.value = false;
     rotPanelOpen.value = false;
+    pagesPanelOpen.value = false; pagesListOpen.value = false;
     endEdit();               // a zrušit výběr prvku (rámeček by zůstal viset)
-    pageSlider.value = currentPage.value;
-    // Přednačíst miniatury okolí aktuální stránky
-    for (let i = Math.max(0, currentPage.value - 3); i <= Math.min(totalPages.value - 1, currentPage.value + 3); i++) {
-      ensureThumb(i);
+    pageSlider.value = visibleIndex.value;
+    for (let i = Math.max(0, visibleIndex.value - 3); i <= Math.min(visiblePages.value.length - 1, visibleIndex.value + 3); i++) {
+      ensureThumb(visiblePages.value[i]);
     }
     // Po vykreslení pásu miniatur posunout na aktuální stránku a zapojit lazy-load
     nextTick(() => {
@@ -1804,7 +1983,9 @@ function onSliderInput(e) {
   if (thumbDebounce) clearTimeout(thumbDebounce);
   thumbDebounce = setTimeout(() => {
     thumbDebounce = null;
-    for (let i = Math.max(0, v - 3); i <= Math.min(totalPages.value - 1, v + 3); i++) ensureThumb(i);
+    for (let i = Math.max(0, v - 3); i <= Math.min(visiblePages.value.length - 1, v + 3); i++) {
+      ensureThumb(visiblePages.value[i]);
+    }
     nextTick(() => {
       const strip = thumbStripEl.value;
       if (strip) { scrollThumbIntoView(v); setupThumbObserver(strip); }
@@ -1825,7 +2006,8 @@ function scrollThumbIntoView(idx) {
 // Fronta s omezením souběžnosti — při rychlém tažení sliderem se nespustí
 // stovky renderů najednou (to dřív zahltilo paměť a shodilo appku).
 function ensureThumb(i) {
-  if (i < 0 || i >= totalPages.value) return;
+  if (i == null || i < 0 || i >= rawPageCount.value) return;
+  if (hiddenPages.value.includes(i)) return;   // odebraná stránka miniaturu nemá
   if (thumbs.has(i)) return;
   if (thumbPromises.has(i)) return;
   if (thumbQueue.includes(i)) return;
@@ -1870,7 +2052,7 @@ function pruneThumbs(center) {
   const keep = new Set();
   for (let d = -THUMB_KEEP / 2; d <= THUMB_KEEP / 2; d++) {
     const p = center + d;
-    if (p >= 0 && p < totalPages.value) keep.add(p);
+    if (p >= 0 && p < rawPageCount.value) keep.add(p);
   }
   for (const k of [...thumbs.keys()]) if (!keep.has(k)) thumbs.delete(k);
 }
@@ -1905,8 +2087,10 @@ async function switchSong(idx, toEnd) {
   if (upgradeAnnotationColors()) {
     await dbSaveAnnotations({ songId: song.id, items: annotations.value.items });
   }
-  totalPages.value = await getPageCount(song);
-  currentPage.value = toEnd ? totalPages.value - 1 : 0;
+  rawPageCount.value = await getPageCount(song);
+  await loadHiddenPages();
+  recomputePageOrder();
+  currentPage.value = toEnd ? visiblePages.value[visiblePages.value.length - 1] : (visiblePages.value[0] ?? 0);
   // Aplikovat zobrazení až TEĎ, kdy je známá cílová stránka (applySongView výše
   // pracuje s currentPage, který se nastavuje až tady — jinak by se vzalo
   // nastavení předchozí stránky).
@@ -1916,17 +2100,19 @@ async function switchSong(idx, toEnd) {
   loading.value = false;
 }
 
-// Plynulý přechod: na poslední stránce dopředu → další skladba, na první dozadu → předchozí
+// Plynulý přechod: na poslední ZOBRAZENÉ stránce dopředu → další skladba, na první dozadu → předchozí
 async function nextPage() {
-  if (currentPage.value < totalPages.value - 1) {
-    await gotoPage(currentPage.value + 1);
+  const vi = visibleIndex.value;
+  if (vi < visiblePages.value.length - 1) {
+    await gotoPage(visiblePages.value[vi + 1]);
   } else if (group.value && groupIndex.value < groupSongs.value.length - 1) {
     await switchSong(groupIndex.value + 1);
   }
 }
 async function prevPage() {
-  if (currentPage.value > 0) {
-    await gotoPage(currentPage.value - 1);
+  const vi = visibleIndex.value;
+  if (vi > 0) {
+    await gotoPage(visiblePages.value[vi - 1]);
   } else if (group.value && groupIndex.value > 0) {
     await switchSong(groupIndex.value - 1, true); // zpět → konec předchozí skladby
   }
@@ -1944,7 +2130,36 @@ async function nextSong() {
 let _touchStart = null;
 let _pinchDist = null;
 let _pinchMid = null; // střed dvou prstů (pro pan)
-let _rotGesture = null; // stav dvouprstového gesta (idle → rotate / pinch)
+let _rotGesture = null; // stav DVOUPRSTOVÉHO gesta (zoom + posun)
+let _rot3 = null;       // stav TŘÍPRSTOVÉHO gesta (rotace)
+// GESTA PODLE POČTU PRSTŮ (Jan, Sep 2026) — supersedes poměrové rozhodování:
+//   2 prsty = zoom + posun   (dělá se pořád, žádné rozhodování podle pohybu)
+//   3 prsty = rotace         (jen rotace; měřítko ani posun se nehýbou — rigidní)
+// Dřív jedno dvouprsté gesto dělalo obojí a režim se hádal z pohybu; Jan to
+// nahradil jednoznačným rozdělením podle počtu prstů. Otevřená nabídka zoomu /
+// rotace zůstává jen jako vodítko (mřížka u rotace), ne jako přepínač režimu.
+function _mid3(t) {
+  return {
+    x: (t[0].clientX + t[1].clientX + t[2].clientX) / 3,
+    y: (t[0].clientY + t[1].clientY + t[2].clientY) / 3,
+  };
+}
+// Úhel tří prstů: průměr úhlů dvojic (0-1) a (1-2) — stabilnější než jedna dvojice.
+function _angle3(t) {
+  const a = angleOf(t[0], t[1]);
+  const b = angleOf(t[1], t[2]);
+  let d = a - b;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return b + d / 2;
+}
+// Rozptyl tří prstů (průměrná vzdálenost od těžiště) — z něj měřítko rotace.
+function _spread3(t) {
+  const m = _mid3(t);
+  return (Math.hypot(t[0].clientX - m.x, t[0].clientY - m.y)
+        + Math.hypot(t[1].clientX - m.x, t[1].clientY - m.y)
+        + Math.hypot(t[2].clientX - m.x, t[2].clientY - m.y)) / 3;
+}
 // Dva prsty: přiblížení, posun a OTÁČENÍ. O režimu se rozhoduje podle POMĚRU
 // pohybu — což je menší úhel, to se dělá. Prahy jsou proto MALÉ: rotace musí
 // začít OKAMŽITĚ, ne po mrtvém úseku.
@@ -1960,8 +2175,10 @@ let _rotGesture = null; // stav dvouprstového gesta (idle → rotate / pinch)
 // nabíhá od prvního snímku. Chyba v rozhodnutí je přitom NEŠKODNÁ — rotace je
 // rigidní (nemění měřítko ani posun), takže i když gesto začne rotovat a ukáže se,
 // že šlo o pinch, uživatel jen o pár stupňů pootočí a pokračuje v zoomu.
-const ROT_GESTURE_COMMIT_DEG = 2.5;
-const ZOOM_GESTURE_COMMIT = 0.06;
+// GESTA PODLE POČTU PRSTŮ (Jan, Sep 2026): 2 prsty = zoom + posun,
+// 3 prsty = rotace. Žádné prahy ani poměrové rozhodování — počet prstů je
+// jednoznačný a uživatel má nad režimem kontrolu (dřív se hádal z pohybu a
+// stávalo se, že „na gesto reaguje pouze rotace; zoom a změna pozice ne“).
 // Pero právě kreslí / kreslilo = stránku NELISTOVAT (Jan: „anotace se dělají perem“).
 // _lastPenAt drží čas posledního tahu perem — chrání i proti zpožděnému touchendu,
 // který na reálném tabletu dorazí až po uvolnění pera.
@@ -1980,25 +2197,30 @@ function onTouchStart(e) {
   // V anotačním režimu se listovat SMÍ, ale JEN prstem na kraji displeje.
   // Rozlišení je na úrovni pointerType (viz onLayerDown), tady rozhoduje jen
   // to, že pero zrovna kreslí nebo kreslilo → dotyk patří opřené ruce.
-  if (blockedNav()) { _touchStart = null; _pinchDist = null; _pinchMid = null; _rotGesture = null; return; }
+  if (blockedNav()) { _touchStart = null; _pinchDist = null; _pinchMid = null; _rotGesture = null; _rot3 = null; return; }
   // Tah na liště záložek (horizontální scroll) nekreslí jako swipe stránky
   if (e.target && e.target.closest && e.target.closest('.bookmark-strip')) return;
+  if (e.touches.length >= 3) {
+    // TŘI prsty = ROTACE. Zoom ani posun se jí nehýbou (rigidní rotace) —
+    // a na rozdíl od dřívějška se o režimu nehádá z pohybu, rozhoduje počet prstů.
+    _rot3 = {
+      angle0: _angle3(e.touches),
+      rot0: rot.value,
+    };
+    _rotGesture = null;
+    _touchStart = null;
+    _pinchDist = null;
+    _pinchMid = null;
+    return;
+  }
   if (e.touches.length === 2) {
-    // Dva prsty umí TŘI věci: přiblížení, posun a OTÁČENÍ stránky. O tom,
-    // které z nich gesto dělá, se rozhodne až podle toho, co se pohne víc
-    // (viz onTouchMove) — dokud není jasno, posouvá se jako dosud.
+    // DVA prsty = ZOOM + POSUN (rotace je na třech prstech).
     const d0 = dist(e.touches[0], e.touches[1]);
     const m0 = mid(e.touches[0], e.touches[1]);
     _pinchDist = d0;
     _pinchMid = m0;
-    _rotGesture = {
-      mode: 'idle',
-      angle0: angleOf(e.touches[0], e.touches[1]),
-      rot0: rot.value,
-      d0,
-      lastD: d0,
-      lastM: m0,
-    };
+    _rotGesture = { d0, lastD: d0, lastM: m0 };
+    _rot3 = null;
     _touchStart = null;
     return;
   }
@@ -2019,46 +2241,28 @@ function onTouchStart(e) {
 }
 function onTouchMove(e) {
   if (blockedNav()) return;   // pero kreslí → neposouvat ani zoomovat
+  if (e.touches.length >= 3 && _rot3) {
+    // TŘI prsty = rotace. Bere se od ZAČÁTKU gesta (ne po krocích), jinak by se
+    // chyba nasčítala a stránka by ujížděla. Rotace je RIGIDNÍ: měřítko ani
+    // posun se jí nehýbou, takže papír zůstane přesně tam, kde si ho uživatel
+    // nastavil (Jan: „obraz po rotaci zůstane přesně tak, jak je“).
+    rot.value = normDeg(_rot3.rot0 + angleDelta(_angle3(e.touches), _rot3.angle0));
+    return;
+  }
   if (e.touches.length === 2 && _rotGesture) {
     const g = _rotGesture;
     const t0 = e.touches[0], t1 = e.touches[1];
     const d = dist(t0, t1);
     const m = mid(t0, t1);
-    const dA = angleDelta(angleOf(t0, t1), g.angle0);
-    const scale = g.d0 ? d / g.d0 : 1;
-    // Rozhodnutí, který režim gesto dělá. Když má uživatel otevřenou nabídku
-    // ROTACE, gesto rotuje VÝHRADNĚ (žádný souboj se zoomem) — a když má
-    // otevřenou nabídku ZOOMU, zoomuje a posouvá a NIKDY nerotuje. Teprve když
-    // není otevřená ani jedna, rozhoduje se jako dřív podle poměru pohybu.
-    if (g.mode === 'idle') {
-      const rotCross = Math.abs(dA) / ROT_GESTURE_COMMIT_DEG;
-      const zoomCross = Math.abs(scale - 1) / ZOOM_GESTURE_COMMIT;
-      if (rotPanelOpen.value) {
-        if (rotCross >= 1) g.mode = 'rotate';
-      } else if (zoomPanelOpen.value) {
-        // Bez prahu: v nabídce zoomu reaguje zoom okamžitě. Posun se tím
-        // nerozbije — při čistém přesunu se vzdálenost prstů nemění.
-        g.mode = 'pinch';
-      } else if (rotCross >= 1 && rotCross >= zoomCross) g.mode = 'rotate';
-      else if (zoomCross >= 1) g.mode = 'pinch';
+    // DVA prsty = zoom + posun. Žádné rozhodování podle pohybu — zoom i posun
+    // se dělají vždy, takže gesto nikdy „neujede" do jiného režimu.
+    if (d !== g.lastD) {
+      zoom.value = clampZoom(zoom.value * (d / g.lastD));
+      g.lastD = d;
     }
-    if (g.mode === 'rotate') {
-      // Úhel se bere od ZAČÁTKU gesta (ne po krocích) — jinak by se chyba
-      // s každým pohybem nasčítala a stránka by ujížděla.
-      // Rotace je RIGIDNÍ: mění jen úhel. Měřítko ani posun se jí nehýbou, takže
-      // se papír otáčí přesně ve stavu, v jakém si ho uživatel nastavil.
-      rot.value = normDeg(g.rot0 + dA);
-    } else {
-      // zoom s minimem na výchozí (1) — jen skutečná změna vzdálenosti
-      if (d !== g.lastD) {
-        zoom.value = Math.min(3.5, Math.max(1, zoom.value * (d / g.lastD)));
-        g.lastD = d;
-      }
-      // pan: posun středu dvou prstů
-      panX.value += m.x - g.lastM.x;
-      panY.value += m.y - g.lastM.y;
-      _pinchDist = d; _pinchMid = m;
-    }
+    panX.value += m.x - g.lastM.x;
+    panY.value += m.y - g.lastM.y;
+    _pinchDist = d; _pinchMid = m;
     g.lastM = m;
     return;
   }
@@ -2147,13 +2351,14 @@ function onTouchEnd(e) {
   _pinchMid = null;
   const g = _rotGesture;
   _rotGesture = null;
-  // Dvouprstové gesto: po otáčení se musí jednou dorovnat fit a překreslit
-  // (během tahu se jen throttlovalo). keepUserView = true → zoom a posun
-  // uživatele ZŮSTANOU; přímá manipulace prsty pod rukama nic nevrací.
-  if (g) {
-    if (g.mode === 'rotate') refreshAfterRotation(true);
-    return;
-  }
+  const r3 = _rot3;
+  _rot3 = null;
+  // Tříprstové gesto = rotace: po puštění jen dorovnat cache (během tahu se
+  // nevykresluje nic — rotuje se pouze CSS). Zoom ani posun se nedotýkají.
+  if (r3) { refreshAfterRotation(true); return; }
+  // Dvouprstové gesto: po zoomu/posunu není co dorovnávat, ale cache se dorovná
+  // stejnou cestou (drží rozměry canvasu v souladu s oknem).
+  if (g) { refreshAfterRotation(true); return; }
   const t = e.changedTouches && e.changedTouches[0];
   const st = _touchStart;
   _touchStart = null;
@@ -2232,7 +2437,7 @@ function onTap(e) {
 // --- Anotace ---
 function toggleAnnot() {
   annotMode.value = !annotMode.value;
-  if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false; } // jiné panely zavřít
+  if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; } // jiné panely zavřít
   // vypnutí řeší watch na annotMode níže (pokrývá i cesty, které by na endEdit zapomněly)
 }
 
@@ -3037,8 +3242,19 @@ function redoAnnot() {
 }
 
 // zoom — vždy po 5 % (sčítání, ne násobení → pravidelné a symetrické kroky)
-function zoomIn() { zoom.value = Math.min(zoom.value + 0.05, 2.5); }
-function zoomOut() { zoom.value = Math.max(zoom.value - 0.05, 1); }
+// ZOOM_MIN = 0,25 → stránku lze oddálit POD 100 % (Jan: „abych mohl oddálit
+// stránku, když je originál moc velký“). 100 % zůstává výchozí stav (fit na šířku).
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 2.5;
+function clampZoom(v) {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v * 100) / 100));
+}
+function zoomIn() { zoom.value = clampZoom(zoom.value + 0.05); }
+function zoomOut() { zoom.value = clampZoom(zoom.value - 0.05); }
+function zoomInBig() { zoom.value = clampZoom(zoom.value + 0.10); }
+function zoomOutBig() { zoom.value = clampZoom(zoom.value - 0.10); }
+// Zpět na 100 % = výchozí fit na šířku (bez posunu a rotace).
+function zoomFit() { zoom.value = 1.0; panX.value = 0; panY.value = 0; }
 // Vycentrovat = vrátit se na uložené výchozí zobrazení; uložené nastavení
 // KONKRÉTNÍ stránky má přednost před globálním nastavením skladby.
 function resetView() { applyPageView(); }
@@ -3061,7 +3277,7 @@ function goBack() { router.push('/'); }
 // --- Skoky (Da Capo / VIDE) ---
 function toggleJumpMode() {
   jumpMode.value = !jumpMode.value;
-  if (jumpMode.value) { annotMode.value = false; endEdit(); zoomPanelOpen.value = false; rotPanelOpen.value = false; } // jiný panel → vypnout anotaci i výběr prvku
+  if (jumpMode.value) { annotMode.value = false; endEdit(); zoomPanelOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; sliderOpen.value = false; } // jiný panel → vypnout anotaci i výběr prvku
   if (!jumpMode.value) { jumpStart.value = null; jumpEnd.value = null; jumpLabel.value = ''; }
 }
 // Krok 1: označit výchozí stránku (kde skok začíná)
@@ -3112,6 +3328,8 @@ function openPageGo() {
   pageGoOpen.value = true;
   // panel se otevře i mimo anotační režim; ostatní mody zavřít, aby se nepřekrývaly
   annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false;
+  zoomPanelOpen.value = false; rotPanelOpen.value = false;
+  pagesPanelOpen.value = false; pagesListOpen.value = false;
   endEdit(); // zrušit výběr prvku — jinak by rámeček zůstal viset přes dialog
   nextTick(() => {
     const el = pageGoInputEl.value;
@@ -3127,7 +3345,10 @@ function goToTypedPage() {
   const n = parseInt(raw, 10);
   pageGoOpen.value = false;
   if (!raw || !Number.isFinite(n)) return;
-  const target = Math.max(0, Math.min(totalPages.value - 1, n - 1));
+  // Uživatel píše POŘADÍ ZOBRAZENÝCH stránek (to vidí v počítadle), ne index do PDF.
+  const slot = Math.max(0, Math.min(visiblePages.value.length - 1, n - 1));
+  const target = visiblePages.value[slot];
+  if (target == null) return;
   // gotoPage je synchronní fire-and-forget (token v renderCurrent vykreslí jen poslední stránku)
   if (target === currentPage.value && _pageGoPrevPage === target) return;
   gotoPage(target);
@@ -3147,6 +3368,8 @@ function openBookmark() {
   annotMode.value = false;  // jiný panel → vypnout anotaci
   zoomPanelOpen.value = false;
   rotPanelOpen.value = false;
+  pagesPanelOpen.value = false; pagesListOpen.value = false;
+  sliderOpen.value = false;
   endEdit();               // a zrušit výběr prvku (rámeček by zůstal viset)
   bookmarkLabel.value = '';
   bookmarkEditing.value = null;
@@ -3382,9 +3605,17 @@ async function deleteBookmark(b) {
   .tb-page { padding: 3px 5px; font-size: 0.78rem; }
 }
 /* Ještě užší telefon: úhel u rotace se schová (je vidět v nabídce rotace) —
-   jinak by tlačítko bylo širší než ostatní a lišta by přetekla. */
+   jinak by tlačítko bylo širší než ostatní a lišta by přetekla.
+   ⚠️ S 11. tlačítkem („Odebrat stránky“) na 390 px počítadlo kolidovalo
+   s tlačítky (naměřeno probe-counter-overlap.py: překryv 23 px s Anotací),
+   proto se tu zmenší i `--tb` a mezery — ne jen skrytí úhlu. */
 @media (max-width: 430px) {
+  .top-bar { --tb: clamp(26px, 6.8vw, 40px); }
   .tb-rot-deg { display: none; }
+  .tb-side { gap: 1px; }
+  .tb-row { gap: 2px; }
+  .tb-page { padding: 3px 6px; font-size: 0.74rem; }
+  .tb-btn.zoom-btn { padding: 0 3px; min-width: calc(var(--tb, 38px) + 0px); }
 }
 /* Počítadlo stránek — klik otevře ruční zadání stránky */
 .tb-page {
@@ -3802,6 +4033,29 @@ async function deleteBookmark(b) {
   scrollbar-width: thin; -webkit-overflow-scrolling: touch;
   touch-action: pan-x;   /* viz lišta záložek — .viewer má none */
 }
+/* ✕ na miniaturách — odebrání stránky. Jen v pásu, ploché, bez hoveru. */
+.thumb-x {
+  position: absolute; top: 2px; left: 2px; z-index: 3;
+  width: 22px; height: 22px; padding: 0; line-height: 1;
+  border-radius: 50%; border: 1px solid rgba(0,0,0,0.45);
+  background: rgba(20,18,16,0.78); color: #f0e6da;
+  font-size: 0.72rem; cursor: pointer; touch-action: manipulation;
+}
+.thumb-x:active { background: var(--accent); color: #17130f; }
+/* Panel odebírání stránek — seznam odebraných (kotví se pod lištu jako ostatní) */
+.pages-list {
+  position: absolute; top: calc(var(--topbar-h, 96px) + 52px); right: 8px;
+  width: min(320px, calc(100% - 16px));
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); z-index: 31;
+  max-height: min(46dvh, 340px); overflow-y: auto;
+}
+/* Počítadlo: doplněk „(z N)" je jen informace, nesmí přebít hlavní číslo */
+.tb-page-of { font-weight: 400; opacity: 0.72; font-size: 0.9em; }
+/* Nápověda v dialogu zadání stránky (odebrané stránky se přeskakují) */
+.pg-hint { font-size: 0.8rem; color: var(--text-dim); line-height: 1.35; }
+.zp-val.dim { opacity: 0.55; }
 .thumb-item {
   position: relative; flex: 0 0 auto; width: 72px; height: 96px;
   border-radius: 6px; overflow: hidden; border: 2px solid var(--border);

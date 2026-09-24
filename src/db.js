@@ -7,6 +7,10 @@
 //   'folders'     -> id, name, createdAt  (složky = kategorizace, skladba patří do právě jedné)
 //   'jumps'       -> songId -> { songId, items: [{id, fromPage, toPage, label}] }  (Da Capo / VIDE skoky)
 //   'bookmarks'   -> songId -> { songId, items: [{id, page, label}] }  (záložky — konkrétní stránky)
+//
+// Odebrané stránky se NEUKLÁDAJÍ tady, ale přímo na skladbě (`songs.hiddenPages`):
+// je to vlastnost skladby, takže s ní putuje i do zálohy/exportu. Vždy jde
+// o seznam 0-based indexů do PŮVODNÍHO PDF.
 
 const DB_NAME = 'noty-app';
 const DB_VERSION = 5;
