@@ -6,6 +6,7 @@
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
     @touchend.passive="onTouchEnd"
+    @touchcancel.passive="onTouchCancel"
     @click="onTap"
   >
     <!-- JEDINÁ HORNÍ LIŠTA — trvale viditelná, vše na jednom místě.
@@ -2128,16 +2129,14 @@ async function nextSong() {
 
 // --- Swipe / tap / pinch / pan pro přepínání stránek, zoom a posun ---
 let _touchStart = null;
-let _pinchDist = null;
-let _pinchMid = null; // střed dvou prstů (pro pan)
-let _rotGesture = null; // stav DVOUPRSTOVÉHO gesta (zoom + posun)
-let _rot3 = null;       // stav TŘÍPRSTOVÉHO gesta (rotace)
-// GESTA PODLE POČTU PRSTŮ (Jan, Sep 2026) — supersedes poměrové rozhodování:
+let _pinch = null;      // stav DVOUPRSTÉHO gesta (zoom + posun): { lastD, lastM }
+let _rot3 = null;       // stav TŘÍPRSTÉHO gesta (rotace): { angle0, rot0 }
+// GESTA PODLE POČTU PRSTŮ (Jan, Sep 2026) — nahrazuje poměrové rozhodování:
 //   2 prsty = zoom + posun   (dělá se pořád, žádné rozhodování podle pohybu)
 //   3 prsty = rotace         (jen rotace; měřítko ani posun se nehýbou — rigidní)
-// Dřív jedno dvouprsté gesto dělalo obojí a režim se hádal z pohybu; Jan to
-// nahradil jednoznačným rozdělením podle počtu prstů. Otevřená nabídka zoomu /
-// rotace zůstává jen jako vodítko (mřížka u rotace), ne jako přepínač režimu.
+// Režim se ale PŘEPÍNÁ podle AKTUÁLNÍHO počtu dotyků, ne jen při začátku gesta —
+// jinak každý dotek navíc (opřená dlaň, kloub) gesto natrvalo vypne a zoom
+// přestane reagovat, přestože prsty dál táhnou. Viz probe-pinch-robustness.py.
 function _mid3(t) {
   return {
     x: (t[0].clientX + t[1].clientX + t[2].clientX) / 3,
@@ -2160,25 +2159,13 @@ function _spread3(t) {
         + Math.hypot(t[1].clientX - m.x, t[1].clientY - m.y)
         + Math.hypot(t[2].clientX - m.x, t[2].clientY - m.y)) / 3;
 }
-// Dva prsty: přiblížení, posun a OTÁČENÍ. O režimu se rozhoduje podle POMĚRU
-// pohybu — což je menší úhel, to se dělá. Prahy jsou proto MALÉ: rotace musí
-// začít OKAMŽITĚ, ne po mrtvém úseku.
-//
-// CO BYLO ŠPATNĚ: prahy 8° a 20 % znamenaly, že se gesto několik snímků jen
-// POSOUVALO (režim 'idle' = pan), takže uživatel viděl, jak papír nejdřív ujíždí
-// a „až po určitých stupních najednou cukne a začne rotovat“. Naměřeno v headless
-// Chrome (sonda probe-rotation-paths.py): při kroku reálného prstu 1,5° se úhel
-// NEZMĚNIL prvních 6 snímků (0°, 0°, 0°, 0°, 0°, 0° → pak skok na −10,4°), tedy
-// ~9° mrtvé dráhy.
-//
-// Teď: první pohyb prstem (u skutečného prstu 2–5°) režim rozhodne, takže rotace
-// nabíhá od prvního snímku. Chyba v rozhodnutí je přitom NEŠKODNÁ — rotace je
-// rigidní (nemění měřítko ani posun), takže i když gesto začne rotovat a ukáže se,
-// že šlo o pinch, uživatel jen o pár stupňů pootočí a pokračuje v zoomu.
-// GESTA PODLE POČTU PRSTŮ (Jan, Sep 2026): 2 prsty = zoom + posun,
-// 3 prsty = rotace. Žádné prahy ani poměrové rozhodování — počet prstů je
-// jednoznačný a uživatel má nad režimem kontrolu (dřív se hádal z pohybu a
-// stávalo se, že „na gesto reaguje pouze rotace; zoom a změna pozice ne“).
+// Dva prsty: ZOOM + POSUN (rotace je na třech prstech, prahy ani poměrové
+// rozhodování neexistují — počet dotyků je jednoznačný). Tenhle komentář
+// nahrazuje starý popis poměrového modelu, který je zrušený:
+//   * mrtvý úsek na začátku gesta (prahy 8° / 20 % → 6 snímků bez pohybu)
+//   * „cuknutí“ po puštění prstu (liveFit se počítal z úhlu a byl zpožděný rampou)
+// Obojí dnes řeší rigidní rotace: rotace nemění měřítko ani posun, takže
+// falešné rozhodnutí režimu neublíží (uživatel jen o pár stupňů pootočí).
 // Pero právě kreslí / kreslilo = stránku NELISTOVAT (Jan: „anotace se dělají perem“).
 // _lastPenAt drží čas posledního tahu perem — chrání i proti zpožděnému touchendu,
 // který na reálném tabletu dorazí až po uvolnění pera.
@@ -2193,43 +2180,56 @@ function blockedNav() {
   return false;
 }
 function markPen() { _lastPenAt = Date.now(); }
+// Dva prsty (zoom/posun) a tři prsty (rotace) jsou dva režimy JEDNOHO gesta.
+// Režim se určuje z AKTUÁLNÍCH dotyků a přepíná se za pochodu — ale OPŘENÁ DLAŇ
+// se do počtu nepočítá. Kdyby se počítala, dlaň ležící vedle dvou prstů by
+// gesto překlopila do rotace: zoom by přestal hýbat a stránka by se pootočila
+// (přesně Janovo „chvíli zoomuje, pak najednou ne“).
+function fingersNow(touches) {
+  if (!touches) return [];
+  return [...touches].filter((t) => !isPalmTouch(t));
+}
 function onTouchStart(e) {
   // V anotačním režimu se listovat SMÍ, ale JEN prstem na kraji displeje.
   // Rozlišení je na úrovni pointerType (viz onLayerDown), tady rozhoduje jen
   // to, že pero zrovna kreslí nebo kreslilo → dotyk patří opřené ruce.
-  if (blockedNav()) { _touchStart = null; _pinchDist = null; _pinchMid = null; _rotGesture = null; _rot3 = null; return; }
+  if (blockedNav()) { _touchStart = null; _pinch = null; _rot3 = null; return; }
   // Tah na liště záložek (horizontální scroll) nekreslí jako swipe stránky
   if (e.target && e.target.closest && e.target.closest('.bookmark-strip')) return;
-  if (e.touches.length >= 3) {
-    // TŘI prsty = ROTACE. Zoom ani posun se jí nehýbou (rigidní rotace) —
-    // a na rozdíl od dřívějška se o režimu nehádá z pohybu, rozhoduje počet prstů.
-    _rot3 = {
-      angle0: _angle3(e.touches),
-      rot0: rot.value,
-    };
-    _rotGesture = null;
+  const fs = fingersNow(e.touches);
+  const n = fs.length;
+  // ---------------------------------------------------------------
+  // ZMĚNA POČTU DOTYKŮ BĚHEM GESTA (Jan, Sep 2026)
+  // Dřív se stav gesta nastavoval JEN při touchstartu s přesně 2 (nebo 3)
+  // dotyky a při jiném počtu se jen zrušil. Na reálném tabletu je ale
+  // touchstart častý — opřená dlaň, kloub, druhá ruka, překlepnutí firmwaru —
+  // a každý takový dotyk gesto trvale vypnul: zoom se přestal hýbat, i když
+  // prsty dál táhly, a uživatel to vidí jako „prsty ztratily kontakt“.
+  // Naměřeno (probe-pinch-robustness.py, 800×1280): zoom po takovém dotyku
+  // neudělal +0,000 až do konce gesta.
+  // Teď se režim jen PŘEPNE podle aktuálního počtu PRSTŮ a stav se vždy znovu
+  // založí z AKTUÁLNÍ geometrie, takže gesto navazuje tam, kde papír je.
+  // ---------------------------------------------------------------
+  if (n >= 3) {
+    // TŘI prsty = ROTACE (rigidní — měřítko ani posun se nehýbou).
+    if (!_rot3) _rot3 = { angle0: _angle3(fs), rot0: rot.value };
+    _pinch = null;
     _touchStart = null;
-    _pinchDist = null;
-    _pinchMid = null;
     return;
   }
-  if (e.touches.length === 2) {
-    // DVA prsty = ZOOM + POSUN (rotace je na třech prstech).
-    const d0 = dist(e.touches[0], e.touches[1]);
-    const m0 = mid(e.touches[0], e.touches[1]);
-    _pinchDist = d0;
-    _pinchMid = m0;
-    _rotGesture = { d0, lastD: d0, lastM: m0 };
+  if (n === 2) {
+    // DVA prsty = ZOOM + POSUN. `lastD`/`lastM` jsou klíčové pro plynulost:
+    // kotva se obnoví na AKTUÁLNÍ vzdálenost a střed, takže právě proběhlá
+    // změna geometrie (přidání/odebrání dotyku) neudělá zoom skok.
+    const d = dist(fs[0], fs[1]);
+    const m = mid(fs[0], fs[1]);
+    _pinch = { lastD: d, lastM: m, lastAt: Date.now() };
     _rot3 = null;
     _touchStart = null;
     return;
   }
-  if (e.touches.length === 1) {
-    const t = e.touches[0];
-    // Opřená dlaň: velký poloměr kontaktu. Nezaznamenáváme ji vůbec — nesmí
-    // listovat klepnutím ani tažením, a poznamenáme si okno, ve kterém se
-    // nesmí listovat ani přes kompatibilitní `click`.
-    if (isPalmTouch(t)) { _palmUntil = Date.now() + 700; _touchStart = null; return; }
+  if (n === 1) {
+    const t = fs[0];
     // Ukládáme i CÍL dotyku — při uvolnění se podle něj pozná, že klepnutí
     // patřilo ovládacímu prvku (anotační panel je v okrajové zóně) a nemá listovat.
     _touchStart = {
@@ -2238,34 +2238,66 @@ function onTouchStart(e) {
       edge: inEdgeZone(t.clientX), // začátek tahu v okrajovém pruhu
     };
   }
+  if (n === 0) {
+    // Zbyly jen DOTYKY S POLOMĚREM DLANĚ → tohle gesto nesmí dělat nic:
+    // ani zoom, ani rotaci, a hlavně NESMÍ LISTOVAT (Jan: „ať to nepřepíná
+    // třeba i opřená dlaň“). Dřív se dlaň zahazovala hned tady v touchstartu;
+    // když jsem dlaň začala filtrovat z celého gesta, muselo se tohle hlídat
+    // zvlášť — jinak dlaň na okraji začala listovat (naměřeno jako regrese).
+    if (e.touches && e.touches.length > 0) {
+      _palmUntil = Date.now() + 700;
+      _touchStart = null;
+    }
+  }
 }
 function onTouchMove(e) {
   if (blockedNav()) return;   // pero kreslí → neposouvat ani zoomovat
-  if (e.touches.length >= 3 && _rot3) {
-    // TŘI prsty = rotace. Bere se od ZAČÁTKU gesta (ne po krocích), jinak by se
-    // chyba nasčítala a stránka by ujížděla. Rotace je RIGIDNÍ: měřítko ani
-    // posun se jí nehýbou, takže papír zůstane přesně tam, kde si ho uživatel
-    // nastavil (Jan: „obraz po rotaci zůstane přesně tak, jak je“).
-    rot.value = normDeg(_rot3.rot0 + angleDelta(_angle3(e.touches), _rot3.angle0));
+  const fs = fingersNow(e.touches);
+  const n = fs.length;
+  if (n >= 3) {
+    // TŘI prsty = rotace. Když se třetí PRST objevil až v průběhu gesta, začne
+    // se rotace měřit od TEĎ — jinak by dlaň ležící na místě vyrobila úhel
+    // z prstu, který se mezitím pohnul, a stránka by cukla.
+    if (!_rot3) {
+      _rot3 = { angle0: _angle3(fs), rot0: rot.value };
+      _pinch = null;
+      return;
+    }
+    // Rotace se bere od ZAČÁTKU rotační fáze (ne po krocích), jinak by se chyba
+    // nasčítala a stránka by ujížděla. Rotace je RIGIDNÍ: měřítko ani posun se
+    // jí nehýbou, takže papír zůstane přesně tam, kde si ho uživatel nastavil
+    // (Jan: „obraz po rotaci zůstane přesně tak, jak je“).
+    rot.value = normDeg(_rot3.rot0 + angleDelta(_angle3(fs), _rot3.angle0));
     return;
   }
-  if (e.touches.length === 2 && _rotGesture) {
-    const g = _rotGesture;
-    const t0 = e.touches[0], t1 = e.touches[1];
-    const d = dist(t0, t1);
-    const m = mid(t0, t1);
+  if (n === 2) {
+    // Když se počet PRSTŮ změnil (z 1 nebo ze 3), stav se tu ZALOŽÍ ZNOVU
+    // z aktuální geometrie — gesto tím pokračuje plynule z místa, kde papír je.
+    const d = dist(fs[0], fs[1]);
+    const m = mid(fs[0], fs[1]);
+    if (!_pinch) { _pinch = { lastD: d, lastM: m, lastAt: Date.now() }; _rot3 = null; return; }
+    const g = _pinch;
     // DVA prsty = zoom + posun. Žádné rozhodování podle pohybu — zoom i posun
-    // se dělají vždy, takže gesto nikdy „neujede" do jiného režimu.
+    // se dělají vždy, takže gesto nikdy „neujede“ do jiného režimu.
     if (d !== g.lastD) {
       zoom.value = clampZoom(zoom.value * (d / g.lastD));
       g.lastD = d;
     }
     panX.value += m.x - g.lastM.x;
     panY.value += m.y - g.lastM.y;
-    _pinchDist = d; _pinchMid = m;
     g.lastM = m;
+    g.lastAt = Date.now();
     return;
   }
+  if (n === 1 && (_pinch === null) && (_rot3 === null)) return;
+  // Zbyl jediný PRST. Gesto tím končí (posun jedním prstem záměrně NEEXISTUJE:
+  // pere se s okrajovým swipem na listování a s klepnutím na střed, které
+  // přepíná ovládání). Důležité ale je, že se stav UKLIDÍ — dřív zůstal viset
+  // a další dva prsty se do mrtvého stavu jen „přilepily“, takže zoom nereagoval.
+  // Nic se s papírem neděje; jakmile uživatel přiloží dva prsty, touchmove stav
+  // znovu zakotví z aktuální geometrie a zoom plynule pokračuje.
+  _pinch = null;
+  _rot3 = null;
 }
 // Klepnutí v anotačním režimu patří nástrojům, NIKDY listování — kromě okrajových
 // zón, kde listovat chceme.
@@ -2326,6 +2358,11 @@ const edgeW = computed(() => {
 // Opřená dlaň: dotyk má násobně větší poloměr kontaktu než prst. Takový dotyk
 // nikdy nelistuje (Jan: „ať to nepřepíná třeba i opřená dlaň“).
 // Prst se hlásí asi 25–35 px, dlaň 60+ px → práh 50 px.
+// POZOR: dlaň se musí vyfiltrovat z CELÉHO gesta, ne jen z listování — když se
+// počítá jako „třetí prst“, překlopí dvouprstý zoom do rotačního režimu a
+// uživatel vidí, že „zoom přestal reagovat a stránka se místo toho pootočila“.
+// Naměřeno (probe-pinch-robustness.py): dlaň (r=70) ležící vedle pinche otočila
+// stránku o 7,6° a zoom se nehnul o 0,000.
 function isPalmTouch(t) {
   const rx = t.radiusX || 0;
   const ry = t.radiusY || 0;
@@ -2347,11 +2384,29 @@ function annotEdgeTap(x, y, target) {
 }
 
 function onTouchEnd(e) {
-  _pinchDist = null;
-  _pinchMid = null;
-  const g = _rotGesture;
-  _rotGesture = null;
+  // Gesto se ukončuje, když nezůstane žádný PRST (dlaň se nepočítá). Při
+  // PŘECHODNÉM úbytku (jeden ze dvou/tří prstů se zvedl) se stav NERUŠÍ —
+  // jinak by pokračující pinch po znovupřiložení prstu neměl na co navázat
+  // a zoom by přestal hýbat.
+  const fs = fingersNow(e.touches);
+  const left = fs.length;
+  // Dlaň se musí poznat i na KONCI dotyku: prohlížeč po dotyku vygeneruje
+  // kompatibilitní `click`, a ten nese poloměr jen tady. Bez tohohle by dlaň
+  // položená na okraji displeje stránku přepnula (naměřeno jako regrese).
+  if (e.changedTouches && [...e.changedTouches].some(isPalmTouch)) {
+    _palmUntil = Date.now() + 700;
+    _pinch = null; _rot3 = null; _touchStart = null;
+    return;
+  }
+  const g = _pinch;
   const r3 = _rot3;
+  if (left > 0) {
+    if (left >= 3) { _pinch = null; }
+    else if (left === 2) { _rot3 = null; _pinch = null; }   // re-anchoring až v touchmove
+    else { _pinch = null; _rot3 = null; }
+    return;
+  }
+  _pinch = null;
   _rot3 = null;
   // Tříprstové gesto = rotace: po puštění jen dorovnat cache (během tahu se
   // nevykresluje nic — rotuje se pouze CSS). Zoom ani posun se nedotýkají.
@@ -2392,6 +2447,28 @@ function onTouchEnd(e) {
 }
 function dist(a, b) {
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
+// touchcancel = prohlížeč/OS gesto ukončil (na tabletu typicky proto, že si
+// systém převzal dotyky — třemi prsty dělá PrintScreen). Dřív appka tenhle
+// signál VŮBEC neposlouchala: stav gesta zůstal viset, takže následné dva
+// prsty se do starého (mrtvého) stavu jen „přilepily“ a zoom nereagoval.
+// Teď se vše uklidí, takže následné dva prsty se chytí čistého stavu.
+function onTouchCancel(e) {
+  const fs = fingersNow(e && e.touches);
+  // Zůstaly-li PRSTY (typicky: OS si vzal tři prsty, dva zůstaly), gesto
+  // nekončí — jen se překlopí režim a stav se znovu založí z aktuální
+  // geometrie. Kdyby se tu všechno zahodilo, dva zbylé prsty by dál táhly
+  // a papír by nereagoval (přesně „prsty ztratily kontakt“).
+  if (fs.length > 0) {
+    _pinch = null;
+    _rot3 = null;
+    return;
+  }
+  _pinch = null;
+  _rot3 = null;
+  _touchStart = null;
+  refreshAfterRotation(true);
 }
 function mid(a, b) {
   return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
