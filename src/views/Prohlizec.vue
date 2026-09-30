@@ -693,7 +693,15 @@
     </div>
 
     <!-- Vstup pro text / dynamiku -->
-    <div v-if="editingAnnotationId" class="text-input-overlay">
+    <!-- POJISTKA PROTI ZBLOUDILÉ UDÁLOSTI: dialog se otevírá až po ZVEDNUTÍ pera,
+         kterým uživatel dynamiku umístil. Tentýž dotyk ale prohlížeč vyřídí ještě
+         jako kompatibilitní `click` a ten spadne DO tohoto dialogu — vybere dlaždici
+         pod místem položení pera („vloží se jiná dynamika, pokaždé jiná") nebo trefí
+         Zrušit („okno se ani neotevře"). Dialog proto přijme jen klepnutí, kterému
+         předcházelo POLOŽENÍ prstu/pera UVNITŘ dialogu. -->
+    <div v-if="editingAnnotationId" class="text-input-overlay"
+         @pointerdown.capture="dialogArmed = true"
+         @click.capture="onDialogClickCapture">
       <div class="text-input-card">
         <span class="ti-label">{{ editingAnnotTool === 'dynamic' ? 'Dynamika' : 'Text' }}</span>
 
@@ -704,7 +712,7 @@
             :key="d.key"
             class="dyn-btn"
             :class="{ on: dynKey(annotTextDraft) === d.key }"
-            @click="pickDyn(d.key)"
+            @pointerdown.prevent="pickDyn(d.key)"
             :title="d.key"
           >{{ d.glyph }}</button>
         </div>
@@ -914,10 +922,30 @@ const DYN_PICK = [
   'ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff',
   'fp', 'sf', 'sfz', 'fz', 'rf', 'rfz', 'sffz', 'sfp', 'n',
 ].map(k => ({ key: k, glyph: dynGlyph(k).text }));
-// Klepnutí na dlaždici: vyplní text a rovnou potvrdí (méně klikání na tabletu)
+// Klepnutí na dlaždici: vyplní text a rovnou potvrdí (méně klikání na tabletu).
+// POZOR: dlaždice reaguje na POLOŽENÍ prstu/pera (pointerdown), ne na `click`.
+// Dialog dynamiky se otevírá až po ZVEDNUTÍ pera, kterým uživatel dynamiku umístil.
+// Tentýž dotyk ale prohlížeč vyřídí i jako kompatibilitní `click` — ten spadne
+// DO právě otevřeného dialogu, vybere dlaždici ležící pod místem položení pera
+// a okno hned zavře. Uživatel to vidí jako „okno se neotevře a rovnou se vloží
+// dynamika, pokaždé jiná". Na `pointerdown` tahle zbloudilá událost nedosáhne,
+// protože vzniká až po něm.
 function pickDyn(k) {
   annotTextDraft.value = k;
   confirmTextAnnot();
+}
+// Je dialog „ozbrojený"? Tj. položil uživatel prst/pero UVNITŘ dialogu?
+// Dialog se otevírá až po zvednutí pera, a tentýž dotyk se vzápětí vyřídí jako
+// kompatibilitní `click` — ten spadne do už otevřeného dialogu a může vybrat
+// dlaždici pod místem položení pera (jiná dynamika) nebo stisknout Zrušit
+// (okno jako by se vůbec neotevřelo). Takové klepnutí nemá v dialogu co dělat:
+// přijmeme jen klepnutí, jemuž předcházelo položení prstu uvnitř dialogu.
+const dialogArmed = ref(false);
+watch(editingAnnotationId, (id) => { dialogArmed.value = false; });
+function onDialogClickCapture(e) {
+  if (dialogArmed.value) { dialogArmed.value = false; return; }
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 // Náhled zvýrazňovače při sběru bodů — stejná geometrie jako výsledek, takže
