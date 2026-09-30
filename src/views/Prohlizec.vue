@@ -176,13 +176,14 @@
 
     <!-- Aktivní stránka (vlastní oblast pod lištou — lišta noty nepřekrývá) -->
     <div class="page-area" ref="pageAreaEl">
-    <!-- Bílé plátno POD stránkou. Při rotaci krylo odkryté pozadí samo
-         (.stage.rotated::before), ale při ZOOMU a POSUNU se za papírem
-         odkrýval tmavý podklad aplikace (Jan: „musíme vytvořit to bílé plátno
-         pod stránku i v případě posunu a zoomu. Ne jen rotace."). Je to
-         viewport-ový overlay pod lištou, takže kryje celou čtecí plochu
+    <!-- Bílé plátno POD stránkou — VŽDY, pro každou stránku (Jan, Sep 2026:
+         „Tohle by měl být výchozí stav u všech stránek. I neupravených.“).
+         Dřív svítilo jen u transformovaného papíru a výchozí stav nechával
+         tmavý rám, takže neupravená stránka vypadala opticky menší než
+         upravená — po zoomu/rotaci se okolí vybílilo a papír „přiskočil“.
+         Je to viewport-ový overlay pod lištou, takže kryje celou čtecí plochu
          bez ohledu na to, jak je papír zrovna transformovaný. -->
-    <div v-if="sheetBackdropOn" class="sheet-backdrop" aria-hidden="true" />
+    <div class="sheet-backdrop" aria-hidden="true" />
     <!-- Pruhy u okrajů = místo, kde se listuje PRSTEM (jen při čtení).
          Vizuální pomůcka, nedrží dotyk — ten dojde až na .viewer.
          Šířku drží --edge-w, aby vizuál odpovídal přesně tomu, kde listování
@@ -194,7 +195,7 @@
          .rotor uvnitř je přesně velký jako neotočená stránka a otáčí se kolem
          svého středu — díky tomu se canvas, anotační vrstva I tlačítka skoků
          otočí SPOLU a poznámky zůstanou přilepené k notám. -->
-    <div class="stage" :class="{ rotated: rot !== 0, backdrop: sheetBackdropOn }" :style="stageStyle">
+    <div class="stage backdrop" :class="{ rotated: rot !== 0 }" :style="stageStyle">
      <div class="rotor" :style="rotorStyle">
       <canvas ref="canvasEl" class="pdf-canvas" />
       <!-- Anotační vrstva nad PDF -->
@@ -1493,15 +1494,6 @@ function releaseWakeLock() {
 }
 
 let availW = 800, availH = 1100;
-
-// Bílé plátno pod stránkou svítí vždy, když je papír TRANSFORMOVANÝ — tedy
-// přiblížený/oddálený, posunutý nebo otočený. V tu chvíli se za ním odkrývá
-// tmavý podklad aplikace, což vypadá jako „pootočený/posunutý papír na jiném
-// podkladu" (Jan). Ve výchozím stavu (zoom 1, bez posunu) plátno nesvítí, aby
-// zůstal známý tmavý rám kolem stránky.
-const sheetBackdropOn = computed(() =>
-  rot.value !== 0 || Math.abs(zoom.value - 1) > 0.001 || panX.value !== 0 || panY.value !== 0
-);
 
 // Rozměry, jak stránka PO OTOČENÍ zabere na obrazovce (pro fit a centrování)
 function rotAvail(baseW, baseH, deg) {
@@ -3815,14 +3807,13 @@ async function deleteBookmark(b) {
   overscroll-behavior-x: none;
 }
 .stage { position: relative; touch-action: none; z-index: 1; }
-/* Bílé plátno POD stránkou pro každý TRANSFORMOVANÝ stav (zoom, posun, rotace).
+/* Bílé plátno POD stránkou — svítí VŽDY, i pro neupravenou stránku.
    Kotví se na displej pod horní lištu, takže kryje celou čtecí plochu — ať je
-   papír posunutý nebo přiblížený jakkoli.
+   papír posunutý nebo přiblížený jakkoli. Jeden vzhled pro všechny stránky,
+   aby neupravená stránka nevypadala menší než upravená (Jan, Sep 2026).
    DŮLEŽITÉ: musí zůstat POD papírem. .stage má z-index auto (0), takže plátno
    s nižším z-indexem sedí pod ním — kdyby mělo vyšší, překrylo by noty a nešlo
-   by je odstranit (Jan). Proto z-index: 0 a .stage dostává z-index: 1.
-   Záměrně NEkryje výchozí stav (zoom 100 %, bez posunu a rotace) — tam je tmavý
-   rám kolem stránky součástí vzhledu čtečky, na který je Jan zvyklý. */
+   by je odstranit (Jan). Proto z-index: 0 a .stage dostává z-index: 1. */
 .sheet-backdrop {
   position: fixed; left: 0; right: 0; bottom: 0;
   top: var(--topbar-h, 96px);
