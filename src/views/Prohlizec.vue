@@ -188,8 +188,8 @@
          Vizuální pomůcka, nedrží dotyk — ten dojde až na .viewer.
          Šířku drží --edge-w, aby vizuál odpovídal přesně tomu, kde listování
          opravdu funguje (edgeWidth() v JS). -->
-    <div v-if="!annotMode && !jumpPlaceMode" class="edge-hint left" />
-    <div v-if="!annotMode && !jumpPlaceMode" class="edge-hint right" />
+    <div v-if="!jumpPlaceMode" class="edge-hint left" />
+    <div v-if="!jumpPlaceMode" class="edge-hint right" />
     <!-- .stage = vnější box, jehož rozměry odpovídají tomu, jak stránka zabírá
          na obrazovce PO OTOČENÍ (při 90°/270° prohozené). Nese zoom a posun.
          .rotor uvnitř je přesně velký jako neotočená stránka a otáčí se kolem
@@ -1197,6 +1197,19 @@ function toggleRotPanel() {
     pagesPanelOpen.value = false; pagesListOpen.value = false;
     cancelRotTween(true);        // ať úhel nevisí mezi polohami
   }
+}
+// GESTO SÁM ZAPNE SVŮJ REŽIM (Jan, Sep 2026): „když použiji gesto třemi prsty,
+// tak se automaticky zapne rotační mód. Když použiji gesto dvěma prsty, tak se
+// automaticky zapne zoom/pozice režim.“
+// Volá se PŘI ZAČÁTKU gesta (touchstart s daným počtem prstů), takže uživatel
+// vidí mřížku/panel ještě během otáčení a nemusí nic zapínat předem.
+// Vzájemné vylučování ostatních panelů drží toggleRotPanel/toggleZoomPanel,
+// takže se tu nekopíruje; už otevřený panel se jen nezavírá (žádné blikání).
+function autoOpenRotMode() {
+  if (!rotPanelOpen.value) toggleRotPanel();
+}
+function autoOpenZoomMode() {
+  if (!zoomPanelOpen.value) toggleZoomPanel();
 }
 
 const cssW = ref(800);
@@ -2357,6 +2370,9 @@ function onTouchStart(e) {
   // ---------------------------------------------------------------
   if (n >= 3) {
     // TŘI prsty = ROTACE (rigidní — měřítko ani posun se nehýbou).
+    // Gesto ZAPNE rotační režim samo (Jan) — mřížka se tak ukáže i tomu, kdo
+    // si rotaci vyvolal gestem, ne tlačítkem.
+    autoOpenRotMode();
     if (!_rot3) _rot3 = { angle0: _angle3(fs), rot0: rot.value };
     _pinch = null;
     _touchStart = null;
@@ -2366,6 +2382,7 @@ function onTouchStart(e) {
     // DVA prsty = ZOOM + POSUN. `lastD`/`lastM` jsou klíčové pro plynulost:
     // kotva se obnoví na AKTUÁLNÍ vzdálenost a střed, takže právě proběhlá
     // změna geometrie (přidání/odebrání dotyku) neudělá zoom skok.
+    autoOpenZoomMode();   // gesto dvěma prsty = režim zvětšení a posunu
     const d = dist(fs[0], fs[1]);
     const m = mid(fs[0], fs[1]);
     _pinch = { lastD: d, lastM: m, lastAt: Date.now() };
