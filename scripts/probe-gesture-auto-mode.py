@@ -62,7 +62,7 @@ def fresh_harness():
 PANELS = r"""
 (() => ({
   rotGrid: !!document.querySelector('.rot-grid'),
-  zoomPanel: !!document.querySelector('.zoom-panel'),
+  zoomPanel: !!document.querySelector('.zoom-panel:not(.rot-panel)'),
   rotPanel: !!document.querySelector('.rot-panel'),
   edgeHints: document.querySelectorAll('.edge-hint').length,
   annotOn: !!document.querySelector('.annot-panel'),
