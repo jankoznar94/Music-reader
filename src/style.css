@@ -21,15 +21,24 @@
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
-/* Notační font pro dynamiku (p, f, mf, sfz...).
+/* Notační font pro dynamiku (p, f, mf, sfz...) a ZNAČKY pro výšky not
+   (posuvky, ozdoby, artikulace).
    NotyDyn = cílený subset fontu Bravura (Steinberg Media Technologies GmbH),
    SIL Open Font License 1.1. Přejmenováno na NotyDyn, protože OFL zakazuje
    použít vyhrazené jméno "Bravura" na upravené (ořezané) verzi.
-   Obsahuje blok dynamik U+E520-U+E549 (42 glyfů), 8 KB.
-   font-display:block — fallback by zobrazil úplně jiné znaky, radši krátce počkat. */
+   Obsahuje bloky dynamik U+E520-U+E549 a značek U+E260-E264, U+E4A0-E4D1,
+   U+E566-E56D (62 glyfů, 11,7 kB).
+   font-display:block — fallback by zobrazil úplně jiné znaky, radši krátce počítat.
+
+   ⚠️ URL MUSÍ jít přes Vite (relativní cesta, ne '/assets/…'), aby font dostal
+   OBSAHOVÝ HASH v názvu souboru. Jinak se změněný font uloží pod stejným jménem,
+   vite-plugin-pwa mu dá `revision: null` (dontCacheBustURLsMatching = /^assets/)
+   a Workbox ho NIKDY znovu nestáhne — prohlížeč pak drží starý font a nové
+   glyfy se vykreslí jako prázdné obdélníčky. Přesně tak zmizely Značky:
+   font se v commitu se Značkami zvětšil 7 960 → 11 704 B, ale jméno zůstalo. */
 @font-face {
   font-family: 'NotyDyn';
-  src: url('/assets/noty-dyn.woff2') format('woff2');
+  src: url('./assets/noty-dyn.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: block;

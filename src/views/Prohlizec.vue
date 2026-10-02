@@ -2596,10 +2596,17 @@ function onTouchEnd(e) {
     // V anotaci klepnutí na noty NElístuje. Listuje jen klepnutí, které
     // ZAČALO i SKONČILO v okrajovém pruhu (prst se nepřesunul z kraje doprostřed)
     // a netrefilo ovládací prvek (anotační panel sedí v levém kraji).
-    if (wasAnnot && st.edge && inEdgeZone(t.clientX)) {
+    if (wasAnot && st.edge && inEdgeZone(t.clientX)) {
       annotEdgeTap(t.clientX, t.clientY, st.target);
+    } else if (!wasAnnot && !isControlTarget(st.target)) {
+      // Ťuknutí prstem na stránku v režimu čtení = režimy gesta (zoom/rotace)
+      // končí. Dělá se i tady, ne jen v onTap: na reálném tabletu nemusí
+      // kompatibilitní `click` po každém dotyku dorazit (např. hned po
+      // tříprstém gestu ho prohlížeč nevygeneruje), takže spoléhat jen na
+      // onTap by nechalo mřížku viset na obrazovce.
+      closeGesturePanels();
     }
-    return; // v režimu čtení tap řeší onTap
+    return; // v režimu čtení tap dál řeší onTap (listování v okrajové zóně)
   }
   // Swipe prstem listuje JEN když začal v okrajovém pruhu (Jan: „jen na krajích displeje“)
   if (st.edge && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
@@ -2652,6 +2659,16 @@ function normDeg(v) {
   return ((v % 360) + 360) % 360;
 }
 
+// Klepnutí jedním prstem na stránku ZAVŘE režimy, které otevřelo gesto
+// (Jan, Oct 2026): „Když po těchto úpravách uživatel jedním prstem ťukne na
+// stránku, tak by se tyto módy měly všechny zavřít.“
+// Proč zvlášť funkce: zavírá se z VÍCE cest (klepnutí myší/prstem přes onTap,
+// tap prstem přes touch cestu) a každá z nich musí uklidit stejně.
+function closeGesturePanels() {
+  zoomPanelOpen.value = false;
+  rotPanelOpen.value = false;
+}
+
 // Tap: okraje → listování (jen mimo anotaci, tlačítka, lištu a formuláře).
 // Pero klepnutím NElístuje — listuje se jen prstem (Jan: „anotace se dělají perem,
 // stránky se přepínají jen prstem“), a navíc jen v úzkém pruhu u okraje.
@@ -2666,6 +2683,10 @@ function onTap(e) {
   if (e.target.closest('button')) return;
   if (e.target.closest('input, textarea, select')) return;
   if (e.target.closest('.top-bar, .jump-panel, .slider-panel, .bookmark-strip, .page-go-backdrop')) return;
+  if (e.target.closest('.zoom-panel, .annot-panel, .edit-bar, .jp-list, .page-go')) return;
+  // Ťuknutí na stránku (mimo lištu i panely) = režimy gesta končí. Dělá se to
+  // PŘED listováním, aby se panel zavřel i při klepnutí v okrajové zóně.
+  closeGesturePanels();
   const el = viewerEl.value;
   if (!el) return;
   const localX = e.clientX - el.getBoundingClientRect().left;
