@@ -261,6 +261,17 @@
             :opacity="it.opacity != null ? it.opacity : 1"
             text-anchor="middle"
           >{{ annotDisplayText(it) }}</text>
+          <!-- Značky pro výšky not (posuvky, ozdoby, artikulace) — stejný princip
+               jako dynamika: klepnutím na dlaždici se značka položí na noty. -->
+          <text
+            v-else-if="it.tool === 'mark'"
+            :x="it.x" :y="it.y"
+            :fill="it.color"
+            :font-size="it.size"
+            font-family="'NotyDyn', serif"
+            :opacity="it.opacity != null ? it.opacity : 1"
+            text-anchor="middle"
+          >{{ annotDisplayText(it) }}</text>
           <!-- Crescendo (otvírá se vpravo) / decrescendo (otvírá se vlevo) -->
           <!-- Uložený klín: špička (x1,y1), dvě ramena (x2,y2) a (x3,y3). ŽÁDNÁ středová čára. -->
           <g v-else-if="it.tool === 'crescendo' || it.tool === 'decrescendo'"
@@ -281,9 +292,9 @@
           <line v-else-if="activeItem.tool === 'crescendo' || activeItem.tool === 'decrescendo'"
             :x1="activeItem.x1" :y1="activeItem.y1" :x2="activeItem.x2" :y2="activeItem.y2"
             :stroke="activeItem.color" :stroke-width="activeItem.width" stroke-linecap="round" />
-          <!-- Dynamika: náhled budoucího glyfu (text zatím prázdný → tečka), ať uživatel vidí, co dostane -->
+          <!-- Dynamika / značka: náhled budoucího glyfu (text zatím prázdný → tečka), ať uživatel vidí, co dostane -->
           <text
-            v-else-if="activeItem.tool === 'dynamic' && activeItem.text"
+            v-else-if="isNotationText(activeItem) && activeItem.text"
             :x="activeItem.x" :y="activeItem.y"
             :fill="activeItem.color"
             :font-size="activeItem.size"
@@ -621,6 +632,9 @@
           <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf, sfz...)">
             <span class="dyn-ico">{{ dynGlyph('mf').text }}</span>
           </button>
+          <button class="ap-tool" @click="setTool('mark')" :class="{ on: tool === 'mark' }" title="Značky pro výšky not (béčko, odrážka, křížek, ozdoby...)">
+            <span class="dyn-ico">{{ markGlyph('k').text }}</span>
+          </button>
         </div>
       </div>
 
@@ -703,7 +717,7 @@
          @pointerdown.capture="dialogArmed = true"
          @click.capture="onDialogClickCapture">
       <div class="text-input-card">
-        <span class="ti-label">{{ editingAnnotTool === 'dynamic' ? 'Dynamika' : 'Text' }}</span>
+        <span class="ti-label">{{ editingAnnotTool === 'dynamic' ? 'Dynamika' : editingAnnotTool === 'mark' ? 'Značka' : 'Text' }}</span>
 
         <!-- Rychlý výběr: klepni na dynamiku, vyplní se do pole (a rovnou se uloží) -->
         <div v-if="editingAnnotTool === 'dynamic'" class="dyn-grid">
@@ -717,15 +731,39 @@
           >{{ d.glyph }}</button>
         </div>
 
+        <!-- Značky pro výšky not — dlaždice rozdělené do sekcí (posuvky / ozdoby / drobnosti).
+             Stejná dlaždice, stejná past: reaguje na POLOŽENÍ, ne na `click`. -->
+        <template v-if="editingAnnotTool === 'mark'">
+          <div v-for="g in MARK_GROUPS" :key="g.label" class="mark-sec">
+            <div class="mark-sec-label">{{ g.label }}</div>
+            <div class="dyn-grid">
+              <button
+                v-for="m in g.items"
+                :key="m.key"
+                class="dyn-btn"
+                :class="{ on: annotTextDraft.trim().toLowerCase() === m.key }"
+                @pointerdown.prevent="pickMark(m.key)"
+                :title="m.label"
+              >{{ markGlyph(m.key).text }}</button>
+            </div>
+          </div>
+        </template>
+
         <input
           v-model="annotTextDraft"
           class="ti-input"
-          :placeholder="editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : 'Text poznámky'"
+          :placeholder="editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : editingAnnotTool === 'mark' ? 'vyber značku z nabídky výše' : 'Text poznámky'"
           @keydown.enter="confirmTextAnnot"
         />
         <!-- Neznámý výraz: font pro něj nemá glyf → zobrazil by se rozbitý znak -->
         <span v-if="editingAnnotTool === 'dynamic' && annotTextDraft.trim() && !dynGlyph(annotTextDraft).known" class="ti-warn">
           Tuhle dynamiku font nezná — vyber ji z nabídky výše.
+        </span>
+        <span v-if="editingAnnotTool === 'mark' && annotTextDraft.trim() && !markGlyph(annotTextDraft).known" class="ti-warn">
+          Tuhle značku font nezná — vyber ji z nabídky výše.
+        </span>
+        <span v-else-if="editingAnnotTool === 'mark' && markLabel(annotTextDraft)" class="ti-note">
+          {{ markLabel(annotTextDraft) }}
         </span>
 
         <div class="ti-actions">
@@ -905,15 +943,98 @@ function dynAdvEm(raw) {
   if (DYN_ADV[k] != null) return DYN_ADV[k];
   return 0.42 * Math.max(1, String(raw || '').length);
 }
-// Text k vykreslení: dynamika = SMuFL znak (font NotyDyn), ostatní = jak je
+// Text k vykreslení: dynamika/značka = SMuFL znak (font NotyDyn), ostatní = jak je
 function annotDisplayText(it) {
   if (!it) return '';
   if (it.tool === 'dynamic') return dynGlyph(it.text).text;
+  if (it.tool === 'mark') return markGlyph(it.text).text;
   return it.text || '';
 }
-// Je to dynamika, kterou font neumí? (zvýrazníme v náhledu, ať uživatel ví)
+// Je to dynamika/značka, kterou font neumí? (zvýrazníme v náhledu, ať uživatel ví)
 function dynUnknown(it) {
-  return it && it.tool === 'dynamic' && it.text && !dynGlyph(it.text).known;
+  if (!it || !it.text) return false;
+  if (it.tool === 'dynamic') return !dynGlyph(it.text).known;
+  if (it.tool === 'mark') return !markGlyph(it.text).known;
+  return false;
+}
+
+// --- Značky pro výšky not: posuvky, ozdoby a artikulace ---
+// Stejný princip jako dynamika: každá značka je JEDEN glyf v notačním fontu
+// NotyDyn (SMuFL), ne ASCII znak. Uživatel klepne na dlaždici v novém nástroji
+// „Značky" a značka se položí na noty; rukou se přesune, guma ji smaže.
+// Kódy i šířky jsou ověřené z fontu (advance width v em).
+const MARK_GROUPS = [
+  {
+    label: 'Posuvky',
+    items: [
+      { key: 'bb',    label: 'dvojité béčko',   cp: 0xE264 },
+      { key: 'b',     label: 'béčko',           cp: 0xE260 },
+      { key: 'odr',   label: 'odrážka',         cp: 0xE261 },
+      { key: 'k',     label: 'křížek',          cp: 0xE262 },
+      { key: 'kk',    label: 'dvojitý křížek',  cp: 0xE263 },
+    ],
+  },
+  {
+    label: 'Ozdoby',
+    items: [
+      { key: 'trylek', label: 'trylek',           cp: 0xE566 },
+      { key: 'obal',   label: 'obal',             cp: 0xE567 },
+      { key: 'obalo',  label: 'obrácený obal',    cp: 0xE568 },
+      { key: 'trylks', label: 'kratší trylek',    cp: 0xE56C },
+      { key: 'mord',   label: 'mordent',          cp: 0xE56D },
+    ],
+  },
+  {
+    label: 'Drobnosti',
+    items: [
+      { key: 'ferm',  label: 'fermata (koruna)', cp: 0xE4C0 },
+      { key: 'cez',   label: 'cezura',           cp: 0xE4D1 },
+      { key: 'dech',  label: 'dech',             cp: 0xE4CE },
+      { key: 'akc',   label: 'akcent',           cp: 0xE4A0 },
+      { key: 'stacc', label: 'staccato',         cp: 0xE4A2 },
+      { key: 'ten',   label: 'tenuto',           cp: 0xE4A4 },
+    ],
+  },
+];
+// Šířky glyfů (advance width v em) — pro přesný rámeček výběru i hit-test.
+// Musí odpovídat fontu; když se sem dostane špatné číslo, rámeček a klikatelná
+// plocha se rozejdou (přesně ta vada, kterou u dynamiky řeší DYN_ADV).
+const MARK_ADV = {
+  bb: 0.413, b: 0.226, odr: 0.168, k: 0.249, kk: 0.250,
+  trylek: 0.521, obal: 0.460, obalo: 0.457, trylks: 0.730, mord: 0.729,
+  ferm: 0.605, cez: 0.385, dech: 0.153, akc: 0.339, stacc: 0.084, ten: 0.338,
+};
+const MARK_LOOKUP = (() => {
+  const m = new Map();
+  for (const g of MARK_GROUPS) for (const it of g.items) m.set(it.key, it);
+  return m;
+})();
+// Povolené klíče značek — pro validaci uložených anotací (viz markGlyph).
+const MARK_KEYS = new Set(MARK_LOOKUP.keys());
+function markGlyph(raw) {
+  const k = String(raw || '').trim().toLowerCase();
+  if (!MARK_KEYS.has(k)) return { text: '', known: false };
+  return { text: String.fromCodePoint(MARK_LOOKUP.get(k).cp), known: true };
+}
+function markAdvEm(raw) {
+  const k = String(raw || '').trim().toLowerCase();
+  return MARK_ADV[k] != null ? MARK_ADV[k] : 0.5;
+}
+function markLabel(raw) {
+  const it = MARK_LOOKUP.get(String(raw || '').trim().toLowerCase());
+  return it ? it.label : '';
+}
+// Je to notační text? (dynamika i značky se vykreslují fontem NotyDyn)
+function isNotationText(it) {
+  return !!it && (it.tool === 'dynamic' || it.tool === 'mark');
+}
+// Klepnutí na dlaždici značky: vyplní klíč a rovnou potvrdí.
+// Stejná past jako u dynamiky — dialog se otevírá až po ZVEDNUTÍ pera, a tentýž
+// dotyk se vzápětí vyřídí jako kompatibilitní `click`; dlaždice proto reaguje na
+// POLOŽENÍ (pointerdown), na které zbloudilá událost nedosáhne.
+function pickMark(k) {
+  annotTextDraft.value = k;
+  confirmTextAnnot();
 }
 
 // Nabídka dynamik v dialogu — pořadí odpovídá běžnému notačnímu úzu (od slabé k silné).
@@ -969,14 +1090,15 @@ const selectedBox = computed(() => {
   const it = editingAnnot.value;
   if (!it) return null;
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
-  if (it.tool === 'text' || it.tool === 'dynamic') {
+  if (it.tool === 'text' || it.tool === 'dynamic' || it.tool === 'mark') {
     if (it.x != null && it.y != null) {
       const s = it.size || 20;
       x1 = it.x; y1 = it.y - s;
-      // Dynamika = glyf z fontu (šířka z metrik, ne odhad), text = odhad podle znaků
-      const w = it.tool === 'dynamic'
-        ? dynAdvEm(it.text) * s
-        : (it.text ? it.text.length * s * 0.6 : s);
+      // Dynamika/značka = glyf z fontu (šířka z metrik, ne odhad), text = odhad podle znaků
+      let w;
+      if (it.tool === 'dynamic') w = dynAdvEm(it.text) * s;
+      else if (it.tool === 'mark') w = markAdvEm(it.text) * s;
+      else w = it.text ? it.text.length * s * 0.6 : s;
       x2 = it.x + w; y2 = it.y;
     }
   } else if (isStroke(it)) {
@@ -1003,9 +1125,12 @@ const selectedBox = computed(() => {
   const pad = 8;
   return { x: x1 - pad, y: y1 - pad, w: (x2 - x1) + pad * 2, h: (y2 - y1) + pad * 2 };
 });
-const editingTypeLabel = computed(() =>
-  editingAnnot.value ? (editingAnnot.value.tool === 'dynamic' ? 'Dynamika' : 'Text') : ''
-);
+const editingTypeLabel = computed(() => {
+  const t = editingAnnot.value ? editingAnnot.value.tool : '';
+  if (t === 'dynamic') return 'Dynamika';
+  if (t === 'mark') return 'Značka';
+  return t ? 'Text' : '';
+});
 const wedgePoints = ref([]); // body zobáčku (crescendo/decrescendo), až 3 × {x,y}
 const hlPoints = ref([]);    // body zvýrazňovače (3 × {x,y}: levý spodní, levý horní, vpravo) — ve „vzpřímené" soustavě
 const wedgeHintText = computed(() => {
@@ -2787,8 +2912,8 @@ function onLayerDown(e) {
     return;
   }
 
-  // Text / dynamika: umístění na stránku (vytvoří se po uvolnění)
-  if (tool.value === 'text' || tool.value === 'dynamic') {
+  // Text / dynamika / značka: umístění na stránku (vytvoří se po uvolnění)
+  if (tool.value === 'text' || tool.value === 'dynamic' || tool.value === 'mark') {
     activeItem.value = {
       id: crypto.randomUUID(), page: currentPage.value,
       tool: tool.value, color: annotColor.value,
@@ -2870,7 +2995,7 @@ function onLayerMove(e) {
     const dy = p.y - _dragFrom.y;
     const it = _dragAnnot;
     const s = _dragSnap;
-    if (it.tool === 'text' || it.tool === 'dynamic') {
+    if (it.tool === 'text' || it.tool === 'dynamic' || it.tool === 'mark') {
       it.x = s.x + dx; it.y = s.y + dy;
     } else if (isStroke(it)) {
       it.points = s.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
@@ -2891,8 +3016,8 @@ function onLayerMove(e) {
   if (_activePointerId !== e.pointerId) return; // jiný prvek (druhá ruka) — nekreslit
   const p = toLayerCoords(e);
   const prev = _prev;
-  // Text / dynamika: jen sledovat, dokud neuvolníme (pozice se nastaví na up)
-  if (tool.value === 'text' || tool.value === 'dynamic') {
+  // Text / dynamika / značka: jen sledovat, dokud neuvolníme (pozice se nastaví na up)
+  if (tool.value === 'text' || tool.value === 'dynamic' || tool.value === 'mark') {
     activeItem.value.x = p.x; activeItem.value.y = p.y;
     _prev = p;
     return;
@@ -2996,8 +3121,8 @@ function onLayerUp(e) {
     return;
   }
 
-  // Text / dynamika: místo uvolnění → otevřít textový vstup (pending)
-  if (tool.value === 'text' || tool.value === 'dynamic') {
+  // Text / dynamika / značka: místo uvolnění → otevřít dialog (pending)
+  if (tool.value === 'text' || tool.value === 'dynamic' || tool.value === 'mark') {
     it.pending = true;
     editingAnnotationId.value = it.id;
     return; // držet aktivní do uložení textu
@@ -3073,14 +3198,15 @@ function cancelTextAnnot() {
 function itemBox(it) {
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
   const pad = 10;
-  if (it.tool === 'text' || it.tool === 'dynamic') {
+  if (it.tool === 'text' || it.tool === 'dynamic' || it.tool === 'mark') {
     if (it.x == null || it.y == null) return null;
     const s = it.size || 20;
     x1 = it.x; y1 = it.y - s;
-    // Dynamika = šířka glyfu z metrik fontu; text = odhad podle počtu znaků
-    const w = it.tool === 'dynamic'
-      ? dynAdvEm(it.text) * s
-      : (it.text ? Math.max(s, it.text.length * s * 0.6) : s);
+    // Dynamika/značka = šířka glyfu z metrik fontu; text = odhad podle znaků
+    let w;
+    if (it.tool === 'dynamic') w = dynAdvEm(it.text) * s;
+    else if (it.tool === 'mark') w = markAdvEm(it.text) * s;
+    else w = it.text ? Math.max(s, it.text.length * s * 0.6) : s;
     x2 = it.x + w; y2 = it.y;
   } else if (isStroke(it)) {
     if (!it.points || !it.points.length) return null;
@@ -4330,6 +4456,13 @@ async function deleteBookmark(b) {
 }
 .dyn-btn.on { border-color: var(--accent); background: var(--bg-elev); }
 .ti-warn { font-size: 0.8rem; color: var(--danger); }
+.ti-note { font-size: 0.8rem; color: var(--text-dim); }
+/* Sekce nabídky značek (Posuvky / Ozdoby / Drobnosti) — dlaždice zůstávají stejné */
+.mark-sec { display: flex; flex-direction: column; gap: 4px; }
+.mark-sec-label {
+  font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-dim);
+}
 
 /* Loading overlay při prvním načtení / přechodu mezi skladbami */
 .viewer-loading {
