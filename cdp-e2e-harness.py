@@ -44,13 +44,15 @@ Input API choice (the difference between a real test and a fake failure):
 """
 
 import asyncio
+import base64
 import json
+import os
 import time
 import urllib.request
 
 import websockets
 
-CDP_HTTP = "http://127.0.0.1:9222"
+CDP_HTTP = "http://127.0.0.1:9223"
 APP_URL = "http://localhost:5173/"
 FIXTURE = "/tmp/noty-fixture.pdf"
 
@@ -149,7 +151,7 @@ class Harness:
         res = await self.cdp("Runtime.evaluate", {
             "expression": expr, "returnByValue": True, "awaitPromise": await_promise})
         if "exceptionDetails" in res:
-            raise RuntimeError("JS: " + json.dumps(res["exceptionDetails"])[:300])
+            raise RuntimeError("JS: " + json.dumps(res["exceptionDetails"])[:1200])
         return res.get("result", {}).get("value")
 
     async def wait_for(self, expr, timeout=30, label=""):
@@ -182,10 +184,37 @@ class Harness:
         await self.open()
 
     async def set_file_input(self, selector, path):
+        """Attach a file to `input[type=file]`, the way the app really receives one.
+
+        Two routes, because Chrome 153's `DOM.setFileInputFiles` can report success and
+        still leave `input.files.length === 0` (the upload then never starts and the test
+        fails with a phantom "PDF upload" timeout):
+          1. CDP `DOM.setFileInputFiles` - preferred when it works.
+          2. JS fallback - build a real `File` from the bytes and hand it over through
+             `DataTransfer`, then fire the same bubbling `change` event the user's picker
+             would. Verified by reading `input.files.length` back, never assumed.
+        """
         doc = await self.cdp("DOM.getDocument")
         node = await self.cdp("DOM.querySelector",
                               {"nodeId": doc["root"]["nodeId"], "selector": selector})
         await self.cdp("DOM.setFileInputFiles", {"files": [path], "nodeId": node["nodeId"]})
+        n = await self.ev("document.querySelector(%s).files.length" % json.dumps(selector))
+        if n:
+            return n
+        import base64
+        with open(path, "rb") as fh:
+            b64 = base64.b64encode(fh.read()).decode()
+        name = os.path.basename(path)
+        n = await self.ev(
+            "(() => { const bin = atob(%s); const u = new Uint8Array(bin.length);"
+            " for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);"
+            " const f = new File([u], %s, {type: 'application/pdf'});"
+            " const dt = new DataTransfer(); dt.items.add(f);"
+            " const el = document.querySelector(%s); el.files = dt.files;"
+            " el.dispatchEvent(new Event('change', {bubbles: true}));"
+            " return el.files.length; })()"
+            % (json.dumps(b64), json.dumps(name), json.dumps(selector)))
+        return n
 
     async def set_value(self, selector, value):
         """Set an input and fire a bubbling `input` event (what v-model listens for)."""

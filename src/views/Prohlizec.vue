@@ -43,7 +43,7 @@
              přepnout do toku a nikdy nepřekrylo tlačítka — absolutní pozicování
              se pořád počítá proti .top-bar, protože .tb-row je statický. -->
         <button class="tb-page tb-page-center" @click="openPageGo" title="Přejít na stránku">
-          {{ visibleIndex + 1 }} / {{ totalPages }}<span v-if="hiddenPages.length" class="tb-page-of"> (z {{ rawPageCount }})</span>
+          {{ withOffset(dispPage(currentPage)) }} / {{ withOffset(totalPages) }}<span v-if="hiddenPages.length" class="tb-page-of"> (z {{ withOffset(rawPageCount) }})</span>
         </button>
         <!-- Pravá skupina -->
         <div class="tb-side right">
@@ -118,7 +118,15 @@
          přes ni (anotace, záložky a skoky na ní zůstávají v datech). -->
     <div v-if="pagesPanelOpen" class="zoom-panel">
       <button class="zp-btn" @click="removeCurrentPage" :disabled="totalPages <= 1" title="Odebrat tuto stránku ze skladby">−</button>
-      <span class="zp-val">Odebrat str. {{ currentPage + 1 }}</span>
+      <span class="zp-val">Odebrat str. {{ dispPage(currentPage) }}</span>
+      <span class="zp-sep" />
+      <!-- Posun číslování (jiné vydání / noty začínající vyšší stránkou).
+           Krok o 1 je dost rychlý (držení tlačítka nechci — Janovy PWA
+           nesmí mít hover/focus stavy; klik = akce) a hrubý skok se dělá
+           zadáním „první stránky“ v dialogu Přejít na stránku. -->
+      <button class="zp-btn" @click="bumpOffset(-1)" :disabled="pagesOffset <= 0" title="Posunout číslování o 1 níž">−</button>
+      <span class="zp-val" :class="{ dim: pagesOffset === 0 }">posun {{ pagesOffset > 0 ? '+' : '' }}{{ pagesOffset }}</span>
+      <button class="zp-btn" @click="bumpOffset(1)" title="Posunout číslování o 1 výš">+</button>
       <span class="zp-sep" />
       <button class="zp-btn" @click="restoreRemovedPages" :disabled="!hiddenPages.length" title="Vrátit odebrané stránky">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
@@ -406,7 +414,7 @@
           class="jump-on-btn"
           :style="jumpBoxStyle(j)"
           @click="goJump(j)"
-          :title="'Skok na str. ' + dispPage(j.toPage)"
+          :title="'Skok na str. ' + withOffset(dispPage(j.toPage))"
         >{{ j.label }}</button>
       </div>
     </div>
@@ -428,11 +436,31 @@
             @keydown.enter="goToTypedPage"
             @keydown.esc="closePageGo"
           />
-          <span class="pg-total">/ {{ totalPages }}</span>
+          <span class="pg-total">/ {{ withOffset(totalPages) }}</span>
           <button class="pg-btn primary" @click="goToTypedPage">Přejít</button>
           <button class="pg-btn" @click="closePageGo">Zavřít</button>
         </div>
-        <div v-if="hiddenPages.length" class="pg-hint">Stránky {{ hiddenLabel }} jsou odebrané — čísluje se {{ totalPages }} zobrazenými z {{ rawPageCount }} původních.</div>
+        <!-- Posun číslování: noty často začínají až 7. stranou nebo jsou proti
+             jinému vydání posunuté. Tady se jen řekne, jaké číslo má první
+             stránka PDF — číslování se srovná, noty se nemění. -->
+        <div class="pg-offset">
+          <span class="pg-offset-label">První stránka má číslo</span>
+          <input
+            v-model="firstPageValue"
+            class="pg-offset-input"
+            type="text"
+            inputmode="numeric"
+            pattern="-?[0-9]*"
+            placeholder="např. 7"
+            @keydown.enter="applyFirstPage"
+          />
+          <button class="pg-btn" @click="applyFirstPage">Nastavit</button>
+        </div>
+        <div class="pg-hint">
+          Číslování je posunuté o {{ pagesOffset > 0 ? '+' : '' }}{{ pagesOffset }}
+          (1. stránka PDF = {{ 1 + pagesOffset }}.).
+        </div>
+        <div v-if="hiddenPages.length" class="pg-hint">Stránky {{ hiddenLabel }} jsou odebrané — čísluje se {{ withOffset(totalPages) }} zobrazenými z {{ withOffset(rawPageCount) }} původních.</div>
       </div>
     </div>
 
@@ -454,13 +482,13 @@
     <div v-if="rotPanelOpen" class="rot-grid" aria-hidden="true" />
 
     <div v-if="edgeJumps.length" class="jump-strip">
-      <button v-for="j in edgeJumps" :key="j.id" class="jump-btn" @click="goJump(j)" :title="'Skok na str. ' + dispPage(j.toPage)">{{ j.label }}</button>
+      <button v-for="j in edgeJumps" :key="j.id" class="jump-btn" @click="goJump(j)" :title="'Skok na str. ' + withOffset(dispPage(j.toPage))">{{ j.label }}</button>
     </div>
 
     <!-- Nápověda při umisťování — malá lišta, aby nezakrývala noty, na které se klepá -->
     <div v-if="jumpPlaceMode" class="jp-place-hint">
       <span>{{ jumpPlaceHint }}</span>
-      <span class="jp-place-count">{{ jumpPlacePoints.length }}/3 · str. {{ dispPage(currentPage) }}</span>
+      <span class="jp-place-count">{{ jumpPlacePoints.length }}/3 · str. {{ withOffset(dispPage(currentPage)) }}</span>
     </div>
 
     <!-- Panel pro vytváření skoku (při umisťování se schová — jinak zakrývá noty) -->
@@ -487,14 +515,14 @@
       </div>
       <div v-if="jumpPlaceMode" class="jp-hint">{{ jumpPlaceHint }}</div>
       <div class="jp-row">
-        <span class="jp-item-pages">Str. {{ dispPage(currentPage) }}</span>
+        <span class="jp-item-pages">Str. {{ withOffset(dispPage(currentPage)) }}</span>
         <button class="jp-btn primary" @click="saveJump" :disabled="jumpStart === null || jumpEnd === null">Uložit skok</button>
       </div>
       <div v-if="jumps.length" class="jp-list">
         <div class="jp-subtitle">Existující skoky</div>
         <div v-for="j in jumps" :key="j.id" class="jp-item">
           <span class="jp-item-label">{{ j.label }}</span>
-          <span class="jp-item-pages">str. {{ dispPage(j.fromPage) }} → {{ dispPage(j.toPage) }}</span>
+          <span class="jp-item-pages">str. {{ withOffset(dispPage(j.fromPage)) }} → {{ withOffset(dispPage(j.toPage)) }}</span>
           <button class="jp-del" @click="deleteJump(j)" title="Smazat skok">🗑</button>
         </div>
       </div>
@@ -505,7 +533,7 @@
     <div v-if="bookmarkMode" class="jump-panel">
       <div class="jp-title">{{ bookmarkEditing ? 'Upravit záložku' : 'Nová záložka' }}</div>
       <div class="jp-row">
-        <span class="jp-cur">{{ bookmarkEditing ? 'Stránka ' + dispPage((bookmarks.find(x => x.id === bookmarkEditing) || {}).page) : 'Stránka ' + dispPage(currentPage) }}</span>
+        <span class="jp-cur">{{ bookmarkEditing ? 'Stránka ' + withOffset(dispPage((bookmarks.find(x => x.id === bookmarkEditing) || {}).page)) : 'Stránka ' + withOffset(dispPage(currentPage)) }}</span>
       </div>
       <div class="jp-row">
         <input v-model="bookmarkLabel" class="jp-input" placeholder="Text záložky (např. Coda)" />
@@ -530,7 +558,7 @@
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/></svg>
           </button>
-          <span class="jp-item-label" :class="{ dim: !b.label }">str. {{ dispPage(b.page) }}<template v-if="b.label"> · {{ b.label }}</template></span>
+          <span class="jp-item-label" :class="{ dim: !b.label }">str. {{ withOffset(dispPage(b.page)) }}<template v-if="b.label"> · {{ b.label }}</template></span>
           <span class="jp-actions">
             <button class="jp-icon" @click="startEditBookmark(b)" title="Upravit">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
@@ -554,9 +582,9 @@
         class="bookmark-btn"
         :class="{ on: b.page === currentPage, circle: !b.label }"
         @click="goBookmark(b)"
-        :title="'Záložka na str. ' + (b.page + 1)"
+        :title="'Záložka na str. ' + withOffset(b.page + 1)"
       >
-        <span class="bk-num">{{ b.page + 1 }}</span>
+        <span class="bk-num">{{ withOffset(b.page + 1) }}</span>
         <span v-if="b.label" class="bk-label">{{ b.label }}</span>
       </button>
     </div>
@@ -577,11 +605,11 @@
           :class="{ on: i.slot === pageSlider }"
           :data-idx="i.slot"
           @click="gotoPage(i.idx)"
-          :title="'Stránka ' + (i.slot + 1)"
+          :title="'Stránka ' + withOffset(i.slot + 1)"
         >
-          <img v-if="i.src" :src="i.src" :alt="'Stránka ' + (i.slot + 1)" />
+          <img v-if="i.src" :src="i.src" :alt="'Stránka ' + withOffset(i.slot + 1)" />
           <div v-else class="thumb-loading">…</div>
-          <span class="thumb-num">{{ i.slot + 1 }}</span>
+          <span class="thumb-num">{{ withOffset(i.slot + 1) }}</span>
           <!-- Odebrání stránky přímo z pásu miniatur (Jan chce odebrat
                KONKRÉTNÍ stránky, ne jen tu, na které právě stojí). -->
           <button class="thumb-x" @click.stop="removePage(i.idx)" title="Odebrat tuto stránku">✕</button>
@@ -1249,9 +1277,23 @@ function dispPage(idx) {
 const hiddenLabel = computed(() =>
   hiddenPages.value.map(p => dispPage(p)).join(', ')
 );
+// --- POSUN ČÍSLOVÁNÍ (jiné vydání) ----------------------------------------
+// Jan: noty často začínají až 7. stranou nebo jsou proti jinému vydání
+// posunuté o pár stránek. `pagesOffset` = číslo, které se PŘIČTE k pořadí
+// zobrazené stránky, takže 1. stránka PDF se hlásí jako 1 + offset.
+// Je to VÝHRADNĚ číslování — PDF, pořadí stránek, anotace, skoky ani záložky
+// se nemění (ty pracují dál s indexy do PDF). Ukládá se na skladbu, takže
+// s ní putuje do zálohy a platí i po zavření appky.
+const pagesOffset = ref(0);
+// Zobrazené číslo stránky včetně posunu (pro všechny výpisy adresované uživateli).
+function withOffset(n) {
+  if (n == null || n === '') return '';
+  return n + pagesOffset.value;
+}
 async function loadHiddenPages() {
   const s = await dbGetSong(song.id);
   hiddenPages.value = Array.isArray(s?.hiddenPages) ? [...s.hiddenPages].sort((a, b) => a - b) : [];
+  pagesOffset.value = Number.isFinite(s?.pagesOffset) ? s.pagesOffset : 0;
 }
 // Po jakékoli změně množiny odebraných stránek: přepočítat `totalPages`
 // (počítadlo, slider i pás miniatur pracují se ZOBRAZENÝMI stránkami).
@@ -1264,6 +1306,35 @@ async function persistHiddenPages() {
   if (!s) return;
   s.hiddenPages = [...hiddenPages.value].sort((a, b) => a - b);
   await dbSaveSong(s);
+}
+// Posun číslování se ukládá na skladbu stejně jako odebrané stránky —
+// je to vlastnost not, ne stav UI.
+async function persistPagesOffset() {
+  const s = await dbGetSong(song.id);
+  if (!s) return;
+  s.pagesOffset = pagesOffset.value;
+  await dbSaveSong(s);
+}
+// Tlačítka − / + v panelu Odebrat stránky. Krok o 1 stačí — posun je
+// typicky o jednu až pět stránek a hrubý skok se dělá zadáním „první stránky“.
+async function bumpOffset(delta) {
+  if (delta === 0) return;
+  pagesOffset.value += delta;
+  await persistPagesOffset();
+  showToast('Číslování posunuto o ' + (pagesOffset.value > 0 ? '+' : '') + pagesOffset.value
+    + ' (1. strana = ' + (1 + pagesOffset.value) + ')');
+}
+// Zadání „první stránky“: uživatel řekne, jaké číslo má podle předlohy
+// první stránka PDF. Offset je z toho dopočítaný, takže se číslování
+// okamžitě srovná s notami, které má v ruce.
+async function applyFirstPage() {
+  const raw = String(firstPageValue.value).trim();
+  const n = parseInt(raw, 10);
+  if (!raw || !Number.isFinite(n)) return;
+  pagesOffset.value = n - 1;
+  await persistPagesOffset();
+  showToast('Číslování nastaveno — 1. strana je ' + n + '.');
+  firstPageValue.value = '';
 }
 // Odebere stránku z listování (VRATNĚ). Když uživatel odebere stránku, na které
 // PRÁVĚ STOJÍ, přesune se na nejbližší viditelnou; když odebere jinou (třeba
@@ -3580,12 +3651,15 @@ async function deleteJump(j) {
 // v indikátoru stránky otevře zadání; 1-based vstup, uvnitř se pracuje s 0-based currentPage.
 const pageGoOpen = ref(false);
 const pageGoValue = ref('');
+const firstPageValue = ref('');   // „první stránka" pro posun číslování
 const pageGoInputEl = ref(null);
 let _pageGoPrevPage = null;   // stránka, ze které jsme zadání otevřeli (Esc = zpět na ni)
 
 function openPageGo() {
   _pageGoPrevPage = currentPage.value;
-  pageGoValue.value = String(currentPage.value + 1);
+  // Předvyplní se číslo, které uživatel VIDÍ v notách (tedy včetně posunu).
+  pageGoValue.value = String(withOffset(dispPage(currentPage.value)));
+  firstPageValue.value = '';
   pageGoOpen.value = true;
   // panel se otevře i mimo anotační režim; ostatní mody zavřít, aby se nepřekrývaly
   annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false;
@@ -3607,7 +3681,8 @@ function goToTypedPage() {
   pageGoOpen.value = false;
   if (!raw || !Number.isFinite(n)) return;
   // Uživatel píše POŘADÍ ZOBRAZENÝCH stránek (to vidí v počítadle), ne index do PDF.
-  const slot = Math.max(0, Math.min(visiblePages.value.length - 1, n - 1));
+  // S posunem číslování se zadané číslo překládá zpět na pořadí odečtením posunu.
+  const slot = Math.max(0, Math.min(visiblePages.value.length - 1, n - 1 - pagesOffset.value));
   const target = visiblePages.value[slot];
   if (target == null) return;
   // gotoPage je synchronní fire-and-forget (token v renderCurrent vykreslí jen poslední stránku)
@@ -4315,6 +4390,17 @@ async function deleteBookmark(b) {
 .tb-page-of { font-weight: 400; opacity: 0.72; font-size: 0.9em; }
 /* Nápověda v dialogu zadání stránky (odebrané stránky se přeskakují) */
 .pg-hint { font-size: 0.8rem; color: var(--text-dim); line-height: 1.35; }
+/* Posun číslování v dialogu Přejít na stránku — jeden plochý řádek. */
+.pg-offset {
+  display: flex; align-items: center; gap: 8px;
+  border-top: 1px solid var(--border); padding-top: 10px;
+}
+.pg-offset-label { font-size: 0.85rem; color: var(--text-dim); flex: 1; }
+.pg-offset-input {
+  width: 72px; padding: 7px 9px; text-align: center;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-size: 0.95rem;
+}
 .zp-val.dim { opacity: 0.55; }
 .thumb-item {
   position: relative; flex: 0 0 auto; width: 72px; height: 96px;

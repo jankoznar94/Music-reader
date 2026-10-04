@@ -6,6 +6,7 @@ const state = {
   folderFilter: null,
   search: '',
   sortBy: 'name',
+  groupByComposer: true, // seskupovat noty podle skladatelů (vypínatelné v toolbaru)
   scrollTop: 0,       // pozice scrollu seznamu (v px)
   scrollReady: false, // zda bylo scroll uloženo pro daný "zážitek"
   selectedIds: [],    // označené skladby (hromadný výběr) — pole ID
@@ -21,6 +22,7 @@ export function resetLibraryState() {
   state.folderFilter = null;
   state.search = '';
   state.sortBy = 'name';
+  state.groupByComposer = true;
   state.scrollTop = 0;
   state.scrollReady = false;
   state.selectedIds = [];

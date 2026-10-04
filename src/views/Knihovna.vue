@@ -20,6 +20,20 @@
         <option value="name">Název</option>
         <option value="date">Datum</option>
       </select>
+      <!-- Přepínač seskupení podle skladatelů. Zapnuto = rozbalitelné záložky
+           po autorech, vypnuto = jeden plochý seznam (abecedně/dle data).
+           Stav přežije přechod do prohlížeče (libraryState), po restartu
+           appky se vrací na zapnuto. -->
+      <button
+        class="sort group-toggle"
+        :class="{ on: groupByComposer }"
+        @click="groupByComposer = !groupByComposer"
+        :title="groupByComposer ? 'Seskupeno podle skladatelů (klepnutím vypneš)' : 'Plochý seznam (klepnutím seskupíš podle skladatelů)'"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h16M4 12h10M4 18h13" />
+        </svg>
+      </button>
     </div>
 
     <!-- Tabs: Noty / Složky / Skupiny -->
@@ -57,14 +71,16 @@
         {{ songs.length === 0 ? 'Zatím žádné noty. Nahraj první PDF.' : 'Nic nenalezeno.' }}
       </div>
       <template v-else>
-        <!-- Seskupení podle autora (rozbalitelné záložky) -->
+        <!-- Seskupení podle autora (rozbalitelné záložky). Když je seskupení
+             vypnuté, songGroups vrátí JEDNU skupinu bez labelu → hlavička se
+             nevykreslí a seznam je plochý. -->
         <div v-for="g in songGroups" :key="g.key" class="author-group">
-          <button class="author-header" @click="toggleAuthor(g.key)">
+          <button v-if="g.label" class="author-header" @click="toggleAuthor(g.key)">
             <span class="author-caret">{{ isAuthorOpen(g.key) ? '▾' : '▸' }}</span>
             <span class="author-name">{{ g.label }}</span>
             <span class="author-count">{{ g.items.length }} {{ g.items.length === 1 ? 'soubor' : (g.items.length < 5 ? 'soubory' : 'souborů') }}</span>
           </button>
-          <ul v-if="isAuthorOpen(g.key)" class="songlist">
+          <ul v-if="isGroupOpen(g)" class="songlist">
             <li v-for="s in g.items" :key="s.id" class="song" :class="{ sel: isSelected(s.id) }" @click="onSongClick(s)">
               <span class="check" :class="{ on: isSelected(s.id) }" @click.stop="toggleSelect(s.id)">✓</span>
               <div class="song-info">
@@ -300,6 +316,10 @@ const contentEl = ref(null);
 // po reloadu resetován v main.js)
 const search = ref(libState.search);
 const sortBy = ref(libState.sortBy);
+// Seskupení podle skladatelů (rozbalitelné záložky). Vypnutím se seznam slije
+// do jednoho plochého výpisu — hodí se, když člověk hledá konkrétní soubor,
+// ne autora. Stav se drží v libraryState, takže přežije cestu do prohlížeče.
+const groupByComposer = ref(libState.groupByComposer);
 const tab = ref(libState.tab);
 const folderFilter = ref(libState.folderFilter); // null = vše, 'none' = bez složky, jinak folderId
 
@@ -412,7 +432,12 @@ function authorOf(s) {
 
 // Seskupení not podle autora. "Ostatní" (bez autora) jde vždy NA KONEC
 // jako výjimka z abecedního řazení.
+// Seskupení VYPNUTÉ → jediná skupina bez labelu (prázdný `label` znamená
+// „nevykresluj hlavičku“), takže seznam zůstane plochý a v pořadí z `filteredSongs`.
 const songGroups = computed(() => {
+  if (!groupByComposer.value) {
+    return [{ key: '__all__', label: '', items: filteredSongs.value }];
+  }
   const map = new Map();
   for (const s of filteredSongs.value) {
     const author = authorOf(s);
@@ -432,6 +457,9 @@ const songGroups = computed(() => {
 });
 
 function isAuthorOpen(key) { return openAuthors.has(key); }
+// Skupina je otevřená, když jde o plochý seznam (bez hlavičky) — nebo když
+// uživatel její záložku rozbalil.
+function isGroupOpen(g) { return !g.label || openAuthors.has(g.key); }
 function toggleAuthor(key) {
   if (openAuthors.has(key)) openAuthors.delete(key);
   else openAuthors.add(key);
@@ -709,6 +737,7 @@ async function persistState() {
     folderFilter: folderFilter.value,
     search: search.value,
     sortBy: sortBy.value,
+    groupByComposer: groupByComposer.value,
   });
 }
 
@@ -732,6 +761,11 @@ watch(() => search.value, () => {
   persistState();
 });
 watch(() => sortBy.value, persistState);
+watch(() => groupByComposer.value, () => {
+  const el = contentEl.value;
+  if (el) { el.scrollTop = 0; libState.scrollTop = 0; }
+  persistState();
+});
 
 // --- Aktualizace Service Workeru (tlačítko v topbaru) ---
 const checking = ref(false);
@@ -840,6 +874,13 @@ async function checkAndApply() {
 .toolbar { display: flex; gap: 8px; padding: 10px 16px; }
 .search { flex: 1; }
 .sort { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 10px; padding: 0 10px; color: var(--text); }
+/* Přepínač seskupení podle skladatelů — stejná plocha jako select vedle,
+   jen ikonový. Zapnuto = akcentová barva (jako ostatní aktivní tlačítka). */
+.group-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 42px; height: 42px; cursor: pointer;
+}
+.group-toggle.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
 
 .tabs { display: flex; gap: 8px; padding: 0 16px 10px; }
 .tab {
