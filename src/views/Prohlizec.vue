@@ -203,7 +203,8 @@
          .rotor uvnitř je přesně velký jako neotočená stránka a otáčí se kolem
          svého středu — díky tomu se canvas, anotační vrstva I tlačítka skoků
          otočí SPOLU a poznámky zůstanou přilepené k notám. -->
-    <div class="stage backdrop" :class="{ rotated: rot !== 0 }" :style="stageStyle">
+    <div class="stage backdrop" :class="{ rotated: rot !== 0 }" :style="stageStyle"
+         @pointerleave="onLayerUp" @pointercancel="onLayerUp">
      <div class="rotor" :style="rotorStyle">
       <canvas ref="canvasEl" class="pdf-canvas" />
       <!-- Anotační vrstva nad PDF -->
@@ -529,15 +530,18 @@
       <button class="jp-close" @click="toggleJumpMode">Zavřít</button>
     </div>
 
-    <!-- Panel pro vytváření/úpravu záložky -->
+    <!-- Panel pro vytváření záložky. ÚPRAVA existující záložky se děje PŘÍMO
+         na jejím řádku v seznamu níže (Jan, Oct 2026): plnit při úpravě pole
+         „Nová záložka“ nahoře bylo zavádějící — nebylo jasné, kterou záložku
+         uživatel vlastně mění. Horní pole slouží VÝHRADNĚ k vytvoření nové. -->
     <div v-if="bookmarkMode" class="jump-panel">
-      <div class="jp-title">{{ bookmarkEditing ? 'Upravit záložku' : 'Nová záložka' }}</div>
+      <div class="jp-title">Nová záložka</div>
       <div class="jp-row">
-        <span class="jp-cur">{{ bookmarkEditing ? 'Stránka ' + withOffset(dispPage((bookmarks.find(x => x.id === bookmarkEditing) || {}).page)) : 'Stránka ' + withOffset(dispPage(currentPage)) }}</span>
+        <span class="jp-cur">Stránka {{ withOffset(dispPage(currentPage)) }}</span>
       </div>
       <div class="jp-row">
         <input v-model="bookmarkLabel" class="jp-input" placeholder="Text záložky (např. Coda)" />
-        <button class="jp-btn primary" @click="saveBookmark">{{ bookmarkEditing ? 'Uložit' : 'Přidat' }}</button>
+        <button class="jp-btn primary" @click="saveBookmark">Přidat</button>
       </div>
 
       <!-- Seznam existujících záložek (editace + řazení + smazání) -->
@@ -558,19 +562,50 @@
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/></svg>
           </button>
-          <span class="jp-item-label" :class="{ dim: !b.label }">str. {{ withOffset(dispPage(b.page)) }}<template v-if="b.label"> · {{ b.label }}</template></span>
-          <span class="jp-actions">
-            <button class="jp-icon" @click="startEditBookmark(b)" title="Upravit">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
-            </button>
-            <button class="jp-icon del" @click="deleteBookmark(b)" title="Smazat">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-            </button>
-          </span>
+
+          <!-- Režim úpravy: název se mění PŘÍMO tady na řádku (Jan, Oct 2026).
+               Enter/Blur uloží, Escape zavře bez uložení. -->
+          <template v-if="bookmarkEditingId === b.id">
+            <span class="jp-item-label dim">str. {{ withOffset(dispPage(b.page)) }}</span>
+            <input
+              :ref="setBmEditInput"
+              v-model="bmEditLabel"
+              class="jp-input jp-input-edit"
+              placeholder="Text záložky"
+              @keyup.enter="commitBookmarkEdit"
+              @keyup.esc="cancelBookmarkEdit"
+              @blur="commitBookmarkEdit"
+              @touchstart.stop
+              @touchmove.stop
+              @touchend.stop
+            />
+            <span class="jp-actions">
+              <!-- mousedown.prevent: tlačítko si nesmí vzít fokus, jinak by
+                   input vyhodil blur a uložil rozepsaný text dřív, než se
+                   stihne vyhodnotit klik (✓ uloží, ✕ zahodí). -->
+              <button class="jp-icon" @mousedown.prevent @click="commitBookmarkEdit" title="Uložit">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+              </button>
+              <button class="jp-icon del" @mousedown.prevent @click="cancelBookmarkEdit" title="Zrušit">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+              </button>
+            </span>
+          </template>
+          <template v-else>
+            <span class="jp-item-label" :class="{ dim: !b.label }">str. {{ withOffset(dispPage(b.page)) }}<template v-if="b.label"> · {{ b.label }}</template></span>
+            <span class="jp-actions">
+              <button class="jp-icon" @click="startBookmarkEdit(b)" title="Přejmenovat">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+              </button>
+              <button class="jp-icon del" @click="deleteBookmark(b)" title="Smazat">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+              </button>
+            </span>
+          </template>
         </div>
       </div>
 
-      <button class="jp-close" @click="bookmarkMode = false; bookmarkLabel = ''; bookmarkEditing = null">Zavřít</button>
+      <button class="jp-close" @click="closeBookmarkPanel">Zavřít</button>
     </div>
 
     <!-- Záložky — vždy viditelná lišta u spodní hrany -->
@@ -1488,7 +1523,13 @@ function commitJumpPlace() {
 const bookmarks = ref([]);        // [{id, page, label}]
 const bookmarkMode = ref(false);  // režim přidávání záložky
 const bookmarkLabel = ref('');    // text záložky (volitelný)
-const bookmarkEditing = ref(null); // id záložky, kterou upravujeme (null = nová)
+const bookmarkEditingId = ref(null); // id záložky, jejíž řádek je právě v režimu úpravy
+const bmEditLabel = ref('');         // text v inputu NA ŘÁDKU (ne v poli pro novou)
+const bmEditInput = ref(null);       // element inputu v řádku (fokus po tapu na tužku)
+// v-for → funkční ref (pole elementů); vždy drží jen jediný prvek v úpravě.
+function setBmEditInput(el) {
+  bmEditInput.value = el || null;
+}
 const penOnly = ref(true);        // v anotaci kreslit jen perem (ignorovat dotyk prstem/rukou) — výchozí zapnuto
 
 // Rozměry a stránka
@@ -1719,7 +1760,12 @@ function setupWakeLock() {
   // proto periodicky znovu vyžádáme a při návratu do karty taky.
   window.clearInterval(wakeTimer);
   wakeTimer = setInterval(() => { if (!wakeLock) acquireWakeLock(); }, 10000);
-  wakeVisibleHandler = () => { if (document.visibilityState === 'visible') acquireWakeLock(); };
+  wakeVisibleHandler = () => {
+    // Návrat do karty: OS mohl během spánku zahodit dotyky/tah perem bez
+    // pointerupu → visel by `_activePointerId` a listování by bylo mrtvé.
+    resetGestureState();
+    if (document.visibilityState === 'visible') acquireWakeLock();
+  };
   document.addEventListener('visibilitychange', wakeVisibleHandler);
 }
 function releaseWakeLock() {
@@ -2137,6 +2183,7 @@ function gotoPage(i, force) {
   if (hiddenPages.value.includes(i)) i = nearestVisible(i);
   if (i === currentPage.value && !force) return;
   endEdit();   // listování = konec výběru prvku (rámeček patří jiné stránce)
+  resetGestureState();   // otočení stránky = starý tah/gesto je mrtvé (nedoručí pointerup)
   currentPage.value = i;
   pageSlider.value = visibleIndex.value;
   // Nová stránka má vlastní uložené zobrazení (nebo se použije globální skladby)
@@ -2403,6 +2450,7 @@ let _lastTouchStrokeAt = 0;   // prst kreslil na anotační vrstvě → teprve p
 let _palmUntil = 0;           // do kdy se nesmí listovat kvůli opřené dlani
 const PEN_GUARD_MS = 800;
 function blockedNav() {
+  _staleGuard();   // mrtvý tah (nedoručený pointerup) nesmí blokovat listování navěky
   if (_activePointerId !== null) return true;
   if (Date.now() - _lastPenAt < PEN_GUARD_MS) return true;
   if (Date.now() - _lastTouchStrokeAt < PEN_GUARD_MS) return true;
@@ -2780,6 +2828,10 @@ watch(annotMode, (on) => {
     endEdit();
     // Přerušené umisťování skončí — jinak by zůstal viset režim sběru bodů
     if (jumpPlaceMode.value) { jumpPlaceMode.value = false; jumpPlacePoints.value = []; }
+    // Vrstva při vypnutí režimu ztratí `pointer-events` → nedoručí pointerup,
+    // takže nedokončený tah by nechal viset `_activePointerId` a ZABIL listování
+    // (Jan: „sekne se a pak už listovat nejde“). Proto úklid i tady.
+    resetGestureState();
   }
 });
 // Totéž při změně nástroje: rámeček patří nástroji Ruka, u jiného nástroje nemá co dělat.
@@ -3068,12 +3120,85 @@ function onLayerDown(e) {
 let _penDrewDuringTouch = false;
 let _prev = null;
 let _activePointerId = null;
+let _lastLayerAt = 0;   // čas posledního pohybu na anotační vrstvě (viz _staleGuard)
 let _dragAnnot = null;
 // Tažení tlačítka skoku po notách (režim Ruka) — aby si uživatel doladil umístění
 let _dragJump = null, _dragJumpFrom = null, _dragJumpSnap = null;   // prvek přetahovaný v režimu Upravit (ruka)
 let _dragFrom = null;    // výchozí bod přetažení (x,y)
 let _dragSnap = null;    // snapshot geometrie prvku na začátku přetažení
+// Diagnostický hook pro sondy (window.__navdbg) — JEN ve vývojovém režimu,
+// do produkčního bundle se nedostane (import.meta.env.DEV je při buildu false).
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  window.__navdbg = () => ({
+    activePointerId: _activePointerId,
+    penAgo: _lastPenAt ? Date.now() - _lastPenAt : null,
+    touchStrokeAgo: _lastTouchStrokeAt ? Date.now() - _lastTouchStrokeAt : null,
+    palmIn: _palmUntil ? _palmUntil - Date.now() : null,
+    penDrewDuringTouch: _penDrewDuringTouch,
+    annotMode: annotMode.value,
+    jumpPlaceMode: jumpPlaceMode.value,
+    editingId: editingId.value,
+    tool: tool.value,
+    touchStart: _touchStart ? { edge: _touchStart.edge, age: Date.now() - _touchStart.t } : null,
+    blocked: (_activePointerId !== null)
+      || (Date.now() - _lastPenAt < PEN_GUARD_MS)
+      || (Date.now() - _lastTouchStrokeAt < PEN_GUARD_MS),
+  });
+}
 let _eraserHistoryPushed = false; // aby guma uložila history jen jednou za tah
+
+// --- Uklizení stavu gest (listování) --------------------------------------
+// PROČ TO EXISTUJE (Jan, Oct 2026: „při anotačním režimu přestane fungovat
+// listování stránek. Funguje to, ale po určité době nebo akci se to sekne a pak
+// už listovat nejde.“):
+//
+// `blockedNav()` vypíná listování, dokud je `_activePointerId !== null`.
+// Uvolňuje se VÝHRADNĚ v `onLayerUp`, který je navěšený jen na `.annot-layer`
+// (`@pointerup` / `@pointercancel`). Ale:
+//   * `.annot-layer:not(.active) { pointer-events: none }` → jakmile se vrstva
+//     schová (vypnutí anotačního režimu, jiný panel, přechod skladby), `pointerup`
+//     na ni NEDORAZÍ a pointer zůstane viset;
+//   * totéž při zrušeném tahu (OS si vezme pero, pero opustí obrazovku, dotyk
+//     zruší jiný prvek) — vrstva nedostane ani `pointercancel`.
+// Naměřeno (scripts/probe-stuck-pointer-proof.py): po jednom nedokončeném tahu
+// zůstal `_activePointerId = 4242`, `blocked = true` a listování bylo mrtvé
+// natrvalo — dokonce i po vypnutí a znovuzapnutí anotačního režimu.
+//
+// Řešení: jedna funkce, která stav uklidí, + zapojení na KAŽDOU cestu, kde
+// může pero/pointer zmizet. Navíc `_staleGuard()` v `blockedNav()` jako pojistka
+// pro cesty, které by na uklizení zapomněly.
+function resetGestureState() {
+  _activePointerId = null;
+  _penDrewDuringTouch = false;
+  _touchStart = null;
+  _pinch = null;
+  _rot3 = null;
+  _dragAnnot = null; _dragFrom = null; _dragSnap = null;
+  _dragJump = null; _dragJumpFrom = null; _dragJumpSnap = null;
+  _prev = null;
+  activeItem.value = null;
+  _lastLayerAt = 0;
+  // POZOR: guardy na ČAS (_lastPenAt, _lastTouchStrokeAt, _palmUntil) se tu
+  // záměrně NEnulují — kdyby se nulovaly, opřená ruka se zpožděným touchendem
+  // by zase začala listovat (naměřeno jako regrese u dlaňové ochrany).
+}
+// Mrtvý tah se pozná DVĚMA signály (oba musí říct „tah je mrtvý“):
+//   * pero/prst už není nad vrstvou (`:hover`) — po zvednutí pera neplatí;
+//   * od posledního pohybu na vrstvě uplynulo dost času.
+// Druhý signál je tam proto, že `:hover` je na reálném tabletu nespolehlivý
+// (pero mimo dosah, dotyk prstem) a na něm samotném by mohl zůstat viset
+// ŽIVÝ tah — a to by znamenalo, že se přestane kreslit. Naopak na dotykovém
+// zařízení je `:hover` na vrstvě při tahu pravdivý, takže kombinace nikdy
+// neuvolní tah, který právě probíhá.
+const STALE_POINTER_MS = 2500;
+function _staleGuard() {
+  if (_activePointerId === null) return;
+  const svg = layerSvgEl.value;
+  if (svg && svg.matches(':hover')) return;              // ukazatel je nad vrstvou → tah žije
+  if (Date.now() - _lastLayerAt < STALE_POINTER_MS) return;  // nedávno se hýbal → tah žije
+  resetGestureState();
+}
+
 function isStroke(it) {
   return it && it.tool === 'pencil';   // highlighter je teď 3-bodový obdélník, ne tah
 }
@@ -3084,6 +3209,7 @@ function isFreehand() {
   return tool.value === 'pencil' || tool.value === 'highlighter';
 }
 function onLayerMove(e) {
+  _lastLayerAt = Date.now();   // viz _staleGuard — živý tah se pozná podle pohybu
   // Režim "Upravit": přetahování tlačítka skoku po notách
   if (tool.value === 'edit' && _dragJump && _dragJumpSnap) {
     const p2 = toLayerCoords(e);
@@ -3691,13 +3817,21 @@ function goToTypedPage() {
 }
 
 // --- Záložky (konkrétní stránky) ---
+function resetBookmarkEdit() {
+  bookmarkEditingId.value = null;
+  bmEditLabel.value = '';
+}
+async function closeBookmarkPanel() {
+  // Rozepsaný název na řádku se při zavření uloží (uzavření panelu = potvrzení).
+  if (bookmarkEditingId.value) await commitBookmarkEdit();
+  bookmarkMode.value = false;
+  bookmarkLabel.value = '';
+}
 function openBookmark() {
   // Opětovný tap na tlačítko záložek panel ZAVŘE (jinak se dal jen otevřít
   // a ven se šlo přes "Zavřít" v panelu).
   if (bookmarkMode.value) {
-    bookmarkMode.value = false;
-    bookmarkLabel.value = '';
-    bookmarkEditing.value = null;
+    closeBookmarkPanel();
     return;
   }
   bookmarkMode.value = true;
@@ -3708,32 +3842,49 @@ function openBookmark() {
   sliderOpen.value = false;
   endEdit();               // a zrušit výběr prvku (rámeček by zůstal viset)
   bookmarkLabel.value = '';
-  bookmarkEditing.value = null;
+  resetBookmarkEdit();
 }
 async function saveBookmark() {
+  // Horní pole zakládá VÝHRADNĚ novou záložku na aktuální stránce.
   const label = bookmarkLabel.value.trim();
-  if (bookmarkEditing.value) {
-    const b = bookmarks.value.find(x => x.id === bookmarkEditing.value);
-    if (b) b.label = label; // úprava: jen text, stránka zůstává
-  } else {
-    if (bookmarks.value.some(x => x.page === currentPage.value)) { openBookmark(); return; }
-    bookmarks.value.push({ id: crypto.randomUUID(), page: currentPage.value, label });
-    // Nová záložka se zařadí vzestupně podle stránky — ale jen dokud si uživatel
-    // pořadí nepřerovnal ručně (od té chvíle si drží své pořadí, Janovo rozhodnutí).
-    // POZOR: v <script setup> se ref v JS NEODVÍJÍ sám — musí se přes .value,
-    // jinak je `!bmManualOrder` vždy false a řazení se nikdy neprovede.
-    if (!bmManualOrder.value) {
-      bookmarks.value.sort((a, b) => a.page - b.page);
-    }
+  if (bookmarks.value.some(x => x.page === currentPage.value)) { openBookmark(); return; }
+  bookmarks.value.push({ id: crypto.randomUUID(), page: currentPage.value, label });
+  // Nová záložka se zařadí vzestupně podle stránky — ale jen dokud si uživatel
+  // pořadí nepřerovnal ručně (od té chvíle si drží své pořadí, Janovo rozhodnutí).
+  // POZOR: v <script setup> se ref v JS NEODVÍJÍ sám — musí se přes .value,
+  // jinak je `!bmManualOrder` vždy false a řazení se nikdy neprovede.
+  if (!bmManualOrder.value) {
+    bookmarks.value.sort((a, b) => a.page - b.page);
   }
   await dbSaveBookmarks({ songId: song.id, items: bookmarks.value, manualOrder: bmManualOrder.value }); // ruční pořadí
   bookmarkMode.value = false;
   bookmarkLabel.value = '';
-  bookmarkEditing.value = null;
+  resetBookmarkEdit();
 }
-function startEditBookmark(b) {
-  bookmarkEditing.value = b.id;
-  bookmarkLabel.value = b.label || '';
+// Úprava názvu PŘÍMO NA ŘÁDKU (Jan, Oct 2026): tužka otevře input v tomtéž
+// řádku, kde záložka je. Horní pole pro novou záložku se NEPOUŽÍVÁ — dřív se
+// název přesouval nahoru a nebylo poznat, kterou záložku uživatel mění.
+function startBookmarkEdit(b) {
+  bookmarkEditingId.value = b.id;
+  bmEditLabel.value = b.label || '';
+  nextTick(() => {
+    const el = bmEditInput.value;
+    if (el) { el.focus(); el.select?.(); }
+  });
+}
+function cancelBookmarkEdit() {
+  resetBookmarkEdit();
+}
+async function commitBookmarkEdit() {
+  const id = bookmarkEditingId.value;
+  if (!id) return;
+  const b = bookmarks.value.find(x => x.id === id);
+  const label = bmEditLabel.value.trim();
+  if (b && b.label !== label) {
+    b.label = label;   // mění se jen text, stránka zůstává
+    await dbSaveBookmarks({ songId: song.id, items: bookmarks.value, manualOrder: bmManualOrder.value });
+  }
+  resetBookmarkEdit();
 }
 // --- Řazení záložek tažením za táhlo (drag & drop) ---
 // Jan: v úpravě záložek chce měnit pořadí tažením, ne šipkami.
@@ -4253,6 +4404,9 @@ async function deleteBookmark(b) {
   flex: 1; min-width: 0; background: var(--bg-elev2); border: 1px solid var(--border);
   border-radius: 10px; padding: 8px 10px; color: var(--text); font-size: 0.9rem;
 }
+/* Input PŘÍMO V ŘÁDKU záložky (přejmenování na místě) — o něco menší než
+   pole pro novou záložku, ať se řádek nerozjede do výšky. */
+.jp-input-edit { padding: 5px 8px; font-size: 0.85rem; }
 .jp-close { background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 10px; padding: 8px; color: var(--text); cursor: pointer; }
 .jp-cur { color: var(--text); font-size: 0.9rem; font-weight: 600; }
 
