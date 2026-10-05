@@ -3182,20 +3182,15 @@ function resetGestureState() {
   // záměrně NEnulují — kdyby se nulovaly, opřená ruka se zpožděným touchendem
   // by zase začala listovat (naměřeno jako regrese u dlaňové ochrany).
 }
-// Mrtvý tah se pozná DVĚMA signály (oba musí říct „tah je mrtvý“):
-//   * pero/prst už není nad vrstvou (`:hover`) — po zvednutí pera neplatí;
-//   * od posledního pohybu na vrstvě uplynulo dost času.
-// Druhý signál je tam proto, že `:hover` je na reálném tabletu nespolehlivý
-// (pero mimo dosah, dotyk prstem) a na něm samotném by mohl zůstat viset
-// ŽIVÝ tah — a to by znamenalo, že se přestane kreslit. Naopak na dotykovém
-// zařízení je `:hover` na vrstvě při tahu pravdivý, takže kombinace nikdy
-// neuvolní tah, který právě probíhá.
-const STALE_POINTER_MS = 2500;
+// Mrtvý tah se pozná podle ČASU, ne podle `:hover`.
+// POZOR (naměřeno, Jan Oct 2026): `:hover` je na dotykovém zařízení na vrstvě
+// PRAVDIVÝ, takže guard „uvolni, jen když není hover“ neuvolnil NIKDY a listování
+// bylo mrtvé od prvního dotyku. Proto se aktivní pointer posuzuje oknem: dokud
+// od poslední události na vrstvě uplynulo méně než PEN_GUARD_MS, tah žije;
+// jinak je to mrtvý tah (nedoručený pointerup) a uvolní se.
 function _staleGuard() {
   if (_activePointerId === null) return;
-  const svg = layerSvgEl.value;
-  if (svg && svg.matches(':hover')) return;              // ukazatel je nad vrstvou → tah žije
-  if (Date.now() - _lastLayerAt < STALE_POINTER_MS) return;  // nedávno se hýbal → tah žije
+  if (Date.now() - _lastLayerAt < PEN_GUARD_MS) return;   // tah se nedávno hýbal → žije
   resetGestureState();
 }
 
@@ -3342,7 +3337,13 @@ function onLayerUp(e) {
     _prev = null;
     return;
   }
-  if (!activeItem.value) return;
+  // Pozor: `activeItem` může být mezitím prázdný (dialog textu/značky už tah
+  // uzavřel) — pointer se ale musí uvolnit VŽDY, jinak visí `_activePointerId`
+  // a `blockedNav()` zabije listování (Jan: „listování nefunguje vůbec“).
+  if (!activeItem.value) {
+    if (_activePointerId === e.pointerId) { _activePointerId = null; _prev = null; }
+    return;
+  }
   if (_activePointerId !== e.pointerId) return;
   _activePointerId = null;
   const it = activeItem.value;
