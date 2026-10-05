@@ -2715,7 +2715,7 @@ function onTouchEnd(e) {
     // V anotaci klepnutí na noty NElístuje. Listuje jen klepnutí, které
     // ZAČALO i SKONČILO v okrajovém pruhu (prst se nepřesunul z kraje doprostřed)
     // a netrefilo ovládací prvek (anotační panel sedí v levém kraji).
-    if (wasAnot && st.edge && inEdgeZone(t.clientX)) {
+    if (wasAnnot && st.edge && inEdgeZone(t.clientX)) {
       annotEdgeTap(t.clientX, t.clientY, st.target);
     } else if (!wasAnnot && !isControlTarget(st.target)) {
       // Ťuknutí prstem na stránku v režimu čtení = režimy gesta (zoom/rotace)
@@ -2728,6 +2728,9 @@ function onTouchEnd(e) {
     return; // v režimu čtení tap dál řeší onTap (listování v okrajové zóně)
   }
   // Swipe prstem listuje JEN když začal v okrajovém pruhu (Jan: „jen na krajích displeje“)
+  // POZOR: Jan swipe pro listování ZÁMĚRNĚ NECHCE — listuje se jen klepnutím
+  // na okraj. Tenhle kus je tu historicky; nesmí ale dělat nic jiného než
+  // přesun o stránku, aby se po dotyku na okraj nechovalo nic neočekávaně.
   if (st.edge && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
     if (dx < 0) nextPage(); // swipe vlevo → další stránka/nota
     else prevPage();        // swipe vpravo → předchozí stránka/nota
