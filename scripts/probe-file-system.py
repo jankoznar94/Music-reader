@@ -43,6 +43,10 @@ def _load_harness():
 _m = _load_harness()
 _m.CDP_HTTP = CDP
 Harness, Check = _m.Harness, _m.Check
+# Cíl lze přepnout na ŽIVÝ web (NOTY_TARGET=https://…), aby se tatáž sonda dala
+# pustit i po nasazení — „v bundlu to je“ ještě neznamená „na webu to funguje“.
+TARGET = os.environ.get("NOTY_TARGET") or _m.APP_URL
+IS_LIVE = not TARGET.startswith("http://localhost")
 
 LIB = r"""
 (() => {
@@ -208,10 +212,22 @@ async def finger_drag(h, x0, y0, x1, y1, steps=12, r=12):
 
 async def main():
     ok = Check()
-    async with Harness(_m.APP_URL) as h:
+    async with Harness(TARGET) as h:
         await h.open()
         await h.set_tablet(800, 1280, 2)
         await asyncio.sleep(0.8)
+        if IS_LIVE:
+            # ŽIVÝ WEB: PWA drží starý service worker a staré stránky v CacheStorage.
+            # Bez odregistrování a smazání cache by sonda měřila PŘEDCHOZÍ verzi
+            # a hlásila falešný FAIL („oprava nefunguje“).
+            await h.ev("""(async () => {
+              for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+              for (const k of await caches.keys()) await caches.delete(k);
+              indexedDB.deleteDatabase('noty-app');
+              return true;
+            })()""", await_promise=True)
+            await asyncio.sleep(1.0)
+            print("cíl:", TARGET, "(živý web — SW a cache vyčištěny)")
 
         # --- ČISTÝ START. Dvě pasti naráz:
         #  1) `deleteDatabase` na appce, která drží spojení, zůstane „blocked“ —
@@ -220,7 +236,7 @@ async def main():
         #     proto jdeme na '/' přes Page.navigate, ne přes h.open() na current URL.
         await h.ev("indexedDB.deleteDatabase('noty-app')")
         await asyncio.sleep(1.0)
-        await h.cdp("Page.navigate", {"url": _m.APP_URL})
+        await h.cdp("Page.navigate", {"url": TARGET})
         await h.wait_for("!!document.querySelector('.search')", 40, "knihovna")
         await asyncio.sleep(1.4)
         await arm_dialogs(h)
