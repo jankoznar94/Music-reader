@@ -3,7 +3,9 @@
 // (Záměrně NEPOUŽÍVÁME localStorage — výchozí stav má být po každém startu appky.)
 const state = {
   tab: 'songs',
-  folderFilter: null,
+  // Kde v souborovém systému jsem (null = kořen). Přežije cestu do prohlížeče
+  // a zpět, aby se uživatel vrátil tam, kde byl.
+  folderId: null,
   search: '',
   sortBy: 'name',
   groupByComposer: true, // seskupovat noty podle skladatelů (vypínatelné v toolbaru)
@@ -19,7 +21,7 @@ export function saveLibraryState(partial) {
 
 export function resetLibraryState() {
   state.tab = 'songs';
-  state.folderFilter = null;
+  state.folderId = null;
   state.search = '';
   state.sortBy = 'name';
   state.groupByComposer = true;

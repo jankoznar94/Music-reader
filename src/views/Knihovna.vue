@@ -44,33 +44,45 @@
     </div>
 
     <!-- ===== NOTY ===== -->
+    <!-- Klasický souborový systém: drobečková cesta + obsah AKTUÁLNÍ složky.
+         V seznamu jsou nejdřív PODSLOŽKY (jako v Průzkumníku), pod nimi noty.
+         Hledání prohledává CELOU knihovnu bez ohledu na to, kde zrovna jsem;
+         u nalezených not se proto ukazuje jejich cesta. -->
     <div v-if="tab === 'songs'" class="content" ref="contentEl" @scroll.passive="onScroll">
-      <!-- Filtr složek -->
-      <div class="folder-filter">
-        <button
-          class="ff-chip"
-          :class="{ on: folderFilter === null }"
-          @click="folderFilter = null"
-        >Vše</button>
-        <button
-          v-for="f in folders"
-          :key="f.id"
-          class="ff-chip"
-          :class="{ on: folderFilter === f.id }"
-          @click="folderFilter = f.id"
-        >{{ f.name }}</button>
-        <button
-          class="ff-chip"
-          :class="{ on: folderFilter === 'none' }"
-          @click="folderFilter = 'none'"
-        >Bez složky</button>
-      </div>
+      <nav class="crumbs">
+        <template v-for="(c, i) in breadcrumb" :key="c.id || '__root__'">
+          <span v-if="i" class="crumb-sep">/</span>
+          <button
+            class="crumb"
+            :class="{ on: i === breadcrumb.length - 1 }"
+            :data-folder-drop="c.id || '__none__'"
+            @click="openFolder(c.id)"
+          >{{ c.name }}</button>
+        </template>
+      </nav>
 
       <div v-if="loading" class="center muted">Načítám…</div>
-      <div v-else-if="filteredSongs.length === 0" class="center muted">
-        {{ songs.length === 0 ? 'Zatím žádné noty. Nahraj první PDF.' : 'Nic nenalezeno.' }}
+      <div v-else-if="searching && filteredSongs.length === 0" class="center muted">Nic nenalezeno.</div>
+      <div v-else-if="!searching && !childFolders.length && filteredSongs.length === 0" class="center muted">
+        {{ songs.length === 0 ? 'Zatím žádné noty. Nahraj první PDF.' : 'Tato složka je prázdná.' }}
       </div>
       <template v-else>
+        <!-- Podsložky aktuální složky -->
+        <ul v-if="childFolders.length" class="folderlist">
+          <li
+            v-for="f in childFolders"
+            :key="f.id"
+            class="folder-row"
+            :class="{ drop: dropHover === f.id }"
+            :data-folder-drop="f.id"
+            @click="openFolder(f.id)"
+          >
+            <span class="folder-ico">📁</span>
+            <span class="folder-name">{{ f.name }}</span>
+            <span class="folder-meta">{{ fileCountLabel(folderCount(f.id)) }}</span>
+          </li>
+        </ul>
+
         <!-- Seskupení podle autora (rozbalitelné záložky). Když je seskupení
              vypnuté, songGroups vrátí JEDNU skupinu bez labelu → hlavička se
              nevykreslí a seznam je plochý. -->
@@ -81,18 +93,37 @@
             <span class="author-count">{{ g.items.length }} {{ g.items.length === 1 ? 'soubor' : (g.items.length < 5 ? 'soubory' : 'souborů') }}</span>
           </button>
           <ul v-if="isGroupOpen(g)" class="songlist">
-            <li v-for="s in g.items" :key="s.id" class="song" :class="{ sel: isSelected(s.id) }" @click="onSongClick(s)">
+            <li
+              v-for="s in g.items"
+              :key="s.id"
+              class="song"
+              :class="{ sel: isSelected(s.id), dragging: dragInfo && dragInfo.ids.includes(s.id) }"
+              @click="onSongClick(s)"
+            >
+              <!-- Úchyt pro TAŽENÍ. Na dotykovém displeji HTML5 drag&drop
+                   nefunguje, proto vlastní pointerové gesto (stejný vzor jako
+                   řazení záložek v prohlížeči) — a proto má úchyt touch-action:none. -->
+              <button
+                class="drag-handle"
+                title="Přesunout do složky (táhni)"
+                @pointerdown="songDragStart($event, s)"
+                @pointermove="songDragMove"
+                @pointerup="songDragEnd"
+                @pointercancel="songDragEnd"
+                @click.stop
+              >⠿</button>
               <span class="check" :class="{ on: isSelected(s.id) }" @click.stop="toggleSelect(s.id)">✓</span>
               <div class="song-info">
                 <div class="song-name">{{ s.name || s.fileName }}</div>
                 <div class="song-meta">
                   {{ s.pages }} str. · {{ s.groups?.length || 0 }} skupin
-                  <span v-if="folderName(s.folderId)" class="song-folder">· {{ folderName(s.folderId) }}</span>
+                  <!-- Při hledání napříč knihovnou musí být vidět, KDE nota leží -->
+                  <span v-if="searching || folderPathOf(s.folderId)" class="song-folder">· {{ folderPathOf(s.folderId) || 'Bez složky' }}</span>
                 </div>
               </div>
               <div class="song-actions" @click.stop>
                 <button class="icon-btn" @click="openEditSong(s)" title="Upravit (název, autor)">✏️</button>
-                <button class="icon-btn" @click="openAssignFolder(s)" title="Přiřadit do složky">📁</button>
+                <button class="icon-btn" @click="openAssignFolder(s)" title="Přesunout do složky">📁</button>
                 <button class="icon-btn" @click="openAddToGroup(s)" title="Přidat do skupiny">＋</button>
                 <button class="icon-btn danger" @click="confirmDelete(s)" title="Smazat">🗑</button>
               </div>
@@ -103,22 +134,43 @@
     </div>
 
     <!-- ===== SLOŽKY ===== -->
+    <!-- Strom složek: složky se zanořují do sebe (parentId). Zobrazené jsou jen
+         větve, které uživatel rozbalil — jako v Průzkumníku. -->
     <div v-else-if="tab === 'folders'" class="content">
       <div class="group-actions">
-        <button class="add" @click="createFolder">Nová složka</button>
+        <button class="add" @click="createFolder(null)">Nová složka</button>
       </div>
       <div v-if="folders.length === 0" class="center muted">
         Zatím žádné složky. Vytvoř první a roztřiď noty (sólový repertoár, sborový, barokní…).
       </div>
       <ul v-else class="grouplist">
-        <li v-for="f in folders" :key="f.id" class="group">
-          <div class="group-info">
-            <div class="group-name">{{ f.name }}</div>
-            <div class="group-meta">{{ folderCount(f.id) }} {{ folderCount(f.id) === 1 ? 'soubor' : (folderCount(f.id) < 5 ? 'soubory' : 'souborů') }}</div>
+        <li
+          v-for="row in folderTree"
+          :key="row.f.id"
+          class="group"
+          :class="{ drop: dropHover === row.f.id }"
+          :data-folder-drop="row.f.id"
+        >
+          <button
+            v-if="row.hasKids"
+            class="caret"
+            :title="isFolderOpen(row.f.id) ? 'Sbalit podsložky' : 'Rozbalit podsložky'"
+            @click.stop="toggleFolder(row.f.id)"
+          >{{ isFolderOpen(row.f.id) ? '▾' : '▸' }}</button>
+          <span v-else class="caret empty" />
+          <div class="group-info" @click="openFolder(row.f.id)">
+            <div class="group-name" :style="{ paddingLeft: (row.depth * 18) + 'px' }">
+              <span class="folder-ico">📁</span> {{ row.f.name }}
+            </div>
+            <div class="group-meta" :style="{ paddingLeft: (row.depth * 18) + 'px' }">
+              {{ fileCountLabel(folderCount(row.f.id)) }}
+              <span v-if="folderSubtreeCount(row.f.id)" class="muted"> · celkem {{ folderSubtreeCount(row.f.id) }}</span>
+            </div>
           </div>
           <div class="song-actions" @click.stop>
-            <button class="icon-btn" @click="renameFolder(f)" title="Přejmenovat">✏️</button>
-            <button class="icon-btn danger" @click="confirmDeleteFolder(f)" title="Smazat složku">🗑</button>
+            <button class="icon-btn" @click="createFolder(row.f)" title="Nová podsložka">＋</button>
+            <button class="icon-btn" @click="renameFolder(row.f)" title="Přejmenovat">✏️</button>
+            <button class="icon-btn danger" @click="confirmDeleteFolder(row.f)" title="Smazat složku">🗑</button>
           </div>
         </li>
       </ul>
@@ -321,7 +373,18 @@ const sortBy = ref(libState.sortBy);
 // ne autora. Stav se drží v libraryState, takže přežije cestu do prohlížeče.
 const groupByComposer = ref(libState.groupByComposer);
 const tab = ref(libState.tab);
-const folderFilter = ref(libState.folderFilter); // null = vše, 'none' = bez složky, jinak folderId
+// Kde v souborovém systému právě jsem (null = kořen). Nahrazuje dřívější
+// `folderFilter` — teď to není filtr nad plochým seznamem, ale skutečná
+// navigace: seznam ukazuje OBSAH této složky.
+const folderId = ref(libState.folderId);
+// Rozbalené složky ve STROMU (záložka Složky). Výchozí stav: kořenové složky
+// rozbalené, aby uživatel viděl, že se dá zanořovat — ne aby zíral na tři
+// řádky a netušil, že uvnitř něco je.
+const openFolderIds = reactive(new Set());
+// Drag & drop (přesun noty do složky tažením). Na dotyku nejde HTML5 DnD,
+// takže si neseme jen to nejnutnější: tažené id, aktuální bod a složku pod ním.
+const dragInfo = ref(null);      // { ids: [...], x, y }
+const dropHover = ref(null);     // id složky, nad kterou se právě visí
 
 const addToGroupSong = ref(null);
 const assignFolderSong = ref(null);
@@ -393,16 +456,57 @@ async function onFiles(e) {
   await loadAll();
 }
 
+// --- Souborový systém: cesty, obsah složky, strom ---
+
+// Je zapnuté hledání? Hledá se VŽDY napříč celou knihovnou (Jan), takže při
+// hledání se obsah složky ignoruje a u výsledků se ukazuje jejich cesta.
+const searching = computed(() => !!search.value.trim());
+
+// Cesta složky od kořene: [{id, name}, …]. Poslední prvek je aktuální složka.
+const folderPath = computed(() => {
+  const path = [];
+  let id = folderId.value;
+  let guard = 0;
+  while (id && guard++ < 64) {
+    const f = folders.value.find(x => x.id === id);
+    if (!f) break;
+    path.unshift(f);
+    id = f.parentId || null;
+  }
+  return path;
+});
+
+// Drobečková cesta: první je VŽDY kořen (jméno knihovny), pak zanoření.
+const breadcrumb = computed(() => [{ id: null, name: 'Noty' }, ...folderPath.value]);
+
+// Složky ležící v aktuální složce (jen o úroveň níž)
+const childFolders = computed(() => {
+  const parent = folderId.value || null;
+  return folders.value
+    .filter(f => (f.parentId || null) === parent)
+    .sort((a, b) => a.name.localeCompare(b.name, 'cs'));
+});
+
+// Všechny složky v podstromu dané složky (pro počty a pro mazání)
+function descendantIds(id) {
+  const out = [];
+  const walk = (pid) => {
+    for (const f of folders.value) {
+      if ((f.parentId || null) === pid) { out.push(f.id); walk(f.id); }
+    }
+  };
+  walk(id);
+  return out;
+}
+
 const filteredSongs = computed(() => {
   let list = songs.value;
-  if (folderFilter.value === 'none') {
-    list = list.filter(s => !s.folderId);
-  } else if (folderFilter.value) {
-    list = list.filter(s => s.folderId === folderFilter.value);
-  }
-  if (search.value.trim()) {
+  if (searching.value) {
     const q = search.value.trim().toLowerCase();
     list = list.filter(s => (s.name || '').toLowerCase().includes(q) || (s.composer || '').toLowerCase().includes(q));
+  } else {
+    const here = folderId.value || null;
+    list = list.filter(s => (s.folderId || null) === here);
   }
   if (sortBy.value === 'name') {
     list = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'cs'));
@@ -411,6 +515,75 @@ const filteredSongs = computed(() => {
   }
   return list;
 });
+
+// Kolik not leží přímo v podsložkách (aby bylo poznat, že ve složce něco je,
+// i když v ní samotné žádná nota není)
+function folderSubtreeCount(id) {
+  const ids = new Set([id, ...descendantIds(id)]);
+  return songs.value.filter(s => ids.has(s.folderId)).length;
+}
+
+// Strom složek pro záložku Složky — jen rozbalené větve, s odsazením podle
+// hloubky. `hasKids` rozhoduje o šipce ▸/▾.
+const folderTree = computed(() => {
+  const rows = [];
+  const kidsOf = (pid) => folders.value
+    .filter(f => (f.parentId || null) === pid)
+    .sort((a, b) => a.name.localeCompare(b.name, 'cs'));
+  const walk = (pid, depth) => {
+    for (const f of kidsOf(pid)) {
+      const hasKids = kidsOf(f.id).length > 0;
+      rows.push({ f, depth, hasKids });
+      if (hasKids && openFolderIds.has(f.id)) walk(f.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return rows;
+});
+
+function isFolderOpen(id) { return openFolderIds.has(id); }
+function toggleFolder(id) {
+  if (openFolderIds.has(id)) openFolderIds.delete(id);
+  else openFolderIds.add(id);
+}
+
+// Otevřít složku v záložce Noty = vejít do ní. Rozbalí ji i ve stromu
+// (aby po přepnutí na Složky bylo vidět, kde jsem) a vyčistí hromadný výběr
+// — „Vybrat vše“ platí jen pro obsah aktuální složky.
+function openFolder(id) {
+  folderId.value = id || null;
+  const el = contentEl.value;
+  if (el) { el.scrollTop = 0; libState.scrollTop = 0; }
+  if (id) openFolderIds.add(id);
+  let p = id;
+  let guard = 0;
+  while (p && guard++ < 64) {
+    const f = folders.value.find(x => x.id === p);
+    p = f ? (f.parentId || null) : null;
+    if (p) openFolderIds.add(p);
+  }
+  selectedIds.clear();
+  persistState();
+}
+
+// Cesta noty jako text (pro výpis u výsledků hledání a u řádku noty)
+function folderPathOf(id) {
+  const names = [];
+  let cur = id;
+  let guard = 0;
+  while (cur && guard++ < 64) {
+    const f = folders.value.find(x => x.id === cur);
+    if (!f) break;
+    names.unshift(f.name);
+    cur = f.parentId || null;
+  }
+  return names.join(' / ');
+}
+// Skloňování počtu souborů (Jan: „soubor/soubory/souborů“, ne „not“)
+function fileCountLabel(n) {
+  return n + ' ' + (n === 1 ? 'soubor' : (n < 5 ? 'soubory' : 'souborů'));
+}
+
 
 // Otevřené záložky autorů (reactive Set — Vue reaguje na add/delete).
 // Výchozí stav: vše ZABALENÉ, uživatel si rozbalí. Po reloadu se vynuluje.
@@ -576,11 +749,17 @@ async function confirmDelete(s) {
   }
 }
 
-// --- Složky ---
-async function createFolder() {
-  const name = prompt('Název složky:');
+// --- Složky (zanořené) ---
+async function createFolder(parent) {
+  const where = parent ? ` do složky „${parent.name}“` : ' (v kořeni)';
+  const name = prompt('Název složky' + where + ':');
   if (!name || !name.trim()) return;
-  await dbSaveFolder({ id: crypto.randomUUID(), name: name.trim(), createdAt: Date.now() });
+  const f = {
+    id: crypto.randomUUID(), name: name.trim(),
+    parentId: parent ? parent.id : null, createdAt: Date.now(),
+  };
+  await dbSaveFolder(f);
+  if (parent) openFolderIds.add(parent.id);  // ať je nová podsložka hned vidět
   await loadAll();
 }
 
@@ -592,14 +771,89 @@ async function renameFolder(f) {
   await loadAll();
 }
 
+// Přesun not(y) do složky. `target` = objekt složky nebo null (kořen).
+// Ukládá se JEDEN záznam na notu (žádné hromadné zápisy navíc).
+async function moveSongsToFolder(target, ids) {
+  const list = (ids && ids.length ? ids : [])
+    .map(id => songs.value.find(s => s.id === id))
+    .filter(Boolean);
+  const toId = target ? target.id : null;
+  let moved = 0;
+  for (const s of list) {
+    if ((s.folderId || null) === toId) continue;
+    s.folderId = toId;
+    await dbSaveSong(s);
+    moved++;
+  }
+  if (moved) {
+    const where = target ? target.name : 'kořen';
+    showToast(moved === 1
+      ? `Přesunuto do „${where}“`
+      : `Přesunuto ${fileCountLabel(moved)} do „${where}“`);
+  }
+  return moved;
+}
+
 function openAssignFolder(s) { assignFolderSong.value = s; }
 
 async function assignFolder(folder, song) {
-  song.folderId = folder ? folder.id : null;
-  await dbSaveSong(song);
+  await moveSongsToFolder(folder, [song.id]);
   assignFolderSong.value = null;
   // Nevoláme loadAll() — `song` už je reactive objekt v songs.value, takže se seznam
   // neobnoví od nuly a zachová se pozice scrollu.
+}
+
+// --- Přesun TAŽENÍM (pointer events — jde to prstem i myší; HTML5 DnD na
+//     dotykovém displeji nefunguje) ---
+const DRAG_SLOP_PX = 6;   // teprve po pohybu se z tažení stane přesun (klepnutí nic nedělá)
+
+function songDragStart(e, s) {
+  // Tažení začíná na úchytu; kdyby se not(a) přesunula i při pouhém klepnutí
+  // na úchyt, bylo by to překvapení. Proto se přesun spustí až po pohybu.
+  const ids = selectedIds.has(s.id) && selectedIds.size > 1 ? [...selectedIds] : [s.id];
+  dragInfo.value = {
+    ids, x: e.clientX, y: e.clientY,
+    x0: e.clientX, y0: e.clientY, started: false, from: s.folderId || null,
+  };
+  window.addEventListener('pointermove', songDragMove);
+  window.addEventListener('pointerup', songDragEnd);
+  window.addEventListener('pointercancel', songDragEnd);
+  e.stopPropagation();
+}
+
+function songDragMove(e) {
+  const d = dragInfo.value;
+  if (!d) return;
+  d.x = e.clientX;
+  d.y = e.clientY;
+  if (!d.started) {
+    // Práh se měří od BODU STISKNUTÍ, ne z `movementX/Y` — ta jsou u dotyku
+    // (tablet) nespolehlivá a na některých zařízeních chodí jako nula, takže by
+    // se tažení na Janově tabletu vůbec nerozjelo.
+    if (Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) < DRAG_SLOP_PX) return;
+    d.started = true;
+  }
+  e.preventDefault();
+  // Složku pod prstem hledáme PŘES document.elementFromPoint (ne z rectů
+  // v šabloně) — jediné měřítko, které sedí s realitou dotyku.
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const row = el && el.closest ? el.closest('[data-folder-drop]') : null;
+  dropHover.value = row ? row.dataset.folderDrop : null;
+}
+
+async function songDragEnd() {
+  window.removeEventListener('pointermove', songDragMove);
+  window.removeEventListener('pointerup', songDragEnd);
+  window.removeEventListener('pointercancel', songDragEnd);
+  const d = dragInfo.value;
+  dragInfo.value = null;
+  if (!d || !d.started) { dropHover.value = null; return; }
+  const key = dropHover.value;
+  dropHover.value = null;
+  if (!key || key === '__none__') return;         // do kořene se tažením nepřesouvá
+  const target = folders.value.find(f => f.id === key);
+  if (!target) return;
+  await moveSongsToFolder(target, d.ids);
 }
 
 function folderName(id) {
@@ -608,23 +862,33 @@ function folderName(id) {
   return f ? f.name : '';
 }
 
+// Počet not ležících PŘÍMO v této složce (podsložky zvlášť — folderSubtreeCount)
 function folderCount(id) {
-  return songs.value.filter(s => s.folderId === id).length;
+  return songs.value.filter(s => (s.folderId || null) === id).length;
 }
 
 async function confirmDeleteFolder(f) {
-  if (confirm(`Smazat složku „${f.name}"? Noty v ní zůstanou, jen se přesunou do „Bez složky".`)) {
-    await dbDeleteFolder(f.id);
-    // uvolnit skladby z této složky
-    for (const s of songs.value) {
-      if (s.folderId === f.id) {
-        s.folderId = null;
-        await dbSaveSong(s);
-      }
+  const kids = descendantIds(f.id);
+  const own = folderCount(f.id);
+  const sub = folderSubtreeCount(f.id) - own;
+  let msg = `Smazat složku „${f.name}“?`;
+  if (kids.length) msg += `\n\nZároveň se smaže ${fileCountLabel(kids.length).replace(/^\d+ \S+/, m => m.replace('soubor', 'podsložek'))} v ní.`;
+  if (own || sub) msg += `\nNoty se NEMAŽOU — přesunou se do „Bez složky“ (v kořeni).`;
+  if (!confirm(msg)) return;
+  // Podsložky i složku samotnou smazat (jinak by podsložky zůstaly viset bez
+  // rodiče a složka sama by v knihovně zůstala — přesně to odhalila sonda).
+  for (const id of kids) await dbDeleteFolder(id);
+  await dbDeleteFolder(f.id);
+  // Noty ze všech smazaných složek uvolnit do kořene
+  const gone = new Set([f.id, ...kids]);
+  for (const s of songs.value) {
+    if (s.folderId && gone.has(s.folderId)) {
+      s.folderId = null;
+      await dbSaveSong(s);
     }
-    if (folderFilter.value === f.id) folderFilter.value = null;
-    await loadAll();
   }
+  if (folderId.value && gone.has(folderId.value)) folderId.value = null;
+  await loadAll();
 }
 
 // --- Skupiny ---
@@ -734,7 +998,7 @@ function onScroll() {
 async function persistState() {
   saveLibraryState({
     tab: tab.value,
-    folderFilter: folderFilter.value,
+    folderId: folderId.value,
     search: search.value,
     sortBy: sortBy.value,
     groupByComposer: groupByComposer.value,
@@ -745,16 +1009,10 @@ onMounted(loadAll);
 
 watch(() => tab.value, () => { nextTick(() => restoreScroll()); persistState(); });
 
-// Změna filtru/hledání/řazení resetuje scroll NA VRCHOL jen v aktuálním zobrazení,
+// Změna hledání/řazení resetuje scroll NA VRCHOL jen v aktuálním zobrazení,
 // ale uložený stav (pro návrat z prohlížeče) NEpřepisujeme.
-watch(() => folderFilter.value, () => {
-  const el = contentEl.value;
-  if (el) { el.scrollTop = 0; libState.scrollTop = 0; }
-  persistState();
-  // Přepnutí složky vyčistí hromadný výběr — „Vybrat vše" platí jen pro
-  // aktuální složku, aby se výběr nekumuloval napříč složkami.
-  selectedIds.clear();
-});
+// Vstup do složky řeší openFolder() sám (persistState + reset scrollu) — proto
+// tady žádný watch na folderId není, jinak by se stav ukládal dvakrát.
 watch(() => search.value, () => {
   const el = contentEl.value;
   if (el) { el.scrollTop = 0; libState.scrollTop = 0; }
@@ -929,8 +1187,64 @@ async function checkAndApply() {
 .song-name, .group-name { font-size: 1.05rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song-composer { color: var(--text-dim); font-size: 0.9rem; margin-top: 2px; }
 .song-meta, .group-meta { color: var(--text-dim); font-size: 0.8rem; margin-top: 2px; }
+/* --- Souborový systém: drobečková cesta --- */
+.crumbs {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  padding: 0 0 12px;
+}
+.crumb {
+  background: transparent; border: none; padding: 4px 6px;
+  color: var(--text); font-size: 0.95rem; font-weight: 600; cursor: pointer;
+  border-radius: 8px;
+}
+.crumb:active { background: var(--bg-elev2); }
+.crumb.on { color: var(--accent); }              /* aktuální složka */
+.crumb-sep { color: var(--text-dim); opacity: 0.7; }
+
+/* --- Podsložky v seznamu not (nad notami, jako v Průzkumníku) --- */
+.folderlist { list-style: none; margin: 0 0 10px; padding: 0; }
+.folder-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--bg-elev2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 8px; cursor: pointer;
+}
+.folder-row:active { background: var(--bg-elev); }
+.folder-ico { font-size: 1rem; }
+.folder-name {
+  flex: 1; min-width: 0; font-size: 1rem; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.folder-meta { color: var(--text-dim); font-size: 0.8rem; }
+
+/* --- Strom složek (záložka Složky) --- */
+.caret {
+  width: 30px; height: 30px; flex-shrink: 0;
+  background: transparent; border: none; color: var(--accent);
+  font-size: 0.9rem; cursor: pointer; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+.caret:active { background: var(--bg-elev2); }
+.caret.empty { pointer-events: none; }    /* jen drží místo, ať texty lícují */
+
+/* --- Úchyt pro TAŽENÍ noty do složky --- */
 .song-folder { color: var(--accent); }
 .song-actions { display: flex; gap: 6px; }
+.drag-handle {
+  width: 30px; height: 36px; flex-shrink: 0;
+  background: transparent; border: none; color: var(--text-dim);
+  font-size: 1.1rem; cursor: grab;
+  /* Vlastní gesto tažení — kdyby tu zůstalo `pan-y`, prohlížeč by tažení převzal
+     jako scroll seznamu a přesun by se nikdy nespustil. */
+  touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.drag-handle:active { color: var(--accent); }
+.song.dragging { opacity: 0.5; }
+/* Cíl, nad kterým se právě visí — jediný vizuální feedback přesunu */
+.group.drop, .folder-row.drop {
+  border-color: var(--accent); background: var(--bg-elev2);
+}
+.crumb.drop { background: var(--bg-elev2); color: var(--accent); }
 .icon-btn {
   width: 36px; height: 36px; border-radius: 50%;
   border: 1px solid var(--border); background: var(--bg-elev2);
