@@ -98,12 +98,12 @@
       <button class="zp-btn" @click="zoomOut" title="Oddálit">−</button>
       <span class="zp-val">{{ Math.round(zoom * 100) }} %</span>
       <button class="zp-btn" @click="zoomIn" title="Přiblížit">+</button>
-      <button class="zp-btn" @click="zoomFit" title="Zpět na 100 % (fit na šířku)">100 %</button>
+      <button class="zp-btn num wide" @click="zoomFit" title="Zpět na 100 % (fit na šířku)">100 %</button>
       <span class="zp-sep" />
       <!-- Zoom dolů pod 100 % (Jan: „abych mohl oddálit stránku, když je
            originál moc velký") — meze jsou v ZOOM_MIN/ZOOM_MAX. -->
-      <button class="zp-btn" @click="zoomOutBig" title="Oddálit po 10 %">−10</button>
-      <button class="zp-btn" @click="zoomInBig" title="Přiblížit po 10 %">+10</button>
+      <button class="zp-btn num" @click="zoomOutBig" title="Oddálit po 10 %">−10</button>
+      <button class="zp-btn num" @click="zoomInBig" title="Přiblížit po 10 %">+10</button>
       <span class="zp-sep" />
       <!-- Vycentrovat a ukládání stavu jsou na HLAVNÍ LIŠTĚ (jsou to akce
            k celému zobrazení, ne k zoomu) — a `clearPageView` je tam taky,
@@ -4216,10 +4216,17 @@ async function deleteBookmark(b) {
   display: flex; align-items: center; justify-content: center; touch-action: manipulation;
 }
 .zp-btn.on { background: var(--accent); color: #17130f; border-color: var(--accent); }
+/* Číselné a procentové akce (100 %, −10, +10) — je to POPISEK, ne symbol.
+   Dřív dědily 1.3rem určené pro „−“ a „+“, takže v panelu křičely
+   (Jan: „hrozně velký text“). Symboly − / + zůstávají velké. */
+.zp-btn.num { font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+/* „100 %“ je delší popisek než „−10“ — do 44px kruhu se s jednotnou
+   velikostí nevejde na jeden řádek, proto vlastní (širší) tvar. */
+.zp-btn.wide { width: 56px; }
 /* Jemné otáčení (0,1°) — menší tlačítko, ať se řada vejde a je vidět,
    že jde o jemnější krok než sousední 1°. */
 .zp-btn.fine { width: 38px; height: 38px; font-size: 1.1rem; }
-.zp-val { min-width: 56px; text-align: center; font-size: 1rem; font-weight: 600; color: var(--text); }
+.zp-val { min-width: 56px; text-align: center; font-size: 0.85rem; font-weight: 600; color: var(--text); }
 .zp-sep { width: 1px; height: 26px; background: var(--border); }
 /* Úhel otočení — klepnutím se zruší (ploché, jen :active feedback) */
 .zp-rot {
