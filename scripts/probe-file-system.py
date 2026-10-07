@@ -50,10 +50,17 @@ IS_LIVE = not TARGET.startswith("http://localhost")
 
 LIB = r"""
 (() => {
-  const rows = [...document.querySelectorAll('.folder-row')].map(r => ({
-    name: r.querySelector('.folder-name').textContent.trim(),
-    meta: r.querySelector('.folder-meta').textContent.trim(),
-  }));
+  // ⚠️ Řádek „＋ Nová složka“ NEMÁ počet souborů — `querySelector` na `.folder-meta`
+  // vrací null a sonda by spadla na TypeError (přesně se to stalo).
+  const rows = [...document.querySelectorAll('.folder-row')].map(r => {
+    const nm = r.querySelector('.folder-name');
+    const mt = r.querySelector('.folder-meta');
+    return {
+      name: nm ? nm.textContent.trim() : null,
+      meta: mt ? mt.textContent.trim() : null,
+      isNew: r.classList.contains('newfolder'),
+    };
+  });
   // HLEDÁNÍ: do seznamu se dostávají i noty, které v aktuální složce nebydlí —
   // proto se jména sbírají i z rozbalených záložek autorů a při zobrazení
   // výsledků se hlavičky autorů otevírají předem (jinak by se nic neukázalo).
@@ -70,7 +77,8 @@ LIB = r"""
   const hint = document.querySelector('.content .center.muted');
   return {
     crumbs, rows, songs, paths, groups,
-    folderRows: rows.map(r => r.name + ' (' + r.meta + ')'),
+    folderRows: rows.filter(r => !r.isNew).map(r => r.name + ' (' + r.meta + ')'),
+    newFolderRow: rows.some(r => r.isNew),
     empty: hint ? hint.textContent.trim() : null,
     toast: document.querySelector('.toast') ? document.querySelector('.toast').textContent.trim() : null,
   };
@@ -178,6 +186,33 @@ async def set_answer(h, value):
     return await h.ev("(() => { window.__answer = %s; return 'ok'; })()" % json.dumps(value))
 
 
+async def make_folder_in_list(h, name, as_sub_of=None):
+    """Založí složku PŘÍMO V SEZNAMU (Jan: „vytváření složky by mělo být možné
+    přímo v rootu") — tlačítkem „＋ Nová složka" pod složkami, nebo v řádku
+    rodiče. Záložka „Složky" už neexistuje, takže se nikam nepřepíná.
+
+    ⚠️ Odpověď na dialog nastav PŘED kliknutím. `prompt()` se vyhodnotí
+    synchronně v obsluze kliknutí, takže odpověď nastavená po kliknutí dorazí
+    pozdě — `createFolder` dostane prázdné jméno a složku vůbec nezaloží
+    (sonda to hlásila jako „složky v DB chybí").
+    """
+    await set_answer(h, name)
+    if as_sub_of:
+        r = await h.ev(
+            "(() => { const li=[...document.querySelectorAll('.folder-row')]"
+            ".find(x=>{ const n=x.querySelector('.folder-name');"
+            " return n && n.textContent.trim()===%s; });"
+            " if(!li) return 'no-row';"
+            " const b=[...li.querySelectorAll('button')].find(x=>(x.title||'').startsWith('Nová podsložka'));"
+            " if(!b) return 'no-btn'; b.click(); return 'ok'; })()" % json.dumps(as_sub_of))
+    else:
+        r = await h.ev(
+            "(() => { const li=document.querySelector('.folder-row.newfolder');"
+            " if(!li) return 'no-new-row'; li.click(); return 'ok'; })()")
+    print(f"   zakládám „{name}“:", r)
+    await asyncio.sleep(1.1)
+
+
 async def click_folder_row(h, name):
     return await h.ev(
         "(() => { const r=[...document.querySelectorAll('.folder-row')]"
@@ -208,6 +243,54 @@ async def finger_drag(h, x0, y0, x1, y1, steps=12, r=12):
         await asyncio.sleep(0.04)
     await h.touch("touchEnd", [])
     await asyncio.sleep(1.0)
+
+
+GHOST = r"""
+(() => {
+  const g = document.querySelector('.drag-ghost');
+  if (!g) return null;
+  const b = g.getBoundingClientRect();
+  return {
+    text: g.querySelector('.dg-text') ? g.querySelector('.dg-text').textContent.trim() : null,
+    target: g.querySelector('.dg-target') ? g.querySelector('.dg-target').textContent.trim() : null,
+    x: Math.round(b.left + b.width / 2), y: Math.round(b.bottom),
+    pointerEvents: getComputedStyle(g).pointerEvents,
+  };
+})()
+"""
+
+DRAG_MARKERS = r"""
+(() => ({
+  dragging: document.querySelectorAll('.song.dragging').length,
+  hovered: document.querySelectorAll('.folder-row.drop, .group.drop, .crumb.drop').length,
+}))()
+"""
+
+
+async def finger_drag_observed(h, x0, y0, x1, y1, steps=12, r=12, sample_at=1.0):
+    """Tažení s ODBĚREM UPROSTŘED — jediný způsob, jak změřit zpětnou vazbu.
+
+    Po `touchEnd` plaketka zmizí, takže kontrola až po tažení by neřekla nic
+    o tom, co uživatel vidí BĚHEM něj (přesně to Janovi chybí).
+
+    ⚠️ `sample_at` ber až na KONCI tahu (1.0). V půlce cesty je prst ještě mimo
+    cílovou složku, takže zvýraznění cíle logicky chybí — a sonda by hlásila
+    falešný FAIL „cíl se nezvýraznil“.
+    """
+    await h.touch("touchStart", [(x0, y0, r)])
+    await asyncio.sleep(0.12)
+    mid = None
+    for i in range(1, steps + 1):
+        f = i / steps
+        await h.touch("touchMove", [(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, r)])
+        await asyncio.sleep(0.04)
+        if mid is None and f >= sample_at:
+            mid = {"ghost": await h.ev(GHOST), "markers": await h.ev(DRAG_MARKERS),
+                   "at": {"x": round(x0 + (x1 - x0) * f), "y": round(y0 + (y1 - y0) * f)}}
+    await h.touch("touchEnd", [])
+    await asyncio.sleep(1.0)
+    after = await h.ev(GHOST)
+    return mid, after
 
 
 async def main():
@@ -254,41 +337,32 @@ async def main():
         print("   cesta:", [c["name"] for c in st0["crumbs"]], "| noty:", st0["songs"], "| skupiny autorů:", st0["groups"])
         ok("0) nahrané noty leží v kořeni knihovny", len(st0["songs"]) == 3, str(st0["songs"]))
 
-        # ================= 1) zakládání složek (včetně podsložky) =================
-        print("\n--- 1) zakládám Sborový, PODSLOŽKU Baroko a Sólový ---")
-        await tab(h, 'Složky')
-        await set_answer(h, 'Sborový')
-        await h.ev("(() => { const b=[...document.querySelectorAll('.add')]"
-                   ".find(x=>x.textContent.trim()==='Nová složka'); if(b) b.click(); return 'ok'; })()")
-        await asyncio.sleep(1.0)
-        await set_answer(h, 'Baroko')
-        print("   ＋ v řádku Sborový:",
-              await h.ev("(() => { const li=[...document.querySelectorAll('.grouplist .group')]"
-                         ".find(x=>x.querySelector('.group-name').textContent.includes('Sborový'));"
-                         " if(!li) return 'no-row';"
-                         " const b=[...li.querySelectorAll('button')].find(x=>(x.title||'').startsWith('Nová podsložka'));"
-                         " if(!b) return 'no-btn'; b.click(); return 'ok'; })()"))
-        await asyncio.sleep(1.0)
-        await set_answer(h, 'Sólový')
-        await h.ev("(() => { const b=[...document.querySelectorAll('.add')]"
-                   ".find(x=>x.textContent.trim()==='Nová složka'); if(b) b.click(); return 'ok'; })()")
-        await asyncio.sleep(1.0)
+        # ================= 1) zakládání složek PŘÍMO V SEZNAMU =================
+        print("\n--- 1) zakládám Sborový, PODSLOŽKU Baroko a Sólový (bez záložky Složky) ---")
+        ok("1) záložka „Složky“ už NEEXISTUJE",
+           not await h.ev("!![...document.querySelectorAll('.tab')]"
+                          ".find(t=>t.textContent.trim()==='Složky')"))
+        ok("1) v seznamu je řádek „Nová složka“",
+           await h.ev("document.querySelectorAll('.folder-row.newfolder').length") == 1)
+
+        await make_folder_in_list(h, 'Sborový')
+        await make_folder_in_list(h, 'Baroko', as_sub_of='Sborový')
+        await make_folder_in_list(h, 'Sólový')
 
         db = await h.ev(DB, await_promise=True)
         f_by_name = {f["name"]: f for f in db["folders"]}
         print("   složky v DB:", json.dumps(db["folders"], ensure_ascii=False))
-        tree = await h.ev(TREE)
-        print("   strom:", json.dumps(tree, ensure_ascii=False))
         sbor, bar, sol = f_by_name.get("Sborový"), f_by_name.get("Baroko"), f_by_name.get("Sólový")
         ok("1) všechny tři složky existují (i podsložka přes ＋)", bool(sbor and bar and sol),
            json.dumps(db["folders"], ensure_ascii=False))
         ok("1) Baroko má parentId na Sborový (zanoření je v datech)",
            bool(sbor and bar and bar["parentId"] == sbor["id"]),
            json.dumps([bar, sbor], ensure_ascii=False))
-        ok("1) ve stromu je Baroko odsazené pod Sborovým",
-           any(t["name"] == "Baroko" and t["indent"] > 0 for t in tree)
-           and any(t["name"] == "Sborový" and t["indent"] == 0 for t in tree),
-           json.dumps(tree, ensure_ascii=False))
+        ok("1) Baroko se v kořeni jako samostatná složka NEOBJEVÍ (je zanořené)",
+           "Baroko" not in await h.ev("JSON.stringify([...document.querySelectorAll('.folder-row .folder-name')]"
+                                      ".map(e=>e.textContent.trim()))"),
+           await h.ev("JSON.stringify([...document.querySelectorAll('.folder-row .folder-name')]"
+                      ".map(e=>e.textContent.trim()))"))
         if not (sbor and bar and sol):
             return ok.report()
 
@@ -318,7 +392,8 @@ async def main():
         ok("3) cesta ukazuje Noty / Sólový",
            [c["name"] for c in st2["crumbs"]] == ["Noty", "Sólový"],
            json.dumps([c["name"] for c in st2["crumbs"]], ensure_ascii=False))
-        ok("3) prázdná složka to řekne", st2["empty"] == "Tato složka je prázdná.", str(st2["empty"]))
+        ok("3) prázdná složka to řekne a poradí, co dělat",
+           bool(st2["empty"]) and st2["empty"].startswith("Tato složka je prázdná"), str(st2["empty"]))
 
         print("\n--- 3b) zpět drobečkovou cestou na kořen ---")
         print("   klik na drobeček:", await click_crumb(h, 'Noty'))
@@ -338,7 +413,24 @@ async def main():
         if not (handle and target):
             print("   (nenašla jsem úchyt nebo cíl — tažení přeskočeno)")
         else:
-            await finger_drag(h, handle["x"], handle["y"], target["x"], target["y"])
+            mid, after = await finger_drag_observed(h, handle["x"], handle["y"], target["x"], target["y"])
+            print("   BĚHEM tažení:", json.dumps(mid, ensure_ascii=False))
+            print("   PO tažení (plaketka musí zmizet):", after)
+            ghost = (mid or {}).get("ghost")
+            markers = (mid or {}).get("markers") or {}
+            ok("4) během tažení visí plaketka s názvem noty",
+               bool(ghost) and bool(ghost.get("text")), json.dumps(ghost, ensure_ascii=False))
+            ok("4) tažený řádek je vidět jako tažený (.dragging)",
+               markers.get("dragging", 0) >= 1, json.dumps(markers, ensure_ascii=False))
+            ok("4) cílová složka je zvýrazněná a plaketka hlásí její jméno",
+               bool(ghost) and ghost.get("target") and "Sólový" in ghost["target"]
+               and markers.get("hovered", 0) >= 1,
+               json.dumps({"ghost": ghost, "markers": markers}, ensure_ascii=False))
+            ok("4) plaketka nechytá dotyk (jinak by hledání cíle pod ní selhalo)",
+               bool(ghost) and ghost.get("pointerEvents") == "none",
+               str(ghost and ghost.get("pointerEvents")))
+            ok("4) po puštění plaketka zmizí", after is None, str(after))
+
             st4 = await h.ev(LIB)
             db = await h.ev(DB, await_promise=True)
             print("   toast:", st4["toast"], "| noty v kořeni:", st4["songs"])
@@ -399,14 +491,18 @@ async def main():
         await asyncio.sleep(0.6)
 
         # ================= 7) smazání složky s podsložkami =================
-        print("\n--- 7) mažu Sborový (má uvnitř Baroko i notu) ---")
-        await tab(h, 'Složky')
+        print("\n--- 7) mažu Sborový (má uvnitř Baroko i notu) — z řádku v seznamu ---")
+        # Do smazané složky se nejdřív vstoupí, aby šlo smazat její řádek
+        # (řádek Sborový je v kořeni, takže stačí být v kořeni).
+        await click_crumb(h, 'Noty')
+        await asyncio.sleep(0.7)
         before = await h.ev(DB, await_promise=True)
-        await h.ev("""(() => { const li=[...document.querySelectorAll('.grouplist .group')]
-          .find(x=>x.querySelector('.group-name').textContent.includes('Sborový'));
-          if(!li) return 'no-row';
-          const b=[...li.querySelectorAll('button')].find(x=>(x.title||'').startsWith('Smazat složku'));
-          if(!b) return 'no-btn'; b.click(); return 'ok'; })()""")
+        print("   klik 🗑 v řádku Sborový:",
+              await h.ev("""(() => { const li=[...document.querySelectorAll('.folder-row')]
+                .find(x=>x.querySelector('.folder-name').textContent.includes('Sborový'));
+                if(!li) return 'no-row';
+                const b=[...li.querySelectorAll('button')].find(x=>(x.title||'').startsWith('Smazat složku'));
+                if(!b) return 'no-btn'; b.click(); return 'ok'; })()"""))
         await asyncio.sleep(1.4)
         after = await h.ev(DB, await_promise=True)
         print("   složky po smazání:", json.dumps(after["folders"], ensure_ascii=False))
@@ -423,7 +519,7 @@ async def main():
            json.dumps(after["songs"], ensure_ascii=False))
 
         # ================= 8) po reloadu =================
-        print("\n--- 8) reload: strom i noty musí sedět ---")
+        print("\n--- 8) reload: složky i noty musí sedět ---")
         await h.open()
         await h.wait_for("document.querySelectorAll('.folder-row, li.song').length > 0", 40, "knihovna po reloadu")
         await asyncio.sleep(1.2)
@@ -431,11 +527,9 @@ async def main():
         await expand_authors(h)
         st8 = await h.ev(LIB)
         print("   kořen po reloadu – složky:", st8["folderRows"], "| noty:", st8["songs"])
-        await tab(h, 'Složky')
-        tree8 = await h.ev(TREE)
-        print("   strom po reloadu:", json.dumps(tree8, ensure_ascii=False))
         ok("8) po reloadu zbyl jen Sólový (Baroko i Sborový jsou pryč)",
-           [t["name"] for t in tree8] == ["Sólový"], json.dumps(tree8, ensure_ascii=False))
+           sorted(r.split(' ')[0] for r in st8["folderRows"]) == ["Sólový"],
+           str(st8["folderRows"]))
         ok("8) noty, které zůstaly, se po reloadu ukazují",
            sorted(st8["songs"]) == ["noty-fs-1", "noty-fs-2"],
            str(st8["songs"]))
