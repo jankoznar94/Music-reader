@@ -2948,6 +2948,7 @@ function hlCenter(it) {
 }
 
 function onLayerDown(e) {
+  _logEv('down ' + e.pointerType + ' tool=' + tool.value + ' annot=' + annotMode.value);
   // Umisťování tlačítka skoku: tři klepnutí určují obdélník tlačítka.
   // Musí být PŘED kontrolou annotMode — jinak by klepnutí spadlo do kreslení.
   if (jumpPlaceMode.value) {
@@ -2963,21 +2964,21 @@ function onLayerDown(e) {
   // Okno je KRÁTKÉ (STALE_POINTER_MS), protože uživatel začíná nový tah —
   // pero, které právě kreslí, se tím neuvolní (píše průběžné pointermove).
   _staleGuard(STALE_POINTER_MS);
-  if (!annotMode.value) return;
+  if (!annotMode.value) { _logEv('  down: bez anotace'); return; }
   // Pero = kreslení (Jan: „anotace se dělají perem“). Zaznamenáme čas, aby
   // opřená ruka, jejíž touchend dorazí až po tahu perem, neotočila stránku.
   if (e.pointerType === 'pen') markPen();
   // Pen-only mód: dotyk prstem/rukou NEKRESLÍ (palm-rejection) — kreslí jen pero.
   // Listování prstem v anotaci řeší touch obsluha na .viewer (onTouchStart/End),
   // která pozná, že pero zrovna kreslí, přes _activePointerId.
-  if (penOnly.value && e.pointerType !== 'pen') return;
+  if (penOnly.value && e.pointerType !== 'pen') { _logEv('  down: penOnly blok'); return; }
   // Klepnutí PRSTEM v okrajovém pruhu patří LISTOVÁNÍ, ne kreslení — i s
   // vypnutým „jen pero“. Jinak se prst v pruhu chytí jako tah, zapíše
   // `_lastTouchStrokeAt` a jeho 800ms guard okrajové klepnutí zahodí
   // (Jan: „Navíc listování bez módu ‚jen pero‘ stejně nefunguje“).
   // Listování samo řeší onTouchEnd (`annotEdgeTap`) — prst, který v pruhu
   // ZAČAL i SKONČIL, otočí stránku.
-  if (e.pointerType === 'touch' && inEdgeZone(e.clientX)) return;
+  if (e.pointerType === 'touch' && inEdgeZone(e.clientX)) { _logEv('  down: okraj = listování'); return; }
   // Zaseknutý pointer z tahu, který NIKDY nedostal pointerup (pero odjelo
   // z dosahu tabletu), se pouští UŽ TADY a KRÁTKÝM oknem. `blockedNav()` volá
   // _staleGuard() s dlouhým PEN_GUARD_MS, takže do prvního dotyku prstu byl
@@ -2985,7 +2986,7 @@ function onLayerDown(e) {
   // a tužka začne psát až při druhém doteku“. Uživatel začal NOVÝ tah, takže
   // ten starý je mrtvý, i když je mu jen 250 ms.
   _staleGuard(STALE_POINTER_MS);
-  if (_activePointerId !== null) return; // už kreslí jiný tah (např. druhá ruka)
+  if (_activePointerId !== null) { _lastDownDbg = 'blok: jiný tah'; return; } // už kreslí jiný tah (např. druhá ruka)
   // Prstem se (s vypnutým „jen pero“) taky kreslí → po takovém tahu chvíli
   // nelistovat, aby dokončení tahu neotočilo stránku.
   if (e.pointerType === 'touch') _lastTouchStrokeAt = Date.now();
@@ -2994,7 +2995,17 @@ function onLayerDown(e) {
   // může touchend dorazit až po tahu perem).
   if (_touchStart) _penDrewDuringTouch = true;
   _activePointerId = e.pointerId;
+  // ČAS STARTU TAHU PRO VŠECHNY NÁSTROJE. `_staleGuard()` posuzuje živý tah
+  // podle `_lastLayerAt`, a to se dřív plnilo JEN v `onLayerMove` a v tužkové
+  // větvi. U textu/dynamiky/značky se tedy tah, který jen čeká na dialog,
+  // tvářil jako mrtvý: první `touchstart` (→ `blockedNav()` → `_staleGuard()`)
+  // zavolal `resetGestureState()`, což zahodilo `activeItem` i `_activePointerId`
+  // a `pointerup` pak spadl do větve „bez activeItem“ — vstup se vůbec
+  // neotevřel (Jan: „při ručním režimu nelze vložit značky ani dynamiku,
+  // ani text“). Naměřeno sondou scripts/probe-manual-insert.py.
+  _lastLayerAt = Date.now();
   const p = toLayerCoords(e);
+  _lastDownDbg = 'start tahu ' + e.pointerType + ' nástroj=' + tool.value;
 
   // Režim "Upravit": vybrat prvek na daném místě a připravit k přetažení
   if (tool.value === 'edit') {
@@ -3141,12 +3152,6 @@ function onLayerDown(e) {
     points: [p],
   };
   _prev = p;
-  // Rovnou nastavit čas pohybu na vrstvě: `_staleGuard()` měří stáří tahu od
-  // `_lastLayerAt`, a ten se plní JEN v `onLayerMove`. Rychlé poklepání (down,
-  // pár pohybů, up) mezi dvěma sondami se tak tvářilo jako mrtvý tah a další
-  // `onLayerDown` ho uklidil — tahy pak mizely (naměřeno sondou
-  // probe-first-touch-ignored.py: „B) PRVNÍ tah prstem kreslí 1 -> 0“).
-  _lastLayerAt = Date.now();
 }
 // Listování prstem během anotačního režimu zajišťuje touch obsluha .viewer —
 // pero kreslí (blokuje swipe přes _activePointerId), prst listuje.
@@ -3162,6 +3167,17 @@ let _dragFrom = null;    // výchozí bod přetažení (x,y)
 let _dragSnap = null;    // snapshot geometrie prvku na začátku přetažení
 // Diagnostický hook pro sondy (window.__navdbg) — JEN ve vývojovém režimu,
 // do produkčního bundle se nedostane (import.meta.env.DEV je při buildu false).
+// `lastDown`/`lastUp` = kterou větví se klepnutí na vrstvu rozhodlo. Bez toho
+// se „klepnutí nic neudělá“ hledá jen čtením kódu (každá větev má vlastní return).
+let _lastDownDbg = '', _lastUpDbg = '';
+// ÚPLNÝ log rozhodnutí (jen DEV) — „klepnutí nic neudělá“ se jinak hledá čtením
+// kódu, protože každá větev má vlastní `return`.
+let _evLog = [];
+function _logEv(tag) {
+  if (!import.meta.env.DEV) return;
+  _evLog.push(tag);
+  if (_evLog.length > 60) _evLog.shift();
+}
 if (import.meta.env.DEV && typeof window !== 'undefined') {
   window.__navdbg = () => ({
     activePointerId: _activePointerId,
@@ -3177,6 +3193,10 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     annotCount: annotations.value.items.length,
     activeStroke: !!activeItem.value,
     page: currentPage.value,
+    lastDown: _lastDownDbg,
+    lastUp: _lastUpDbg,
+    evLog: _evLog,
+    editingAnnotationId: editingAnnotationId.value,
     blocked: (_activePointerId !== null)
       || (Date.now() - _lastPenAt < PEN_GUARD_MS)
       || (Date.now() - _lastTouchStrokeAt < PEN_GUARD_MS),
@@ -3353,6 +3373,7 @@ function onLayerMove(e) {
   }
 }
 function onLayerUp(e) {
+  _logEv('up ' + (e && e.pointerType) + ' activePtr=' + _activePointerId + ' item=' + !!activeItem.value);
   // Pero ukončilo tah → drž krátký ochranný interval, po který dotyk
   // (opřená ruka se zpožděným touchendem) nesmí otočit stránku.
   if (e && e.pointerType === 'pen') markPen();
@@ -3378,15 +3399,18 @@ function onLayerUp(e) {
   // uzavřel) — pointer se ale musí uvolnit VŽDY, jinak visí `_activePointerId`
   // a `blockedNav()` zabije listování (Jan: „listování nefunguje vůbec“).
   if (!activeItem.value) {
-    if (_activePointerId === e.pointerId) { _activePointerId = null; _prev = null; }
+    _logEv('  up: bez activeItem');
+    if (_activePointerId === e.pointerId) { _activePointerId = null; _prev = null; _lastUpDbg = 'bez activeItem'; }
     return;
   }
-  if (_activePointerId !== e.pointerId) return;
+  if (_activePointerId === null) { _logEv('  up: nic neběží'); return; }
+  if (_activePointerId !== e.pointerId) { _logEv('  up: jiný pointer'); _lastUpDbg = 'ignorováno: jiný pointer'; return; }
   _activePointerId = null;
   const it = activeItem.value;
 
   // Guma: okamžité mazání už běží v onLayerMove; tady jen ukončíme tah
   if (tool.value === 'eraser') {
+    _logEv('  up: guma');
     activeItem.value = null;
     _activePointerId = null;
     _prev = null;
@@ -3396,8 +3420,10 @@ function onLayerUp(e) {
 
   // Text / dynamika / značka: místo uvolnění → otevřít dialog (pending)
   if (tool.value === 'text' || tool.value === 'dynamic' || tool.value === 'mark') {
+    _logEv('  up: otevírám vstup ' + tool.value);
     it.pending = true;
     editingAnnotationId.value = it.id;
+    _lastUpDbg = 'otevírám vstup pro ' + tool.value;
     return; // držet aktivní do uložení textu
   }
 
