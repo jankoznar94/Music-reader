@@ -104,17 +104,19 @@
            originál moc velký") — meze jsou v ZOOM_MIN/ZOOM_MAX. -->
       <button class="zp-btn num" @click="zoomOutBig" title="Oddálit po 10 %">−10</button>
       <button class="zp-btn num" @click="zoomInBig" title="Přiblížit po 10 %">+10</button>
-      <span class="zp-sep" />
-      <!-- Vycentrovat a ukládání stavu jsou na HLAVNÍ LIŠTĚ (jsou to akce
-           k celému zobrazení, ne k zoomu) — a `clearPageView` je tam taky,
-           aby se tři ukládací akce nepletly dohromady v jednom panelu. -->
       <!-- Smazání uloženého nastavení stránky = ODPADNÍ KOŠ, ne křížek.
            Jan: „Křížek je hrozně zavádějící, uživatelé se tím snaží zavřít
            menu.“ Křížek v liště znamená „zavřít panel“ — tady se ale maže
-           uložený stav stránky, proto koš. -->
-      <button v-if="hasSavedPageView || hasSavedZoom" class="zp-btn" @click="clearPageView" title="Smazat uložené nastavení této stránky">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>
-      </button>
+           uložený stav stránky, proto koš.
+           Oddělovač PATŘÍ DO `v-if` — bez uloženého stavu se zobrazuje jen
+           koš, takže by za „+10“ zůstal viset osamocený svislý pruh
+           (Jan: „zůstal tam separátor, i když tam není tlačítko“). -->
+      <template v-if="hasSavedPageView || hasSavedZoom">
+        <span class="zp-sep" />
+        <button class="zp-btn" @click="clearPageView" title="Smazat uložené nastavení této stránky">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+        </button>
+      </template>
     </div>
 
     <!-- Panel ODEBRÁNÍ STRÁNEK — vlastní nabídka v liště. Odebírání je VRATNÉ:
