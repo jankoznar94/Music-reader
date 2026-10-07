@@ -108,8 +108,12 @@
       <!-- Vycentrovat a ukládání stavu jsou na HLAVNÍ LIŠTĚ (jsou to akce
            k celému zobrazení, ne k zoomu) — a `clearPageView` je tam taky,
            aby se tři ukládací akce nepletly dohromady v jednom panelu. -->
-      <button v-if="hasSavedPageView || hasSavedZoom" class="zp-btn" @click="clearPageView" title="Zrušit nastavení této stránky">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      <!-- Smazání uloženého nastavení stránky = ODPADNÍ KOŠ, ne křížek.
+           Jan: „Křížek je hrozně zavádějící, uživatelé se tím snaží zavřít
+           menu.“ Křížek v liště znamená „zavřít panel“ — tady se ale maže
+           uložený stav stránky, proto koš. -->
+      <button v-if="hasSavedPageView || hasSavedZoom" class="zp-btn" @click="clearPageView" title="Smazat uložené nastavení této stránky">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>
       </button>
     </div>
 
