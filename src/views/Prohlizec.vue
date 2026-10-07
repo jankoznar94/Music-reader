@@ -2449,6 +2449,10 @@ let _lastPenAt = 0;
 let _lastTouchStrokeAt = 0;   // prst kreslil na anotační vrstvě → teprve pak smí listovat
 let _palmUntil = 0;           // do kdy se nesmí listovat kvůli opřené dlani
 const PEN_GUARD_MS = 800;
+// Kratší okno pro MRTVÝ TAH: uživatel začal nový tah → ten starý, který nikdy
+// nedostal pointerup, je mrtvý už po ~250 ms. Pero, které PRÁVĚ kreslí, píše
+// průběžné `pointermove`, takže se tím neuvolní (ověřeno sondou).
+const STALE_POINTER_MS = 250;
 function blockedNav() {
   _staleGuard();   // mrtvý tah (nedoručený pointerup) nesmí blokovat listování navěky
   if (_activePointerId !== null) return true;
@@ -2952,6 +2956,13 @@ function onLayerDown(e) {
     if (jumpPlacePoints.value.length === 3) commitJumpPlace();
     return;
   }
+  // POZOR: úklid mrtvého tahu musí být PŘED větví `penOnly`. Když se dělal až
+  // za ní, první dotek prstu s mrtvým pointerem zůstal na `penOnly` větvi
+  // (return) a teprve DRUHÝ dotek se dostal k úklidu — přesně Jan: „první
+  // gesto je ignorováno a tužka začne psát až při druhém doteku“.
+  // Okno je KRÁTKÉ (STALE_POINTER_MS), protože uživatel začíná nový tah —
+  // pero, které právě kreslí, se tím neuvolní (píše průběžné pointermove).
+  _staleGuard(STALE_POINTER_MS);
   if (!annotMode.value) return;
   // Pero = kreslení (Jan: „anotace se dělají perem“). Zaznamenáme čas, aby
   // opřená ruka, jejíž touchend dorazí až po tahu perem, neotočila stránku.
@@ -2960,6 +2971,20 @@ function onLayerDown(e) {
   // Listování prstem v anotaci řeší touch obsluha na .viewer (onTouchStart/End),
   // která pozná, že pero zrovna kreslí, přes _activePointerId.
   if (penOnly.value && e.pointerType !== 'pen') return;
+  // Klepnutí PRSTEM v okrajovém pruhu patří LISTOVÁNÍ, ne kreslení — i s
+  // vypnutým „jen pero“. Jinak se prst v pruhu chytí jako tah, zapíše
+  // `_lastTouchStrokeAt` a jeho 800ms guard okrajové klepnutí zahodí
+  // (Jan: „Navíc listování bez módu ‚jen pero‘ stejně nefunguje“).
+  // Listování samo řeší onTouchEnd (`annotEdgeTap`) — prst, který v pruhu
+  // ZAČAL i SKONČIL, otočí stránku.
+  if (e.pointerType === 'touch' && inEdgeZone(e.clientX)) return;
+  // Zaseknutý pointer z tahu, který NIKDY nedostal pointerup (pero odjelo
+  // z dosahu tabletu), se pouští UŽ TADY a KRÁTKÝM oknem. `blockedNav()` volá
+  // _staleGuard() s dlouhým PEN_GUARD_MS, takže do prvního dotyku prstu byl
+  // „ještě živý“ a první dotek se zahodil — Jan: „první gesto je ignorováno
+  // a tužka začne psát až při druhém doteku“. Uživatel začal NOVÝ tah, takže
+  // ten starý je mrtvý, i když je mu jen 250 ms.
+  _staleGuard(STALE_POINTER_MS);
   if (_activePointerId !== null) return; // už kreslí jiný tah (např. druhá ruka)
   // Prstem se (s vypnutým „jen pero“) taky kreslí → po takovém tahu chvíli
   // nelistovat, aby dokončení tahu neotočilo stránku.
@@ -3116,6 +3141,12 @@ function onLayerDown(e) {
     points: [p],
   };
   _prev = p;
+  // Rovnou nastavit čas pohybu na vrstvě: `_staleGuard()` měří stáří tahu od
+  // `_lastLayerAt`, a ten se plní JEN v `onLayerMove`. Rychlé poklepání (down,
+  // pár pohybů, up) mezi dvěma sondami se tak tvářilo jako mrtvý tah a další
+  // `onLayerDown` ho uklidil — tahy pak mizely (naměřeno sondou
+  // probe-first-touch-ignored.py: „B) PRVNÍ tah prstem kreslí 1 -> 0“).
+  _lastLayerAt = Date.now();
 }
 // Listování prstem během anotačního režimu zajišťuje touch obsluha .viewer —
 // pero kreslí (blokuje swipe přes _activePointerId), prst listuje.
@@ -3143,6 +3174,9 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     editingId: editingId.value,
     tool: tool.value,
     touchStart: _touchStart ? { edge: _touchStart.edge, age: Date.now() - _touchStart.t } : null,
+    annotCount: annotations.value.items.length,
+    activeStroke: !!activeItem.value,
+    page: currentPage.value,
     blocked: (_activePointerId !== null)
       || (Date.now() - _lastPenAt < PEN_GUARD_MS)
       || (Date.now() - _lastTouchStrokeAt < PEN_GUARD_MS),
@@ -3191,9 +3225,9 @@ function resetGestureState() {
 // bylo mrtvé od prvního dotyku. Proto se aktivní pointer posuzuje oknem: dokud
 // od poslední události na vrstvě uplynulo méně než PEN_GUARD_MS, tah žije;
 // jinak je to mrtvý tah (nedoručený pointerup) a uvolní se.
-function _staleGuard() {
+function _staleGuard(maxAge = PEN_GUARD_MS) {
   if (_activePointerId === null) return;
-  if (Date.now() - _lastLayerAt < PEN_GUARD_MS) return;   // tah se nedávno hýbal → žije
+  if (Date.now() - _lastLayerAt < maxAge) return;   // tah se nedávno hýbal → žije
   resetGestureState();
 }
 
