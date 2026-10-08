@@ -724,11 +724,11 @@
       <div class="ap-cat">
         <div class="ap-cat-label">Nástroje</div>
         <div class="ap-row">
-          <button class="ap-tool" @click="setTool('pencil')" :class="{ on: tool === 'pencil' }" title="Tužka">✏️</button>
-          <button class="ap-tool" @click="setTool('highlighter')" :class="{ on: tool === 'highlighter' }" title="Zvýraznění">🖍️</button>
-          <button class="ap-tool" @click="setTool('eraser')" :class="{ on: tool === 'eraser' }" title="Guma (maže anotace, přes které přejede)">🧽</button>
-          <button class="ap-tool" @click="setTool('text')" :class="{ on: tool === 'text' }" title="Text (klávesnice)">T</button>
-          <button class="ap-tool" @click="setTool('edit')" :class="{ on: tool === 'edit' }" title="Upravit / přesunout text či dynamiku">✋</button>
+          <button class="ap-tool" @click="setTool('pencil')" :class="{ on: tool === 'pencil' }" title="Tužka"><span class="ap-glyph emoji">✏️</span></button>
+          <button class="ap-tool" @click="setTool('highlighter')" :class="{ on: tool === 'highlighter' }" title="Zvýraznění"><span class="ap-glyph emoji">🖍️</span></button>
+          <button class="ap-tool" @click="setTool('eraser')" :class="{ on: tool === 'eraser' }" title="Guma (maže anotace, přes které přejede)"><span class="ap-glyph emoji">🧽</span></button>
+          <button class="ap-tool" @click="setTool('text')" :class="{ on: tool === 'text' }" title="Text (klávesnice)"><span class="ap-glyph t-glyph">T</span></button>
+          <button class="ap-tool" @click="setTool('edit')" :class="{ on: tool === 'edit' }" title="Upravit / přesunout text či dynamiku"><span class="ap-glyph emoji">✋</span></button>
         </div>
       </div>
 
@@ -736,8 +736,8 @@
       <div class="ap-cat">
         <div class="ap-cat-label">Značky</div>
         <div class="ap-row">
-          <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (3 body)">&lt;</button>
-          <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (3 body)">&gt;</button>
+          <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (3 body)"><span class="ap-glyph">&lt;</span></button>
+          <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (3 body)"><span class="ap-glyph">&gt;</span></button>
           <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf, sfz...)">
             <span class="dyn-ico">{{ dynGlyph('mf').text }}</span>
           </button>
@@ -796,7 +796,7 @@
           </button>
           <button v-if="hasAnnotations" class="ap-tool" @click="clearAnnots" title="Smazat všechny anotace (celá skladba)">🗑️</button>
           <button v-if="hasPageItems" class="ap-tool" @click="clearPageAnnots" title="Smazat anotace na této stránce">🗑️<span class="ap-delpage">str.</span></button>
-          <button class="ap-tool pen-only" @click="penOnly = !penOnly" :class="{ on: penOnly }" title="Kreslit jen perem (ignorovat dotyk rukou)">🖊️</button>
+          <button class="ap-tool pen-only" @click="penOnly = !penOnly" :class="{ on: penOnly }" title="Kreslit jen perem (ignorovat dotyk rukou)"><span class="ap-glyph emoji">🖊️</span></button>
           <span class="ap-pen-label" @click="penOnly = !penOnly">Jen pero</span>
         </div>
       </div>
@@ -1932,6 +1932,7 @@ function pathD(it) {
 
 // --- Načtení ---
 onMounted(async () => {
+  await nextTick();
   loadTextSize();   // velikost textu zvolená při minulém vkládání (viz textSize)
   loadTextStyle();  // barva textu + rámeček zvolené při minulém vkládání
   const s = await dbGetSong(props.id);
@@ -3821,7 +3822,6 @@ function cancelTextAnnot() {
   annotTextDraft.value = '';
 }
 
-// --- Rámeček kolem textu (Jan, Oct 2026) ---------------------------------
 // Jan: „Ke vkládání textu bych přidal možnost dát hranatý Border. Ve stejné
 // barvě jako text. Do čtverce." a pak: „Text teď není v rámečku vycentrovaný.
 // A velikost a styl rámečku by měl být taky na výběr."
@@ -5284,6 +5284,39 @@ async function deleteBookmark(b) {
   box-shadow: 0 2px 6px rgba(0,0,0,0.3);
 }
 .ap-color.on { border-color: var(--accent); }
+/* ⚠️ ZNAKY V KRUHOVÝCH TLAČÍTKÁCH SEDÍ PODLE METRIK PÍSMA, NE PODLE STŘEDU ŘÁDKU.
+   Naměřeno z pixelů (scripts/diag-menu-centering.py, snímek obrazovky): čísla
+   velikosti měla střed otisku o ~1,2 px NAD středem tlačítka, „T“ o ~2,25 px
+   a glyf dynamiky z fontu NotyDyn o ~3,0 px. Jan: „čísla a znaky nejsou
+   vycentrovaný uprostřed tlačítek“. Flex centruje ŘÁDEK, ale znak v něm visí
+   podle účaří — proto se textové znaky posouvají dolů.
+
+   ⚠️ EMOJI SE NEPOSOUVAJÍ — canvas u nich měří záložní písmo, ne barevný glyf,
+   a emoji mají svůj vlastní střed (naměřeno: bez posunu sedí).
+   ⚠️ Hodnoty jsou ZMĚŘENÉ a jsou to kompromisy: přesnost měření z pixelů je
+   0,5 px (fyzické pixely při dsf=2), takže zbytek je do ~1 px. Zkusila jsem
+   posun počítat z metrik fontu pro každý znak zvlášť — u glyfů NotyDyn to
+   SELHALO (canvas je měří záložním písmem) a vyšlo to hůř, proto jsou tu pevné
+   hodnoty. Když se změní font nebo velikost znaků, přeměř. */
+.ap-tool > span.ap-glyph:not(.emoji), .ap-size > span, .dyn-ico {
+  display: inline-block;
+  transform: translateY(var(--glyph-nudge, 1.2px));
+}
+/* Pevné posuny — ZMĚŘENÉ kalibrací `scripts/calibrate-menu-glyphs.py`, která
+   v jednom běhu projede řadu hodnot a najde tu, při které je střed otisku přesně
+   ve středu tlačítka (ladit to rebuildem je plýtvání: jeden rebuild na jednu
+   hodnotu). Znaménko: kladná odchylka = znak je NÍŽ, než má být.
+   Emoji se neposouvají — canvas u nich měří záložní písmo, ne barevný glyf;
+   kalibrace u nich ukázala odchylku nezávislou na posunu (−1 px), takže posunem
+   se to nespraví. */
+.ap-tool > span.ap-glyph.emoji { --glyph-nudge: 0px; }
+.ap-glyph.t-glyph { --glyph-nudge: 1.0px; }         /* „T“   (kalibrace: 1,00) */
+.ap-tool.mus .ap-glyph { --glyph-nudge: 0px; }      /* „<“/„>“ (kalibrace: 0,00) */
+.ap-size span { --glyph-nudge: 1.5px; }             /* čísla velikosti (kalibrace: 1,50) */
+.dyn-ico { --glyph-nudge: 3.5px; }                  /* „mf“  (kalibrace: 3,50) */
+/* Značky (♮, ♯, trylek…) mají jiný otisk než „mf“ — kalibrace pro ně vyšla 0,25 px.
+   Drž je zvlášť, ať se jedno neladí na úkor druhého. */
+.ap-tool[title^='Značky'] .dyn-ico { --glyph-nudge: 0.25px; }
 .ap-size {
   width: 34px; height: 34px; flex: 0 0 auto; min-width: 0; padding: 0;
   border-radius: 50%; box-sizing: border-box;
