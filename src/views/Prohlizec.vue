@@ -256,16 +256,26 @@
             :fill="it.color" :opacity="it.opacity != null ? it.opacity : 1"
             class="hl"
           />
-          <!-- Textová anotace -->
-          <text
-            v-else-if="isText(it)"
-            :x="it.x" :y="it.y"
-            :fill="it.color"
-            :font-size="it.size"
-            font-family="system-ui, sans-serif"
-            :opacity="it.opacity != null ? it.opacity : 1"
-            text-anchor="start"
-          >{{ it.text }}</text>
+          <!-- Textová anotace — volitelně v hranatém rámečku (Jan, Oct 2026).
+               Rámeček se počítá ze STEJNÉ geometrie jako výběr rukou a hit-test
+               (textBorderBox), aby rám seděl na text a prvek šel chytit uvnitř něj. -->
+          <g v-else-if="isText(it)">
+            <rect
+              v-if="it.border"
+              v-bind="textBorderRect(it)"
+              class="text-border"
+              fill="none" :stroke="it.color" stroke-width="1.5"
+              :opacity="it.opacity != null ? it.opacity : 1"
+            />
+            <text
+              :x="it.x" :y="it.y"
+              :fill="it.color"
+              :font-size="it.size"
+              font-family="system-ui, sans-serif"
+              :opacity="it.opacity != null ? it.opacity : 1"
+              text-anchor="start"
+            >{{ it.text }}</text>
+          </g>
           <!-- Dynamika (p, f, mp...) — notační font NotyDyn (SMuFL glyfy) -->
           <text
             v-else-if="it.tool === 'dynamic'"
@@ -317,6 +327,19 @@
             :opacity="activeItem.opacity != null ? activeItem.opacity : 1"
             text-anchor="middle"
           >{{ annotDisplayText(activeItem) }}</text>
+          <!-- Text: náhled rámečku už při umísťování — uživatel vidí čtverec
+               ještě předtím, než napíše text (jinak by „border“ objevil až po uložení). -->
+          <g v-else-if="activeItem.tool === 'text'">
+            <rect
+              v-if="activeItem.border"
+              v-bind="textBorderRect(activeItem)"
+              class="text-border"
+              fill="none" :stroke="activeItem.color" stroke-width="1.5"
+              :opacity="activeItem.opacity != null ? activeItem.opacity : 1"
+            />
+            <circle :cx="activeItem.x" :cy="activeItem.y" r="6"
+              fill="none" :stroke="activeItem.color" stroke-width="2" />
+          </g>
           <circle v-else :cx="activeItem.x" :cy="activeItem.y" r="6"
             fill="none" :stroke="activeItem.color" stroke-width="2" />
         </g>
@@ -778,6 +801,13 @@
       <button class="eb-btn" @click="resizeAnnot(editingAnnot, -1)" title="Zmenšit">−</button>
       <span class="eb-val">{{ editingAnnot ? Math.round(editingAnnot.size) : 0 }}</span>
       <button class="eb-btn" @click="resizeAnnot(editingAnnot, 1)" title="Zvětšit">+</button>
+      <!-- Rámeček se dá zapnout/vypnout i u UŽ VLOŽENÉHO textu — jinak by uživatel
+           musel text smazat a vložit znovu, když si to rozmyslí. Volba se propíše
+           i do „další text" (stejně jako velikost zůstává nastavená). -->
+      <button v-if="editingAnnot && editingAnnot.tool === 'text'"
+              class="eb-btn" :class="{ on: editingAnnot.border }"
+              @click="toggleTextBorder(editingAnnot)"
+              :title="editingAnnot.border ? 'Zrušit rámeček' : 'Hranatý rámeček kolem textu'">▢</button>
       <button class="eb-btn done" @click="endEdit" title="Hotovo">✓</button>
       <button class="eb-btn" @click="deleteEditing" title="Smazat">🗑</button>
     </div>
@@ -841,7 +871,35 @@
           <button class="ti-size-btn" @click="bumpTextSize(-1)" title="Menší text">−</button>
           <span class="ti-size-val">{{ textSizeDraft }}</span>
           <button class="ti-size-btn" @click="bumpTextSize(1)" title="Větší text">+</button>
-          <span class="ti-size-sample"><span class="ti-size-aa" :style="{ fontSize: textSizeDraft + 'px' }">Aa</span></span>
+          <!-- Náhled: když je zapnutý rámeček, ukáže se i s ním — ve STEJNÉM
+               tvaru, v jakém se text opravdu vloží (čtverec, stejná barva). -->
+          <span class="ti-size-sample">
+            <span class="ti-size-aa" :style="textPreviewStyle">{{ annotTextDraft || 'Aa' }}</span>
+          </span>
+        </div>
+
+        <!-- Barva textu a rámeček PŘÍMO V TOMTO OKNĚ (Jan, Oct 2026): uživatel
+             vybírá velikost i způsob vložení tady, takže barva nemá být jinde.
+             Stejná paleta jako pero; volba se pamatuje (stejně jako velikost). -->
+        <div v-if="editingAnnotTool === 'text'" class="ti-row">
+          <span class="ti-size-label">Barva</span>
+          <div class="ti-colors">
+            <button
+              v-for="c in PEN_COLORS" :key="c"
+              class="ti-color" :class="{ on: textColorDraft === c }"
+              :style="{ background: c }"
+              @click="textColorDraft = c"
+              :title="'Barva textu'"
+            ></button>
+          </div>
+        </div>
+        <div v-if="editingAnnotTool === 'text'" class="ti-row">
+          <span class="ti-size-label">Rámeček</span>
+          <button class="ti-toggle" :class="{ on: textBorderDraft }"
+                  @click="textBorderDraft = !textBorderDraft"
+                  title="Hranatý rámeček kolem textu — stejnou barvou, do čtverce">
+            {{ textBorderDraft ? 'Zapnutý' : 'Vypnutý' }}
+          </button>
         </div>
         <!-- Neznámý výraz: font pro něj nemá glyf → zobrazil by se rozbitý znak -->
         <span v-if="editingAnnotTool === 'dynamic' && annotTextDraft.trim() && !dynGlyph(annotTextDraft).known" class="ti-warn">
@@ -996,6 +1054,52 @@ const editingAnnotationId = ref(null); // id anotace (text/dynamika), jejíž te
 const annotTextDraft = ref('');     // rozpisy textu při editaci
 const editingId = ref(null);        // id vybrané textové/dynamické anotace pro lištu úprav
 
+// --- Barva textu a rámeček — volba se nastavuje přímo v dialogu (Jan, Oct 2026)
+// Jan: „Taky bych přidal možnost vybírat barvu textu přímo ve stejném okně, jak
+// teď vybíráme velikost a způsob vložení." Volí se pro DALŠÍ vložený text a volba
+// se PAMATUJE (localStorage), stejně jako velikost — uživatel si text nastaví
+// jednou a další se vkládá rovnou tak.
+const textColor = ref('#111111');    // barva, se kterou se vloží další text
+const textColorDraft = ref('#111111'); // hodnota v dialogu (uloží se až potvrzením)
+const textBorder = ref(false);       // má další text hranatý rámeček?
+const textBorderDraft = ref(false);  // hodnota v dialogu (uloží se až potvrzením)
+function loadTextStyle() {
+  try {
+    const c = localStorage.getItem('noty.textColor');
+    if (c) { textColor.value = c; textColorDraft.value = c; }
+    const b = localStorage.getItem('noty.textBorder') === '1';
+    textBorder.value = b; textBorderDraft.value = b;
+  } catch (e) { /* soukromý režim prohlížeče — jede se s výchozí */ }
+}
+function saveTextStyle() {
+  try {
+    localStorage.setItem('noty.textColor', textColor.value);
+    localStorage.setItem('noty.textBorder', textBorder.value ? '1' : '0');
+  } catch (e) { /* viz výše */ }
+}
+// Náhled v dialogu kreslí STEJNOU geometrií jako rámeček na stránce — jinak by
+// uživatel viděl jiný tvar, než jaký se opravdu vloží. Velké velikosti se
+// zmenšují transformem, aby neroztlačily dialog (poměr zůstává).
+const textPreviewStyle = computed(() => {
+  const s = textSizeDraft.value;
+  const w = (annotTextDraft.value || 'Aa').length * s * TEXT_ADV_EM;
+  const h = (TEXT_LINE_ASC + TEXT_LINE_DESC) * s;
+  const side = Math.max(w, h) + TEXT_BORDER_PAD * 2;
+  const scale = Math.min(1, 48 / Math.max(side, s));
+  const st = { fontSize: s + 'px', color: textColorDraft.value, lineHeight: 1 };
+  if (scale < 1) st.transform = 'scale(' + scale.toFixed(3) + ')';
+  if (textBorderDraft.value) {
+    st.border = '1.5px solid ' + textColorDraft.value;
+    st.width = side + 'px';
+    st.height = side + 'px';
+    st.boxSizing = 'border-box';
+    st.display = 'flex';
+    st.alignItems = 'center';
+    st.justifyContent = 'center';
+  }
+  return st;
+});
+
 // --- Velikost textu PŘED vložením (Jan, Oct 2026) ------------------------
 // Jan: „Uživatel nemá možnost vybrat velikost písma. Může ji upravit až po
 // vložení pomocí nástroje ‚ruka‘. Měla by být možnost tento text nastavit ještě
@@ -1022,12 +1126,14 @@ function loadTextSize() {
 function saveTextSize() {
   try { localStorage.setItem('noty.textSize', String(textSize.value)); } catch (e) { /* viz výše */ }
 }
-// Krok pro tlačítka ± — po pěti stupních, u velkých čísel větší, ať se
-// z 20 na 60 nekliká desetkrát. Náhled „Aa“ v dialogu ukazuje skutečnou velikost.
-function textSizeStep(v) { return v < 30 ? 2 : v < 60 ? 5 : 10; }
+// Krok pro tlačítka ± — JEDNA konstanta pro celou čtečku (Jan, Oct 2026):
+// „Velikost textu se tlačítkem + mění pokaždé jinak. Jednou po 3 bodech, někdy
+// po 2, někdy po 4… Potřebuji nějaký konzistentní způsob. Třeba po 3 bodech."
+// Dřív se krok odvozoval z aktuální velikosti (2 / 5 / 10), takže se s každým
+// stiskem měnil — uživatel neměl šanci odhadnout, o kolik text zvětší.
+const TEXT_SIZE_STEP = 3;
 function bumpTextSize(dir) {
-  const step = textSizeStep(textSizeDraft.value);
-  textSizeDraft.value = clampTextSize(textSizeDraft.value + dir * step);
+  textSizeDraft.value = clampTextSize(textSizeDraft.value + dir * TEXT_SIZE_STEP);
 }
 
 // --- Dynamika: psaný text -> SMuFL kód (font NotyDyn, blok U+E520-U+E549) ---
@@ -1732,6 +1838,7 @@ function pathD(it) {
 // --- Načtení ---
 onMounted(async () => {
   loadTextSize();   // velikost textu zvolená při minulém vkládání (viz textSize)
+  loadTextStyle();  // barva textu + rámeček zvolené při minulém vkládání
   const s = await dbGetSong(props.id);
   if (!s) { router.push('/'); return; }
   song.id = s.id; song.data = s.data; song.name = s.name; song.fileName = s.fileName;
@@ -3203,11 +3310,16 @@ function onLayerDown(e) {
   if (tool.value === 'text' || tool.value === 'dynamic' || tool.value === 'mark') {
     activeItem.value = {
       id: crypto.randomUUID(), page: currentPage.value,
-      tool: tool.value, color: annotColor.value,
+      tool: tool.value,
+      // Text má vlastní barvu (volenou v dialogu) — pero kreslí jinam, ale barva
+      // textu se nastavuje tam, kde i velikost (Jan, Oct 2026).
+      color: tool.value === 'text' ? textColor.value : annotColor.value,
       opacity: annotOpacity.value / 100,
       // Text si nese VLASTNÍ velikost (zvolenou před vložením, viz textSize);
       // dynamika/značka zůstává na velikosti odvozené od voliče tužky.
       size: tool.value === 'text' ? textSize.value : Math.max(14, 20 + annotSize.value * 3),
+      // Rámeček kolem textu (hranatý, stejnou barvou, do čtverce) — volba z dialogu.
+      border: tool.value === 'text' ? textBorder.value : false,
       x: p.x, y: p.y, text: '',
       pending: true,   // po uvolnění otevře vstup
     };
@@ -3544,6 +3656,7 @@ function clearPageAnnots() {
   if (confirm(`Smazat ${count} anotace na této stránce?`)) {
     pushHistory();
     annotations.value.items = annotations.value.items.filter(x => x.page !== page);
+    endEdit();   // vybraný prvek mohl být na této stránce — pás úprav nesmí zůstat viset
     saveAnnotations();
   }
 }
@@ -3563,11 +3676,16 @@ async function confirmTextAnnot(withHand = false) {
   const it = annotations.value.items.find(x => x.id === id) || activeItem.value;
   if (it) {
     it.text = annotTextDraft.value.trim();
-    // Velikost zvolená v dialogu PŘED vložením; volba se pamatuje pro další text.
+    // Velikost + barva + rámeček zvolené v dialogu PŘED vložením; volby se pamatují.
     if (it.tool === 'text') {
       textSize.value = clampTextSize(textSizeDraft.value);
       it.size = textSize.value;
+      textColor.value = textColorDraft.value;
+      it.color = textColor.value;
+      textBorder.value = textBorderDraft.value;
+      it.border = textBorder.value;
       saveTextSize();
+      saveTextStyle();
     }
   }
   if (!annotations.value.items.includes(it)) {
@@ -3601,6 +3719,43 @@ function cancelTextAnnot() {
   annotTextDraft.value = '';
 }
 
+// --- Rámeček kolem textu (Jan, Oct 2026) ---------------------------------
+// Jan: „Ke vkládání textu bych přidal možnost dát hranatý Border. Ve stejné
+// barvě jako text. Do čtverce." Rámeček se vejde do ČTVERCE o hraně nejdelšího
+// rozměru textu — text v něm tedy neleží uprostřed, ale má od svislé hrany
+// stejný odstup jako od vodorovné (odstav „do čtverce").
+// Text se kreslí s `text-anchor="start"`: x = levý okraj, y = účaří, takže
+// kolem textu je potřeba i horní/dolní rezerva (žádná z nich není symetrická).
+const TEXT_BORDER_PAD = 6;      // odstup textu od rámečku (px ve souřadnicích vrstvy)
+const TEXT_LINE_DESC = 0.24;    // místo pod účařím (hloubka minusek) v em
+const TEXT_LINE_ASC  = 0.78;    // výška nad účařím (velká písmena) v em
+const TEXT_ADV_EM    = 0.62;    // odhad šířky znaku v em (stejný odhad jako výběr)
+
+// Kolik místa si text vyžádá (bez okraje rámečku). Jeden zdroj pravdy pro
+// vykreslení rámečku i pro hit-test rukou — jinak by se rám a klikatelná
+// plocha rozešly (Jan to pozná: „chytím to jen někde").
+function textExtents(it) {
+  const s = it.size || 20;
+  const w = it.text ? Math.max(s, it.text.length * s * TEXT_ADV_EM) : s;
+  return { x: it.x, y: it.y - TEXT_LINE_ASC * s, w, h: (TEXT_LINE_ASC + TEXT_LINE_DESC) * s };
+}
+// Čtvercový rám: hrana = max(šířka, výška) + okraje na obou stranách; středem se
+// drží text, aby byl rám kolem něj vždycky stejně „obalený".
+function textBorderBox(it) {
+  const e = textExtents(it);
+  const side = Math.max(e.w, e.h) + TEXT_BORDER_PAD * 2;
+  return {
+    x: e.x + e.w / 2 - side / 2,
+    y: e.y + e.h / 2 - side / 2,
+    w: side, h: side,
+  };
+}
+// Atributy <rect> pro Vue (x/y/width/height) — rámeček kreslí stejnou barvou jako text.
+function textBorderRect(it) {
+  const b = textBorderBox(it);
+  return { x: b.x, y: b.y, width: b.w, height: b.h };
+}
+
 // --- Režim "Upravit" — výběr, přetažení, změna velikosti textu/dynamiky ---
 // Vrátí ohraničující box prvku (plocha, kam lze kliknout pro výběr rukou), nebo null
 function itemBox(it) {
@@ -3608,6 +3763,11 @@ function itemBox(it) {
   const pad = 10;
   if (it.tool === 'text' || it.tool === 'dynamic' || it.tool === 'mark') {
     if (it.x == null || it.y == null) return null;
+    if (it.tool === 'text') {
+      // Rámeček se počítá JEDNOU funkcí pro vykreslení, výběr rukou i hit-test.
+      const r = textBorderBox(it);
+      return { x: r.x - pad, y: r.y - pad, w: r.w + pad * 2, h: r.h + pad * 2 };
+    }
     const s = it.size || 20;
     x1 = it.x; y1 = it.y - s;
     // Dynamika/značka = šířka glyfu z metrik fontu; text = odhad podle znaků
@@ -3692,7 +3852,13 @@ function editText(it) {
   annotTextDraft.value = it.text || '';
   // Do dialogu se načte SOUČASNÁ velikost prvku — jinak by přepsání textu
   // rukou tiše přehodilo velikost na tu, co měl uživatel nastavenou pro nový text.
-  if (it.tool === 'text') textSizeDraft.value = clampTextSize(it.size || 20);
+  if (it.tool === 'text') {
+    textSizeDraft.value = clampTextSize(it.size || 20);
+    // Totéž pro barvu a rámeček — dialog musí ukazovat, jak prvek VYPADÁ TEĎ,
+    // ne jak je nastavený „další text“.
+    textColorDraft.value = it.color || textColor.value;
+    textBorderDraft.value = !!it.border;
+  }
   // Stejná logika pro OTEVŘENÍ dialogu klepnutím na noty (pero i prst): dialog
   // musí ukazovat velikost, se kterou se prvek skutečně kreslí (viz itemBox —
   // text má vlastní `size`, ne hodnotu z voliče tužky).
@@ -3702,7 +3868,19 @@ function editText(it) {
 }
 function resizeAnnot(it, dir) {
   if (!it) return;
-  it.size = Math.max(10, it.size + dir * 4);
+  // Stejný krok jako v dialogu před vložením (TEXT_SIZE_STEP) — Jan: velikost
+  // se musí měnit KONZISTENTNĚ. Dřív tu byl pevný krok 4, takže stejná akce
+  // („+“) ubírala jinde jiný počet bodů než v dialogu.
+  it.size = clampTextSize((it.size || 20) + dir * TEXT_SIZE_STEP);
+  saveAnnotations();
+}
+// Rámeček u už vloženého textu — ať se dá zapnout i zpět, bez mazání a vkládání znovu.
+function toggleTextBorder(it) {
+  if (!it) return;
+  it.border = !it.border;
+  textBorder.value = it.border;
+  textBorderDraft.value = it.border;
+  saveTextStyle();
   saveAnnotations();
 }
 function endEdit() {
@@ -3750,6 +3928,20 @@ function strokeUnder(pts, w, it) {
   }
   // Text / dynamika: střed (x,y)
   if (it.x != null) {
+    // Text s rámečkem: guma musí brát i JEHO HRANY — u velkého čtverce by se
+    // jinak muselo trefit přesně na střed textu, což je pro uživatele hádanka.
+    if (it.tool === 'text' && it.border) {
+      const b = textBorderBox(it);
+      const corners = [
+        { x: b.x, y: b.y }, { x: b.x + b.w, y: b.y },
+        { x: b.x + b.w, y: b.y + b.h }, { x: b.x, y: b.y + b.h }, { x: b.x, y: b.y },
+      ];
+      for (const pt of pts) {
+        for (let i = 0; i < corners.length - 1; i++) {
+          if (distToSeg(pt.x, pt.y, corners[i].x, corners[i].y, corners[i + 1].x, corners[i + 1].y) < w) return true;
+        }
+      }
+    }
     for (let i = 0; i < pts.length - 1; i++) {
       if (distToSeg(it.x, it.y, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y) < w) return true;
     }
@@ -4881,6 +5073,9 @@ async function deleteBookmark(b) {
   display: flex; align-items: center; justify-content: center; touch-action: manipulation;
 }
 .eb-btn.done { background: var(--accent); border-color: var(--accent); color: #17130f; font-weight: 700; }
+/* Zapnutý přepínač v pásu úprav (rámeček textu) — stejné pravidlo jako u
+   anotačních tlačítek: stav je vidět i bez otevřeného panelu. */
+.eb-btn.on { border-color: var(--accent); color: var(--accent); }
 
 /* Sběr bodů zobáčku — hint lišta */
 .wedge-overlay {
@@ -4926,11 +5121,28 @@ async function deleteBookmark(b) {
 .ti-size-val { min-width: 34px; text-align: center; font-size: 0.95rem; font-weight: 600; }
 .ti-size-sample {
   flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end;
-  height: 40px; overflow: hidden;
+  height: 60px; overflow: hidden;
 }
 /* Náhled velikosti: ukazuje SKUTEČNOU hodnotu font-size, jakou text dostane.
-   Řádek má pevnou výšku, aby náhled velkých velikostí neroztlačil dialog. */
-.ti-size-aa { line-height: 1; color: var(--text); }
+   Řádek má pevnou výšku, aby náhled velkých velikostí neroztlačil dialog;
+   velké velikosti se proto zmenšují transformem (poměr zůstává, jen se vejde). */
+.ti-size-aa { line-height: 1; color: var(--text); transform-origin: right center; }
+/* Barva textu a rámeček — plochý řádek, stejná paleta jako pero (Jan, Oct 2026) */
+.ti-row { display: flex; align-items: center; gap: 8px; }
+.ti-colors { display: flex; flex-wrap: wrap; gap: 8px; }
+.ti-color {
+  width: 28px; height: 28px; flex: 0 0 auto; padding: 0;
+  border-radius: 50%; box-sizing: border-box;
+  border: 2px solid var(--border); cursor: pointer;
+}
+.ti-color.on { border-color: var(--accent); }
+.ti-toggle {
+  padding: 7px 14px; border-radius: 18px;
+  border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 0.85rem; font-weight: 600;
+  cursor: pointer; touch-action: manipulation;
+}
+.ti-toggle.on { border-color: var(--accent); color: var(--accent); }
 /* Tlačítko „Uložit a ruka“ = potvrzení + přepnutí nástroje; musí být vidět,
    že je to ta akce, kterou uživatel po vložení chce. */
 .jp-btn.hand { background: var(--bg-elev2); border-color: var(--accent); color: var(--accent); font-weight: 600; }
