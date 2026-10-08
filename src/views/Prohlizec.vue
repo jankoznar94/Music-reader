@@ -623,9 +623,9 @@
         class="bookmark-btn"
         :class="{ on: b.page === currentPage, circle: !b.label }"
         @click="goBookmark(b)"
-        :title="'Záložka na str. ' + withOffset(b.page + 1)"
+        :title="'Záložka na str. ' + bookmarkPageNo(b)"
       >
-        <span class="bk-num">{{ withOffset(b.page + 1) }}</span>
+        <span class="bk-num">{{ bookmarkPageNo(b) }}</span>
         <span v-if="b.label" class="bk-label">{{ b.label }}</span>
       </button>
     </div>
@@ -4140,8 +4140,17 @@ function bmSaveNow() {
 async function goBookmark(b) {
   await gotoPage(b.page);
 }
+// Číslo stránky záložky pro UŽIVATELE — stejná cesta jako počítadlo stránek
+// a seznam skoků: index do PDF → pořadí ZOBRAZENÝCH stránek → + posun číslování.
+// POZOR (Jan, Oct 2026): dřív tu stálo `withOffset(b.page + 1)` — tedy index do
+// PDF bez ohledu na odebrané stránky, takže lišta záložek si držela PŮVODNÍ
+// čísla a po odebrání stránky se s počítadlem rozešla. `bookmarkPageNo` je
+// jediná cesta, kterou se číslo záložky smí počítat (používá ji lišta i mazání).
+function bookmarkPageNo(b) {
+  return withOffset(dispPage(b && b.page != null ? b.page : null));
+}
 async function deleteBookmark(b) {
-  if (confirm(`Smazat záložku „${b.label || 'str. ' + (b.page + 1)}"?`)) {
+  if (confirm(`Smazat záložku „${b.label || 'str. ' + bookmarkPageNo(b)}"?`)) {
     bookmarks.value = bookmarks.value.filter(x => x.id !== b.id);
     await dbSaveBookmarks({ songId: song.id, items: bookmarks.value, manualOrder: bmManualOrder.value });
   }
