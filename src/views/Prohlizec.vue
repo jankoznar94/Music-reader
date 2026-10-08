@@ -261,8 +261,9 @@
                (textBorderBox), aby rám seděl na text a prvek šel chytit uvnitř něj. -->
           <g v-else-if="isText(it)">
             <rect
-              v-if="it.border"
-              v-bind="textBorderRect(it)"
+              v-for="r in (it.border ? textBorderRects(it) : [])" :key="r.key"
+              :x="r.x" :y="r.y" :width="r.width" :height="r.height"
+              :stroke-dasharray="r.dash || undefined"
               class="text-border"
               fill="none" :stroke="it.color" stroke-width="1.5"
               :opacity="it.opacity != null ? it.opacity : 1"
@@ -331,8 +332,9 @@
                ještě předtím, než napíše text (jinak by „border“ objevil až po uložení). -->
           <g v-else-if="activeItem.tool === 'text'">
             <rect
-              v-if="activeItem.border"
-              v-bind="textBorderRect(activeItem)"
+              v-for="r in (activeItem.border ? textBorderRects(activeItem) : [])" :key="r.key"
+              :x="r.x" :y="r.y" :width="r.width" :height="r.height"
+              :stroke-dasharray="r.dash || undefined"
               class="text-border"
               fill="none" :stroke="activeItem.color" stroke-width="1.5"
               :opacity="activeItem.opacity != null ? activeItem.opacity : 1"
@@ -423,6 +425,21 @@
             stroke-dasharray="6 4" rx="5"
           />
         </g>
+        <!-- Aktuální anotační prvky — pro SKUTEČNÉ měření textu v prohlížeči.
+             Je to potřeba proto, že rámeček kolem textu se musí trefit přesně:
+             odhad šířky znaku a výšky písma se od skutečného vykreslení liší
+             (Jan: „text teď není v rámečku vycentrovaný“). Změřeno u systému:
+             skutečná výška písma 12 px vs odhad 12,24 px a skutečná šířka znaku
+             0,553 em vs odhad 0,62 em → odchylka ~3,8 px. Měření je proto zdroj
+             pravdy a odhad slouží jen jako záloha (první vykreslení po startu).
+             `aria-hidden` + neviditelný styl, aby to nerušilo čtečku obrazovky. -->
+        <text
+          v-for="(it, i) in measurableTexts" :key="'m' + (it.id || i)"
+          :id="it.id"
+          ref="textProbeEls" class="text-measure" aria-hidden="true"
+          x="0" y="0" text-anchor="start" fill="none"
+          :font-size="it.size || 20" font-family="system-ui, sans-serif"
+        >{{ it.text }}</text>
       </svg>
 
       <!-- Skoky (Da Capo / VIDE) umístěné PŘÍMO NA NOTÁCH.
@@ -808,6 +825,21 @@
               class="eb-btn" :class="{ on: editingAnnot.border }"
               @click="toggleTextBorder(editingAnnot)"
               :title="editingAnnot.border ? 'Zrušit rámeček' : 'Hranatý rámeček kolem textu'">▢</button>
+      <!-- Šířka a styl rámu u VLOŽENÉHO textu — jinak by šly měnit jen při vkládání
+           a uživatel by musel text smazat a napsat znovu, když si to rozmyslí. -->
+      <template v-if="editingAnnot && editingAnnot.tool === 'text' && editingAnnot.border">
+        <span class="eb-size">Rám</span>
+        <button
+          v-for="w in TEXT_BORDER_WIDTHS" :key="'w' + w"
+          class="eb-chip" :class="{ on: (editingAnnot.borderWidth || 6) === w }"
+          @click="setTextBorderWidth(editingAnnot, w)"
+          :title="'Odstup textu od rámečku'">{{ w }}</button>
+        <button
+          v-for="s in TEXT_BORDER_STYLES" :key="'s' + s.key"
+          class="eb-chip" :class="{ on: (editingAnnot.borderStyle || 'solid') === s.key }"
+          @click="setTextBorderStyle(editingAnnot, s.key)"
+          :title="s.label">{{ s.label }}</button>
+      </template>
       <button class="eb-btn done" @click="endEdit" title="Hotovo">✓</button>
       <button class="eb-btn" @click="deleteEditing" title="Smazat">🗑</button>
     </div>
@@ -872,8 +904,9 @@
           <span class="ti-size-val">{{ textSizeDraft }}</span>
           <button class="ti-size-btn" @click="bumpTextSize(1)" title="Větší text">+</button>
           <!-- Náhled: když je zapnutý rámeček, ukáže se i s ním — ve STEJNÉM
-               tvaru, v jakém se text opravdu vloží (čtverec, stejná barva). -->
-          <span class="ti-size-sample">
+               tvaru, v jakém se text opravdu vloží (čtverec, stejná barva).
+               Když rámeček zapnutý není, náhled patří k přepínači níž. -->
+          <span v-if="!textBorderDraft" class="ti-size-sample">
             <span class="ti-size-aa" :style="textPreviewStyle">{{ annotTextDraft || 'Aa' }}</span>
           </span>
         </div>
@@ -893,6 +926,11 @@
             ></button>
           </div>
         </div>
+        <!-- Velikost a styl rámečku (Jan, Oct 2026): „velikost a styl rámečku by
+             měl být taky na výběr“. Velikost = odstup textu od rámu (Šířka),
+             styl = plná / čárkovaná / tečkovaná / dvojitá. Vlastní rámeček se
+             přitom zvětšuje sám podle textu, takže „velikost“ je jen odstup —
+             jinak by delší text přetekl ven. -->
         <div v-if="editingAnnotTool === 'text'" class="ti-row">
           <span class="ti-size-label">Rámeček</span>
           <button class="ti-toggle" :class="{ on: textBorderDraft }"
@@ -900,7 +938,29 @@
                   title="Hranatý rámeček kolem textu — stejnou barvou, do čtverce">
             {{ textBorderDraft ? 'Zapnutý' : 'Vypnutý' }}
           </button>
+          <!-- Náhled rámečku i tady: tvar a styl musí být vidět dřív, než text vložíš. -->
+          <span class="ti-size-sample">
+            <span class="ti-size-aa" :style="textPreviewStyle">{{ annotTextDraft || 'Aa' }}</span>
+          </span>
         </div>
+        <template v-if="editingAnnotTool === 'text' && textBorderDraft">
+          <div class="ti-row">
+            <span class="ti-size-label">Šířka</span>
+            <button
+              v-for="w in TEXT_BORDER_WIDTHS" :key="w"
+              class="ti-chip" :class="{ on: textBorderWidthDraft === w }"
+              @click="textBorderWidthDraft = w"
+              :title="'Odstup textu od rámečku'">{{ w }}</button>
+          </div>
+          <div class="ti-row">
+            <span class="ti-size-label">Styl</span>
+            <button
+              v-for="s in TEXT_BORDER_STYLES" :key="s.key"
+              class="ti-chip" :class="{ on: textBorderStyleDraft === s.key }"
+              @click="textBorderStyleDraft = s.key"
+              :title="s.label">{{ s.label }}</button>
+          </div>
+        </template>
         <!-- Neznámý výraz: font pro něj nemá glyf → zobrazil by se rozbitý znak -->
         <span v-if="editingAnnotTool === 'dynamic' && annotTextDraft.trim() && !dynGlyph(annotTextDraft).known" class="ti-warn">
           Tuhle dynamiku font nezná — vyber ji z nabídky výše.
@@ -1063,39 +1123,74 @@ const textColor = ref('#111111');    // barva, se kterou se vloží další text
 const textColorDraft = ref('#111111'); // hodnota v dialogu (uloží se až potvrzením)
 const textBorder = ref(false);       // má další text hranatý rámeček?
 const textBorderDraft = ref(false);  // hodnota v dialogu (uloží se až potvrzením)
+// Velikost (odstup) a styl rámu — Jan: „velikost a styl rámečku by měl být taky
+// na výběr“. Drafty se propíšou do „dalšího textu“ až potvrzením dialogu.
+const textBorderWidth = ref(6);
+const textBorderWidthDraft = ref(6);
+const textBorderStyle = ref('solid');
+const textBorderStyleDraft = ref('solid');
 function loadTextStyle() {
   try {
     const c = localStorage.getItem('noty.textColor');
     if (c) { textColor.value = c; textColorDraft.value = c; }
     const b = localStorage.getItem('noty.textBorder') === '1';
     textBorder.value = b; textBorderDraft.value = b;
+    const bw = Number(localStorage.getItem('noty.textBorderWidth'));
+    if (TEXT_BORDER_WIDTHS.includes(bw)) { textBorderWidth.value = bw; textBorderWidthDraft.value = bw; }
+    const bs = localStorage.getItem('noty.textBorderStyle');
+    if (TEXT_STYLE_MAP[bs]) { textBorderStyle.value = bs; textBorderStyleDraft.value = bs; }
   } catch (e) { /* soukromý režim prohlížeče — jede se s výchozí */ }
 }
 function saveTextStyle() {
   try {
     localStorage.setItem('noty.textColor', textColor.value);
     localStorage.setItem('noty.textBorder', textBorder.value ? '1' : '0');
+    localStorage.setItem('noty.textBorderWidth', String(textBorderWidth.value));
+    localStorage.setItem('noty.textBorderStyle', textBorderStyle.value);
   } catch (e) { /* viz výše */ }
 }
 // Náhled v dialogu kreslí STEJNOU geometrií jako rámeček na stránce — jinak by
 // uživatel viděl jiný tvar, než jaký se opravdu vloží. Velké velikosti se
 // zmenšují transformem, aby neroztlačily dialog (poměr zůstává).
+const _previewMetrics = (() => {
+  if (typeof document === 'undefined') return null;
+  try { return document.createElement('canvas').getContext('2d'); } catch (e) { return null; }
+})();
+const _previewWidthCache = new Map();
+function previewTextWidth(text, size) {
+  const key = size + '|' + text;
+  if (_previewWidthCache.has(key)) return _previewWidthCache.get(key);
+  let w = text.length * size * TEXT_ADV_EM;
+  if (_previewMetrics) {
+    try {
+      _previewMetrics.font = size + 'px system-ui, sans-serif';
+      const m = _previewMetrics.measureText(text);
+      if (m.width) w = m.width;
+    } catch (e) { /* zůstane odhad */ }
+  }
+  _previewWidthCache.set(key, w);
+  return w;
+}
 const textPreviewStyle = computed(() => {
   const s = textSizeDraft.value;
-  const w = (annotTextDraft.value || 'Aa').length * s * TEXT_ADV_EM;
-  const h = (TEXT_LINE_ASC + TEXT_LINE_DESC) * s;
-  const side = Math.max(w, h) + TEXT_BORDER_PAD * 2;
+  const txt = annotTextDraft.value || 'Aa';
+  const w = previewTextWidth(txt, s);
+  const h = _fontHeight(s);
+  const pad = TEXT_BORDER_WIDTHS.includes(textBorderWidthDraft.value) ? textBorderWidthDraft.value : 6;
+  const side = Math.max(w, h) + pad * 2;
   const scale = Math.min(1, 48 / Math.max(side, s));
   const st = { fontSize: s + 'px', color: textColorDraft.value, lineHeight: 1 };
   if (scale < 1) st.transform = 'scale(' + scale.toFixed(3) + ')';
   if (textBorderDraft.value) {
-    st.border = '1.5px solid ' + textColorDraft.value;
+    const m = TEXT_STYLE_MAP[textBorderStyleDraft.value] || TEXT_STYLE_MAP.solid;
     st.width = side + 'px';
     st.height = side + 'px';
     st.boxSizing = 'border-box';
     st.display = 'flex';
     st.alignItems = 'center';
     st.justifyContent = 'center';
+    st.border = '1.5px ' + (m.dash ? (textBorderStyleDraft.value === 'dotted' ? 'dotted' : 'dashed') : 'solid')
+                + ' ' + textColorDraft.value;
   }
   return st;
 });
@@ -3320,6 +3415,8 @@ function onLayerDown(e) {
       size: tool.value === 'text' ? textSize.value : Math.max(14, 20 + annotSize.value * 3),
       // Rámeček kolem textu (hranatý, stejnou barvou, do čtverce) — volba z dialogu.
       border: tool.value === 'text' ? textBorder.value : false,
+      borderWidth: tool.value === 'text' ? textBorderWidth.value : undefined,
+      borderStyle: tool.value === 'text' ? textBorderStyle.value : undefined,
       x: p.x, y: p.y, text: '',
       pending: true,   // po uvolnění otevře vstup
     };
@@ -3684,8 +3781,13 @@ async function confirmTextAnnot(withHand = false) {
       it.color = textColor.value;
       textBorder.value = textBorderDraft.value;
       it.border = textBorder.value;
+      textBorderWidth.value = textBorderWidthDraft.value;
+      it.borderWidth = textBorderWidth.value;
+      textBorderStyle.value = textBorderStyleDraft.value;
+      it.borderStyle = textBorderStyle.value;
       saveTextSize();
       saveTextStyle();
+      nextTick(() => measureTexts());   // skutečná šířka textu pro rám (viz textMetrics)
     }
   }
   if (!annotations.value.items.includes(it)) {
@@ -3721,39 +3823,149 @@ function cancelTextAnnot() {
 
 // --- Rámeček kolem textu (Jan, Oct 2026) ---------------------------------
 // Jan: „Ke vkládání textu bych přidal možnost dát hranatý Border. Ve stejné
-// barvě jako text. Do čtverce." Rámeček se vejde do ČTVERCE o hraně nejdelšího
-// rozměru textu — text v něm tedy neleží uprostřed, ale má od svislé hrany
-// stejný odstup jako od vodorovné (odstav „do čtverce").
-// Text se kreslí s `text-anchor="start"`: x = levý okraj, y = účaří, takže
-// kolem textu je potřeba i horní/dolní rezerva (žádná z nich není symetrická).
-const TEXT_BORDER_PAD = 6;      // odstup textu od rámečku (px ve souřadnicích vrstvy)
-const TEXT_LINE_DESC = 0.24;    // místo pod účařím (hloubka minusek) v em
-const TEXT_LINE_ASC  = 0.78;    // výška nad účařím (velká písmena) v em
-const TEXT_ADV_EM    = 0.62;    // odhad šířky znaku v em (stejný odhad jako výběr)
+// barvě jako text. Do čtverce." a pak: „Text teď není v rámečku vycentrovaný.
+// A velikost a styl rámečku by měl být taky na výběr."
+//
+// ⚠️ PŮVODNÍ CHYBA: rámeček se počítal z ODHADU (šířka = počet znaků × 0,62 em,
+// výška = (0,78 + 0,24) em). Skutečné vykreslení se liší — naměřeno u systémového
+// písma: výška písma 12 px místo 12,24 px a šířka znaku 0,553 em místo 0,62 em,
+// takže text seděl ~3,8 px VLEVO od středu rámečku. Jan to poznal okamžitě.
+// Měření prohlížeče (getComputedTextLength + výška písma z canvasu) je proto
+// ZDROJ PRAVDY; odhad slouží jen jako záloha pro první vykreslení po startu.
+const TEXT_BORDER_PAD = 6;      // výchozí odstup textu od rámečku (px v souřadnicích vrstvy)
+const TEXT_LINE_DESC = 0.24;    // místo pod účařím (hloubka minusek) v em — ZÁLOHA
+const TEXT_LINE_ASC  = 0.78;    // výška nad účařím (velká písmena) v em — ZÁLOHA
+const TEXT_ADV_EM    = 0.62;    // odhad šířky znaku v em — ZÁLOHA (jen pro první kreslení)
+// Na výběr: odstup textu od rámu a styl čáry. Rám se jinak zvětšuje sám podle
+// textu — kdyby měl pevný rozměr, delší text by z něj přetekl.
+const TEXT_BORDER_WIDTHS = [4, 6, 8, 12, 16];
+const TEXT_BORDER_STYLES = [
+  { key: 'solid',  label: 'Plná' },
+  { key: 'dashed', label: 'Čárky' },
+  { key: 'dotted', label: 'Tečky' },
+  { key: 'double', label: 'Dvojitá' },
+];
+// Styl rámu → atributy <rect>. „Dvojitá“ = dvě soustředné linky (SVG na dvojitou
+// čáru vlastní atribut nemá, takže se kreslí dvěma obdélníky).
+const TEXT_STYLE_MAP = {
+  solid:  { dash: null,       double: false },
+  dashed: { dash: '7 5',      double: false },
+  dotted: { dash: '1.5 4',    double: false },
+  double: { dash: null,       double: true  },
+};
+const textProbeEls = ref([]);   // skryté <text> pro měření (viz measurableTexts)
+
+function textBorderWidthOf(it) {
+  const w = it.borderWidth;
+  return (typeof w === 'number' && w > 0) ? w : TEXT_BORDER_PAD;
+}
+function textBorderStyleOf(it) {
+  return TEXT_STYLE_MAP[it.borderStyle] ? it.borderStyle : 'solid';
+}
+// Skutečná šířka a výška textu z prohlížeče, klíčované podle id prvku.
+// getComputedTextLength() dá PŘESNĚ to, co prohlížeč vykreslí (včetně kerningu),
+// a výška písma se měří přes canvas — v prohlížeči je jinak nedostupná.
+const textMetrics = ref({});
+function measureTexts() {
+  const els = textProbeEls.value || [];
+  for (const el of els) {
+    if (!el || !el.id) continue;
+    const size = Number(el.getAttribute('font-size')) || el.getBoundingClientRect().height || 20;
+    const txt = el.textContent || '';
+    let w = 0;
+    try { w = el.getComputedTextLength(); } catch (e) { w = 0; }
+    if (!w) w = Math.max(size, txt.length * size * TEXT_ADV_EM);
+    const ink = _inkMetrics(txt, size);
+    textMetrics.value[el.id] = { w, size, inkAsc: ink.asc, inkDesc: ink.desc };
+  }
+}
+// ⚠️ Svisle se centruje podle SKUTEČNÉHO OTISKU PÍSMEN, ne podle boxu písma.
+// Rozdíl je vidět: text bez descendentů („noty“ má jen vzestupnice) má otisk
+// jen po účaří, takže zarovnání podle font-boxu ho posune o ~3 px nad střed
+// (naměřeno dy = −3,03 px). Oko hodnotí otisk, proto je otisk zdrojem pravdy.
+// `actualBoundingBox*` z canvasu dává přesně hranice vykreslených znaků.
+function _inkMetrics(text, size) {
+  const fallback = { asc: size * TEXT_LINE_ASC, desc: size * TEXT_LINE_DESC };
+  try {
+    const c = _fontHeightCache.ctx
+      || (_fontHeightCache.ctx = document.createElement('canvas').getContext('2d'));
+    c.font = size + 'px system-ui, sans-serif';
+    // Prázdný/nedostupný text → měř velké písmeno, ať je z čeho počítat.
+    const m = c.measureText(text || 'H');
+    if (m.actualBoundingBoxAscent) {
+      return { asc: m.actualBoundingBoxAscent, desc: Math.max(0, m.actualBoundingBoxDescent) };
+    }
+  } catch (e) { /* zůstane záloha */ }
+  return fallback;
+}
+const _fontHeightCache = new Map();
+function _fontHeight(size) {
+  const key = Math.round(size * 10);
+  if (_fontHeightCache.has(key)) return _fontHeightCache.get(key);
+  const h = _inkMetrics('H', size).asc;    // výška velkého písmene = vizuální výška písma
+  _fontHeightCache.set(key, h);
+  return h;
+}
+// Zjisti, které prvky potřebuje proměřit (uložené texty na stránce + náhled
+// aktivního textu) a po vykreslení zavolej měření. Hlídej i pozdější změny
+// velikosti — proto se proměřuje i v pásu úprav (viz resizeAnnot).
+// ⚠️ `immediate: true` tu NESMÍ být: při setupu ještě `textMetrics` neexistuje
+// (je deklarovaný níž) a přístup na něj shodí celý komponent na TDZ chybě —
+// projevilo se to jako „stránka se vůbec nevykreslí“ (timeout v sondě).
+const measurableTexts = computed(() => {
+  const out = pageItems.value.filter(isText);
+  const active = activeItem.value;
+  if (active && isText(active)) out.push(active);
+  return out;
+});
+watch(measurableTexts, () => {
+  nextTick(() => measureTexts());
+}, { deep: true });
 
 // Kolik místa si text vyžádá (bez okraje rámečku). Jeden zdroj pravdy pro
 // vykreslení rámečku i pro hit-test rukou — jinak by se rám a klikatelná
 // plocha rozešly (Jan to pozná: „chytím to jen někde").
 function textExtents(it) {
   const s = it.size || 20;
-  const w = it.text ? Math.max(s, it.text.length * s * TEXT_ADV_EM) : s;
-  return { x: it.x, y: it.y - TEXT_LINE_ASC * s, w, h: (TEXT_LINE_ASC + TEXT_LINE_DESC) * s };
+  const m = textMetrics.value[it.id];
+  const w = (m && m.w) || (it.text ? Math.max(s, it.text.length * s * TEXT_ADV_EM) : s);
+  // Svisle se vychází z OTISKU PÍSMEN (viz _inkMetrics) — zarovnání podle boxu
+  // písma posouvalo text o ~3 px nad střed rámu (naměřeno dy = −3,03 px).
+  // Bez měření je záloha stejně velká jako dřívější odhad, takže se do té doby
+  // nic nerozbije (první vykreslení po startu).
+  const inkAsc  = (m && m.inkAsc)  != null ? m.inkAsc  : s * TEXT_LINE_ASC;
+  const inkDesc = (m && m.inkDesc) != null ? m.inkDesc : s * TEXT_LINE_DESC;
+  const h = inkAsc + inkDesc;
+  // Účaří je v `it.y`; horní hrana otisku je nad ním o `inkAsc`.
+  return { x: it.x, y: it.y - inkAsc, w, h };
 }
 // Čtvercový rám: hrana = max(šířka, výška) + okraje na obou stranách; středem se
 // drží text, aby byl rám kolem něj vždycky stejně „obalený".
 function textBorderBox(it) {
   const e = textExtents(it);
-  const side = Math.max(e.w, e.h) + TEXT_BORDER_PAD * 2;
+  const pad = textBorderWidthOf(it);
+  const side = Math.max(e.w, e.h) + pad * 2;
   return {
     x: e.x + e.w / 2 - side / 2,
     y: e.y + e.h / 2 - side / 2,
     w: side, h: side,
   };
 }
-// Atributy <rect> pro Vue (x/y/width/height) — rámeček kreslí stejnou barvou jako text.
-function textBorderRect(it) {
+// Atributy <rect> pro Vue — rámeček kreslí stejnou barvou jako text a nese
+// zvolený styl čáry (čárky / tečky / dvojitá).
+function textBorderRects(it) {
   const b = textBorderBox(it);
-  return { x: b.x, y: b.y, width: b.w, height: b.h };
+  const st = TEXT_STYLE_MAP[textBorderStyleOf(it)];
+  if (st.double) {
+    // „Dvojitá“ = dvě soustředné linky; SVG vlastní atribut pro dvojitou čáru nemá.
+    const gap = 2.5;
+    return [
+      { key: 'o', x: b.x, y: b.y, width: b.w, height: b.h, dash: null },
+      { key: 'i', x: b.x + gap, y: b.y + gap,
+        width: Math.max(1, b.w - gap * 2), height: Math.max(1, b.h - gap * 2), dash: null },
+    ];
+  }
+  return [{ key: 'o', x: b.x, y: b.y, width: b.w, height: b.h, dash: st.dash }];
 }
 
 // --- Režim "Upravit" — výběr, přetažení, změna velikosti textu/dynamiky ---
@@ -3858,6 +4070,8 @@ function editText(it) {
     // ne jak je nastavený „další text“.
     textColorDraft.value = it.color || textColor.value;
     textBorderDraft.value = !!it.border;
+    textBorderWidthDraft.value = textBorderWidthOf(it);
+    textBorderStyleDraft.value = textBorderStyleOf(it);
   }
   // Stejná logika pro OTEVŘENÍ dialogu klepnutím na noty (pero i prst): dialog
   // musí ukazovat velikost, se kterou se prvek skutečně kreslí (viz itemBox —
@@ -3873,13 +4087,39 @@ function resizeAnnot(it, dir) {
   // („+“) ubírala jinde jiný počet bodů než v dialogu.
   it.size = clampTextSize((it.size || 20) + dir * TEXT_SIZE_STEP);
   saveAnnotations();
+  // Rámeček se počítá ze SKUTEČNÉ šířky textu — po změně velikosti se musí přeměřit,
+  // jinak by rám u nové velikosti neseděl (viz textMetrics).
+  nextTick(() => measureTexts());
 }
 // Rámeček u už vloženého textu — ať se dá zapnout i zpět, bez mazání a vkládání znovu.
+// Bere i šířku a styl rámu; volba se propíše do „dalšího textu“ (jako velikost).
 function toggleTextBorder(it) {
   if (!it) return;
   it.border = !it.border;
   textBorder.value = it.border;
   textBorderDraft.value = it.border;
+  if (it.border) {
+    // Prvek může mít rámeček z dřívějška bez volby šířky/stylu — doplň z dialogu.
+    it.borderWidth = it.borderWidth || textBorderWidth.value;
+    it.borderStyle = it.borderStyle || textBorderStyle.value;
+  }
+  saveTextStyle();
+  saveAnnotations();
+}
+// Změna šířky / stylu rámu u VLOŽENÉHO textu (pás úprav).
+function setTextBorderWidth(it, w) {
+  if (!it) return;
+  it.borderWidth = w;
+  textBorderWidth.value = w;
+  textBorderWidthDraft.value = w;
+  saveTextStyle();
+  saveAnnotations();
+}
+function setTextBorderStyle(it, key) {
+  if (!it || !TEXT_STYLE_MAP[key]) return;
+  it.borderStyle = key;
+  textBorderStyle.value = key;
+  textBorderStyleDraft.value = key;
   saveTextStyle();
   saveAnnotations();
 }
@@ -5076,6 +5316,15 @@ async function deleteBookmark(b) {
 /* Zapnutý přepínač v pásu úprav (rámeček textu) — stejné pravidlo jako u
    anotačních tlačítek: stav je vidět i bez otevřeného panelu. */
 .eb-btn.on { border-color: var(--accent); color: var(--accent); }
+/* Čipy pro šířku/styl rámu v pásu úprav — menší než hlavní kruhová tlačítka,
+   aby se lišta na tabletu vešla (viz breakpoint v pwa-pdf-viewer). */
+.eb-chip {
+  padding: 5px 10px; border-radius: 12px; flex: 0 0 auto;
+  border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 0.75rem; font-weight: 600;
+  cursor: pointer; touch-action: manipulation;
+}
+.eb-chip.on { border-color: var(--accent); color: var(--accent); }
 
 /* Sběr bodů zobáčku — hint lišta */
 .wedge-overlay {
@@ -5143,6 +5392,18 @@ async function deleteBookmark(b) {
   cursor: pointer; touch-action: manipulation;
 }
 .ti-toggle.on { border-color: var(--accent); color: var(--accent); }
+/* Volba šířky a stylu rámečku textu — malé ploché čipy (Jan: žádné karty).
+   Tvar připomíná volenou vlastnost: čip je obdélník, ne kruh jako u barev. */
+.ti-chip {
+  padding: 6px 12px; border-radius: 14px;
+  border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 0.82rem; font-weight: 600;
+  cursor: pointer; touch-action: manipulation;
+}
+.ti-chip.on { border-color: var(--accent); color: var(--accent); }
+/* Skryté <text> pro měření skutečné šířky textu (viz textMetrics). Nesmí být
+   vidět ani chytat dotyk — slouží jen prohlížeči k měření. */
+.text-measure { visibility: hidden; pointer-events: none; }
 /* Tlačítko „Uložit a ruka“ = potvrzení + přepnutí nástroje; musí být vidět,
    že je to ta akce, kterou uživatel po vložení chce. */
 .jp-btn.hand { background: var(--bg-elev2); border-color: var(--accent); color: var(--accent); font-weight: 600; }
