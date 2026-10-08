@@ -763,8 +763,15 @@
       </template>
     </div>
 
-    <!-- Pásmo úprav vybrané textové/dynamické anotace (jen v nástroji Ruka) -->
-    <div v-if="annotMode && tool === 'edit' && editingId" class="edit-bar">
+    <!-- Pásmo úprav vybrané textové/dynamické anotace (jen v nástroji Ruka).
+         POJISTKA: lišta se objevuje až PO vybrání prvku, tedy pod prstem, kterým
+         uživatel vybíral — kompatibilitní `click` z téhož dotyku by jinak spadl
+         na tlačítko, které se tam právě vykreslilo (nejčastěji 🗑 = „hned se to
+         smaže“). Lišta proto přijme jen klepnutí, jemuž předcházelo POLOŽENÍ
+         uvnitř ní. -->
+    <div v-if="annotMode && tool === 'edit' && editingId" class="edit-bar"
+         @pointerdown.capture="editBarArmed = true"
+         @click.capture="onEditBarClickCapture">
       <span class="eb-type">{{ editingTypeLabel }}</span>
       <button class="eb-btn" @click="editText(editingAnnot)" title="Přepsat text">✏️</button>
       <span class="eb-size">Velikost</span>
@@ -824,6 +831,18 @@
           :placeholder="editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : editingAnnotTool === 'mark' ? 'vyber značku z nabídky výše' : 'Text poznámky'"
           @keydown.enter="confirmTextAnnot"
         />
+
+        <!-- Velikost textu JEŠTĚ PŘED vložením. Dřív se dala upravit až po vložení
+             (nástrojem Ruka), takže uživatel musel vkládat „naslepo“ a pak
+             dohánět velikost. Volba se pamatuje i pro příští vložení a náhled
+             „Aa“ ukazuje skutečnou velikost, jakou text dostane. -->
+        <div v-if="editingAnnotTool === 'text'" class="ti-size-row">
+          <span class="ti-size-label">Velikost</span>
+          <button class="ti-size-btn" @click="bumpTextSize(-1)" title="Menší text">−</button>
+          <span class="ti-size-val">{{ textSizeDraft }}</span>
+          <button class="ti-size-btn" @click="bumpTextSize(1)" title="Větší text">+</button>
+          <span class="ti-size-sample"><span class="ti-size-aa" :style="{ fontSize: textSizeDraft + 'px' }">Aa</span></span>
+        </div>
         <!-- Neznámý výraz: font pro něj nemá glyf → zobrazil by se rozbitý znak -->
         <span v-if="editingAnnotTool === 'dynamic' && annotTextDraft.trim() && !dynGlyph(annotTextDraft).known" class="ti-warn">
           Tuhle dynamiku font nezná — vyber ji z nabídky výše.
@@ -837,7 +856,14 @@
 
         <div class="ti-actions">
           <button class="jp-btn" @click="cancelTextAnnot">Zrušit</button>
-          <button class="jp-btn primary" @click="confirmTextAnnot">Uložit</button>
+          <button class="jp-btn primary" @click="confirmTextAnnot(false)">Uložit</button>
+          <!-- Uloží a ROVNOU přepne na ruku nad vloženým prvkem — uživatel s ním
+               může hned hýbat (přesun, velikost), nemusí přepínat nástroj.
+               U dialogu otevřeného RUKOU (přepis existujícího textu) tohle
+               tlačítko nedává smysl — v ruce už jsme. -->
+          <button v-if="editingTextSize === null" class="jp-btn hand"
+                  @click="confirmTextAnnot(true)"
+                  title="Uložit a přepnout na ruku (hned lze přesouvat a měnit velikost)">Uložit a ruka ✋</button>
         </div>
       </div>
     </div>
@@ -969,6 +995,40 @@ const annotCollapsed = ref(false); // anotační panel sbalený (jen přepínač
 const editingAnnotationId = ref(null); // id anotace (text/dynamika), jejíž text se právě edituje
 const annotTextDraft = ref('');     // rozpisy textu při editaci
 const editingId = ref(null);        // id vybrané textové/dynamické anotace pro lištu úprav
+
+// --- Velikost textu PŘED vložením (Jan, Oct 2026) ------------------------
+// Jan: „Uživatel nemá možnost vybrat velikost písma. Může ji upravit až po
+// vložení pomocí nástroje ‚ruka‘. Měla by být možnost tento text nastavit ještě
+// před vložením. A po vložení by na vložený text měl být rovnou aplikovaný
+// nástroj ‚ruka‘, aby mohl hned manipulovat s vloženým prvkem.“
+// Volba se PAMATUJE (localStorage) — uživatel si velikost poznámek nastaví jednou
+// a další text se vkládá rovnou v ní, ne pořád „naslepo“ z výchozí hodnoty.
+const TEXT_SIZE_MIN = 10, TEXT_SIZE_MAX = 120;
+const textSize = ref(20);           // velikost, se kterou se vloží další text
+const textSizeDraft = ref(20);      // hodnota v dialogu (uloží se až potvrzením)
+// Text, který se právě otevřel rukou (existující prvek) — dialog musí ukázat
+// JEHO velikost, ne tu připravenou pro nový text (viz editText).
+const editingTextSize = ref(null);
+function clampTextSize(v) {
+  const n = Math.round(Number(v) || 0);
+  return Math.min(TEXT_SIZE_MAX, Math.max(TEXT_SIZE_MIN, n || 20));
+}
+function loadTextSize() {
+  try {
+    const raw = localStorage.getItem('noty.textSize');
+    if (raw != null) { const v = clampTextSize(raw); textSize.value = v; textSizeDraft.value = v; }
+  } catch (e) { /* soukromý režim prohlížeče — jede se s výchozí */ }
+}
+function saveTextSize() {
+  try { localStorage.setItem('noty.textSize', String(textSize.value)); } catch (e) { /* viz výše */ }
+}
+// Krok pro tlačítka ± — po pěti stupních, u velkých čísel větší, ať se
+// z 20 na 60 nekliká desetkrát. Náhled „Aa“ v dialogu ukazuje skutečnou velikost.
+function textSizeStep(v) { return v < 30 ? 2 : v < 60 ? 5 : 10; }
+function bumpTextSize(dir) {
+  const step = textSizeStep(textSizeDraft.value);
+  textSizeDraft.value = clampTextSize(textSizeDraft.value + dir * step);
+}
 
 // --- Dynamika: psaný text -> SMuFL kód (font NotyDyn, blok U+E520-U+E549) ---
 // Uživatel píše "mf", "sfz", "fp" atd. — v notačním fontu je každá dynamika
@@ -1134,6 +1194,26 @@ const dialogArmed = ref(false);
 watch(editingAnnotationId, (id) => { dialogArmed.value = false; });
 function onDialogClickCapture(e) {
   if (dialogArmed.value) { dialogArmed.value = false; return; }
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+// --- Stejná past u LIŠTY ÚPRAV (Jan, Oct 2026) ---------------------------
+// Jan: „Když vyberu nástroj ‚ruka‘ a vyberu prvek, který je přímo na pozici
+// tlačítka ‚smazat‘ u okna pro editaci prvku, tak se rovnou smaže. Jak kdyby se
+// označení nástrojem ruka rovnou počítalo i jako pokyn po smazání.“
+//
+// Příčina je táž jako u dialogu dynamiky: výběr prvku vzniká už v `pointerdown`
+// (`onLayerDown` → `editingId = hit.id`), takže lišta úprav se vykreslí POD PRSTEM
+// a tentýž dotyk prohlížeč vzápětí vyřídí jako kompatibilitní `click` — ten
+// dopadne na to, co je teď na tom místě, tedy na tlačítko lišty (🗑, ✏️, ±, ✓).
+//
+// Proto lišta přijme jen klepnutí, jemuž předcházelo POLOŽENÍ uvnitř sebe.
+// Platí pro CELOU lištu, ne jen pro koš — pod prstem může být kterékoli tlačítko.
+const editBarArmed = ref(false);
+watch(editingId, () => { editBarArmed.value = false; });
+function onEditBarClickCapture(e) {
+  if (editBarArmed.value) { editBarArmed.value = false; return; }
   e.preventDefault();
   e.stopPropagation();
 }
@@ -1651,6 +1731,7 @@ function pathD(it) {
 
 // --- Načtení ---
 onMounted(async () => {
+  loadTextSize();   // velikost textu zvolená při minulém vkládání (viz textSize)
   const s = await dbGetSong(props.id);
   if (!s) { router.push('/'); return; }
   song.id = s.id; song.data = s.data; song.name = s.name; song.fileName = s.fileName;
@@ -3124,7 +3205,9 @@ function onLayerDown(e) {
       id: crypto.randomUUID(), page: currentPage.value,
       tool: tool.value, color: annotColor.value,
       opacity: annotOpacity.value / 100,
-      size: Math.max(14, 20 + annotSize.value * 3),
+      // Text si nese VLASTNÍ velikost (zvolenou před vložením, viz textSize);
+      // dynamika/značka zůstává na velikosti odvozené od voliče tužky.
+      size: tool.value === 'text' ? textSize.value : Math.max(14, 20 + annotSize.value * 3),
       x: p.x, y: p.y, text: '',
       pending: true,   // po uvolnění otevře vstup
     };
@@ -3472,12 +3555,20 @@ const editingAnnotTool = computed(() => {
          || (activeItem.value && activeItem.value.id === editingAnnotationId.value ? activeItem.value : null);
   return it ? it.tool : '';
 });
-function confirmTextAnnot() {
+// POZOR: je `async` kvůli `await nextTick()` ve větvi „Uložit a ruka“ —
+// bez toho by `watch(tool)` smazal právě nastavený výběr (viz níže).
+async function confirmTextAnnot(withHand = false) {
   const id = editingAnnotationId.value;
   if (!id) return;
   const it = annotations.value.items.find(x => x.id === id) || activeItem.value;
   if (it) {
     it.text = annotTextDraft.value.trim();
+    // Velikost zvolená v dialogu PŘED vložením; volba se pamatuje pro další text.
+    if (it.tool === 'text') {
+      textSize.value = clampTextSize(textSizeDraft.value);
+      it.size = textSize.value;
+      saveTextSize();
+    }
   }
   if (!annotations.value.items.includes(it)) {
     pushHistory();
@@ -3487,6 +3578,18 @@ function confirmTextAnnot() {
   editingAnnotationId.value = null;
   annotTextDraft.value = '';
   saveAnnotations();
+  // „Uložit a ruka“ — nástroj se přepne na ruku a vložený prvek se ROVNOU vybere,
+  // takže uživatel s ním hned hýbe (posun prstem/perem, velikost v pásu úprav)
+  // a nemusí přepínat nástroj a znovu na prvek klepat.
+  if (withHand && it) {
+    const keep = it.id;
+    setTool('edit');
+    // POZOR: `setTool` sám volá `endEdit()` a navíc `watch(tool, () => endEdit())`
+    // doběhne až po tomto bloku — nastavit `editingId` hned by ten watch smazal
+    // (naměřeno: rámeček ani pás úprav se neobjevily). Proto až po nextTick.
+    await nextTick();
+    if (annotations.value.items.some(x => x.id === keep)) editingId.value = keep;
+  }
 }
 function cancelTextAnnot() {
   // Odebrat případné pending (neuložené) místo
@@ -3587,7 +3690,15 @@ function pageHits(p) {
 }
 function editText(it) {
   annotTextDraft.value = it.text || '';
+  // Do dialogu se načte SOUČASNÁ velikost prvku — jinak by přepsání textu
+  // rukou tiše přehodilo velikost na tu, co měl uživatel nastavenou pro nový text.
+  if (it.tool === 'text') textSizeDraft.value = clampTextSize(it.size || 20);
+  // Stejná logika pro OTEVŘENÍ dialogu klepnutím na noty (pero i prst): dialog
+  // musí ukazovat velikost, se kterou se prvek skutečně kreslí (viz itemBox —
+  // text má vlastní `size`, ne hodnotu z voliče tužky).
+  editingTextSize.value = it.tool === 'text' ? clampTextSize(it.size || 20) : null;
   editingAnnotationId.value = it.id;
+  // Aktivní (ještě nevložený) prvek: dialog otevírá sám textSizeDraft.
 }
 function resizeAnnot(it, dir) {
   if (!it) return;
@@ -4792,6 +4903,28 @@ async function deleteBookmark(b) {
   border-radius: 10px; padding: 12px; color: var(--text); font-size: 1rem;
 }
 .ti-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+/* Velikost textu před vložením — jednořádkový ovladač s živým náhledem „Aa“.
+   Jan nedělá karty, ale tohle je uvnitř dialogu: plochý řádek, teplé tóny. */
+.ti-size-row { display: flex; align-items: center; gap: 8px; }
+.ti-size-label { font-size: 0.85rem; color: var(--text-dim); }
+.ti-size-btn {
+  width: 34px; height: 34px; flex: 0 0 auto; padding: 0;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 1.05rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; touch-action: manipulation;
+}
+.ti-size-val { min-width: 34px; text-align: center; font-size: 0.95rem; font-weight: 600; }
+.ti-size-sample {
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end;
+  height: 40px; overflow: hidden;
+}
+/* Náhled velikosti: ukazuje SKUTEČNOU hodnotu font-size, jakou text dostane.
+   Řádek má pevnou výšku, aby náhled velkých velikostí neroztlačil dialog. */
+.ti-size-aa { line-height: 1; color: var(--text); }
+/* Tlačítko „Uložit a ruka“ = potvrzení + přepnutí nástroje; musí být vidět,
+   že je to ta akce, kterou uživatel po vložení chce. */
+.jp-btn.hand { background: var(--bg-elev2); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 
 /* Nabídka dynamik — dlaždice s hotovými glyfy z fontu NotyDyn.
    Uživatel tak vidí přesně to, co se vloží, a nemusí znát SMuFL kódy.
