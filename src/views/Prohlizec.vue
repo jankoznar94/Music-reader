@@ -1973,6 +1973,12 @@ onMounted(async () => {
   // Odebrané stránky jsou uložené na skladbě (součást PDF, ne UI stav).
   await loadHiddenPages();
   recomputePageOrder();
+  // PRVNÍ otevření skladby musí respektovat odebrané stránky: `currentPage`
+  // začíná na 0 (index do PDF), takže když je 1. stránka odebraná, vykreslila se
+  // právě ona — počítadlo hlásilo „1 / 5“, ale na papíře byla odebraná stránka.
+  // Při listování to spraví `gotoPage()`, `switchSong()` to dělá taky; tady to
+  // chybělo (Jan, Oct 2026).
+  currentPage.value = visiblePages.value[0] ?? 0;
 
   const saved = await dbGetAnnotations(props.id);
   if (saved && Array.isArray(saved.items)) annotations.value.items = saved.items;

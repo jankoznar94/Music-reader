@@ -18,9 +18,13 @@ import os
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location(
-    "cdp_e2e_harness", os.path.join(_HERE, "cdp-e2e-harness.py"))
+    "cdp_e2e_harness", os.path.join(_HERE, os.pardir, "cdp-e2e-harness.py"))
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
+# Port CDP se bere z prostředí — run-probe-fresh.sh startuje Chrome na vlastním
+# portu (výchozí 9226), takže natvrdo zapsaná 9223 by sondu shodila na
+# „Connection refused“ a vypadalo by to jako chyba aplikace.
+_mod.CDP_HTTP = os.environ.get("NOTY_CDP", _mod.CDP_HTTP)
 Harness, Check, make_pdf = _mod.Harness, _mod.Check, _mod.make_pdf
 
 STATE = r"""
@@ -259,9 +263,19 @@ async def main():
         ok("3 prsty: posun se NEZMĚNIL", abs(st["panX"] - px_before) < 1 and abs(st["panY"] - py_before) < 1, f"{px_before},{py_before} → {st['panX']},{st['panY']}")
 
         # ---------- 9) mřížka jen u rotace ----------
-        await h.ev("(() => { const b=[...document.querySelectorAll('.tb-btn')].find(x=>(x.title||'')==='Rotace stránky'); if(b) b.click(); return 1; })()")
+        # POZOR: 3prstové gesto výše si režim rotace OTEVŘELO samo (autoOpenRotMode),
+        # takže klik na tlačítko by ho ZAVŘEL a sonda by hlásila falešný FAIL.
+        # Nejdřív tedy režim zavřít (pokud běží), teprve pak ho tlačítkem otevřít.
+        if await h.ev("!!document.querySelector('.tb-btn.on[title=\"Rotace stránky\"]')"):
+            await h.ev("(() => { const b=[...document.querySelectorAll('.tb-btn')]"
+                       ".find(x=>(x.title||'')==='Rotace stránky'); if(b) b.click(); return 1; })()")
+            await asyncio.sleep(0.5)
+        off = await h.ev("!!document.querySelector('.rot-grid')")
+        await h.ev("(() => { const b=[...document.querySelectorAll('.tb-btn')]"
+                   ".find(x=>(x.title||'')==='Rotace stránky'); if(b) b.click(); return 1; })()")
         await asyncio.sleep(0.5)
         grid = await h.ev("(() => !!document.querySelector('.rot-grid'))()")
+        ok("mřížka zmizí po zavření nabídky rotace", off is False, str(off))
         ok("mřížka je vidět v nabídce rotace", grid is True, str(grid))
 
     ok.report()
