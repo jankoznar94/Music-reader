@@ -45,6 +45,32 @@ _m = _load_harness()
 _m.CDP_HTTP = CDP
 Harness, Check = _m.Harness, _m.Check
 
+# Volitelně proti ŽIVÉMU webu (NOTY_APP=https://harlequin-music-reader.web.app/).
+# Bez smazání service workeru a cache by sonda dostala STAROU verzi appky a hlásila
+# falešný FAIL (přesně ten vzor, jaký je v references/harness-traps.md).
+LIVE = os.environ.get("NOTY_APP")
+if LIVE:
+    _m.APP_URL = LIVE
+
+
+class LiveHarness(Harness):
+    async def wipe(self):
+        try:
+            await self.ev("(async () => {"
+                          " const rs = await navigator.serviceWorker.getRegistrations();"
+                          " for (const r of rs) await r.unregister();"
+                          " for (const k of await caches.keys()) await caches.delete(k);"
+                          " return true; })()", await_promise=True)
+        except Exception as exc:
+            print("   (wipe SW selhalo:", exc, ")")
+        for db in ("noty-app", "noty"):
+            try:
+                await self.ev(f"indexedDB.deleteDatabase('{db}')")
+            except Exception:
+                pass
+        await asyncio.sleep(1.2)
+        await self.open()
+
 # Otisk viditelného canvasu: FNV-1a přes pixely. Prázdný canvas (prostředek
 # listování) vrací 0 — proto se při vzorkování rozlišuje „nic“ a „něco“.
 HASH_JS = r"""
@@ -129,11 +155,20 @@ async def remove_current_page(h):
 
 async def main():
     ok = Check()
-    async with Harness() as h:
+    if LIVE:
+        h = LiveHarness(LIVE)
+    else:
+        h = Harness()
+    async with h:
         await h.set_tablet(800, 1280, 2)
         await h.open()
+        if LIVE:
+            print("   URL:", await h.ev("location.href"))
+            print("   verze bundlu:", await h.ev(
+                "([...document.querySelectorAll('script[src]')].map(s=>s.src).join(' '))"))
+            await h.wipe()
         await asyncio.sleep(1.0)
-        await h.open_song(pdf=_m.make_pdf(6), pages=6)
+        await h.open_song(pdf=_m.make_pdf(6), pages=6, reset=not LIVE)
         await h.set_tablet()
 
         # --- 1) otisky stránky 1 a stránky 2 (korektní cesta přes gotoPage) ---
@@ -168,8 +203,13 @@ async def main():
            f"canvas={first} str.1(odebraná)={hash1}")
         ok("PRVNÍ otevření: canvas ukazuje první ZOBRAZENOU stránku (2.)", first == hash2,
            f"canvas={first} str.2={hash2}")
-        ok("PRVNÍ otevření: vnitřní stránka je index 1 (PDF str. 2)", page_now == 1,
-           f"__navdbg().page={page_now}")
+        if page_now is None:
+            # `__navdbg` je jen v DEV buildu (import.meta.env.DEV) — v produkci není,
+            # a to není chyba. Rozhoduje otisk canvasu výše.
+            print("   (přeskočeno: __navdbg není v produkčním bundlu — DEV hook)")
+        else:
+            ok("PRVNÍ otevření: vnitřní stránka je index 1 (PDF str. 2)", page_now == 1,
+               f"__navdbg().page={page_now}")
         ok("PRVNÍ otevření: počítadlo hlásí 1 / 5 (z 6)", ctr == "1 / 5 (z 6)", str(ctr))
 
     ok.report()
