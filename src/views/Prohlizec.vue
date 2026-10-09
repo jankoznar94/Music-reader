@@ -812,22 +812,36 @@
     <div v-if="annotMode && tool === 'edit' && editingId" class="edit-bar"
          @pointerdown.capture="editBarArmed = true"
          @click.capture="onEditBarClickCapture">
-      <span class="eb-type">{{ editingTypeLabel }}</span>
-      <button class="eb-btn" @click="editText(editingAnnot)" title="Přepsat text">✏️</button>
-      <span class="eb-size">Velikost</span>
-      <button class="eb-btn" @click="resizeAnnot(editingAnnot, -1)" title="Zmenšit">−</button>
-      <span class="eb-val">{{ editingAnnot ? Math.round(editingAnnot.size) : 0 }}</span>
-      <button class="eb-btn" @click="resizeAnnot(editingAnnot, 1)" title="Zvětšit">+</button>
-      <!-- Rámeček se dá zapnout/vypnout i u UŽ VLOŽENÉHO textu — jinak by uživatel
-           musel text smazat a vložit znovu, když si to rozmyslí. Volba se propíše
-           i do „další text" (stejně jako velikost zůstává nastavená). -->
-      <button v-if="editingAnnot && editingAnnot.tool === 'text'"
-              class="eb-btn" :class="{ on: editingAnnot.border }"
-              @click="toggleTextBorder(editingAnnot)"
-              :title="editingAnnot.border ? 'Zrušit rámeček' : 'Hranatý rámeček kolem textu'">▢</button>
+      <!-- DVA ŘÁDKY, které se samy zalamují (Jan, Oct 2026: „nabídka možností je
+           tak široká, že tlačítko ‚smazat‘ s ikonou koše utíká mimo lištu“).
+           Naměřeno na tabletu 800 px: obsah 903 px do 764 px, koš na x=887..921
+           (mimo displej i mimo lištu). Proto: hlavní řádek drží VŽDY viditelné
+           ovládání prvku (přepsat, velikost, hotovo, smazat) a řádek rámečku
+           s čipy se vejde pod něj. Koš tak zůstává uvnitř displeje. -->
+      <div class="eb-row">
+        <span class="eb-type">{{ editingTypeLabel }}</span>
+        <button class="eb-btn" @click="editText(editingAnnot)" title="Přepsat text">✏️</button>
+        <span class="eb-size">Velikost</span>
+        <button class="eb-btn" @click="resizeAnnot(editingAnnot, -1)" title="Zmenšit">−</button>
+        <span class="eb-val">{{ editingAnnot ? Math.round(editingAnnot.size) : 0 }}</span>
+        <button class="eb-btn" @click="resizeAnnot(editingAnnot, 1)" title="Zvětšit">+</button>
+        <!-- Rámeček se dá zapnout/vypnout i u UŽ VLOŽENÉHO textu — jinak by uživatel
+             musel text smazat a vložit znovu, když si to rozmyslí. Volba se propíše
+             i do „další text“ (stejně jako velikost zůstává nastavená).
+             Tlačítko zůstává v HLAVNÍM řádku, protože musí být po ruce i tehdy,
+             když je rámeček VYPNUTÝ (jinak by nešel zapnout). -->
+        <button v-if="editingAnnot && editingAnnot.tool === 'text'"
+                class="eb-btn" :class="{ on: editingAnnot.border }"
+                @click="toggleTextBorder(editingAnnot)"
+                :title="editingAnnot.border ? 'Zrušit rámeček' : 'Hranatý rámeček kolem textu'">▢</button>
+        <button class="eb-btn done" @click="endEdit" title="Hotovo">✓</button>
+        <button class="eb-btn" @click="deleteEditing" title="Smazat">🗑</button>
+      </div>
       <!-- Šířka a styl rámu u VLOŽENÉHO textu — jinak by šly měnit jen při vkládání
-           a uživatel by musel text smazat a napsat znovu, když si to rozmyslí. -->
-      <template v-if="editingAnnot && editingAnnot.tool === 'text' && editingAnnot.border">
+           a uživatel by musel text smazat a napsat znovu, když si to rozmyslí.
+           Vlastní řádek = čipy neodsouvají koš z lišty. -->
+      <div v-if="editingAnnot && editingAnnot.tool === 'text' && editingAnnot.border"
+           class="eb-row eb-row-frame">
         <span class="eb-size">Rám</span>
         <button
           v-for="w in TEXT_BORDER_WIDTHS" :key="'w' + w"
@@ -839,9 +853,7 @@
           class="eb-chip" :class="{ on: (editingAnnot.borderStyle || 'solid') === s.key }"
           @click="setTextBorderStyle(editingAnnot, s.key)"
           :title="s.label">{{ s.label }}</button>
-      </template>
-      <button class="eb-btn done" @click="endEdit" title="Hotovo">✓</button>
-      <button class="eb-btn" @click="deleteEditing" title="Smazat">🗑</button>
+      </div>
     </div>
 
     <!-- Vstup pro text / dynamiku -->
@@ -5328,14 +5340,31 @@ async function deleteBookmark(b) {
 .ap-size.on { border-color: var(--accent); }
 .ap-delpage { font-size: 0.55rem; font-weight: 700; margin-left: 1px; }
 
-/* Pásmo úprav vybrané textové/dynamické anotace — POD horní lištou */
+/* Pásmo úprav vybrané textové/dynamické anotace — POD horní lištou.
+   DVA ŘÁDKY: hlavní (vždy: typ, ✏️, velikost ±, ▢, ✓, 🗑) a řádek rámu (čipy).
+   Naměřeno před opravou na tabletu 800 px: jediný řádek měl obsah 903 px do
+   764 px a koš skončil na x=887..921, tedy mimo lištu I mimo displej.
+   Řádky se navíc samy zalamují (`flex-wrap`), takže se lišta vejde i na mobil
+   a při zvětšeném systémovém písmu. */
 .edit-bar {
   position: fixed; left: 50%; top: calc(var(--topbar-h, 96px) + 8px); transform: translateX(-50%);
-  display: flex; align-items: center; gap: 8px;
-  background: var(--bg-elev); border: 2px solid var(--accent); border-radius: 32px;
-  padding: 8px 14px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
-  z-index: 27; max-width: 96vw;
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px;
+  background: var(--bg-elev); border: 2px solid var(--accent); border-radius: 24px;
+  padding: 8px 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+  z-index: 27; max-width: 96vw; box-sizing: border-box;
 }
+.eb-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  justify-content: center;
+  /* `width: max-content` je TU PODSTATNÉ: bez něj si `position: fixed` lišta
+     vzala šířku podle PRVNÍHO řádku (naměřeno: lišta 400 px, protože hlavní
+     řádek měřil 369 px) a řádek rámu s čipy (439 px) se pak zbytečně lámal
+     do dvou řádků. S `max-content` na řádcích určí šířku lišty ten NEJŠIRŠÍ
+     řádek a `max-width: 100%` zajistí zalamování teprve tehdy, když se řádek
+     do lišty (do 96vw) opravdu nevejde. */
+  width: max-content; max-width: 100%;
+}
+.eb-row-frame { row-gap: 6px; }
 .eb-type { font-weight: 600; font-size: 0.85rem; color: var(--accent); }
 .eb-size { font-size: 0.8rem; color: var(--text-dim); }
 .eb-val { font-size: 0.9rem; font-weight: 600; min-width: 20px; text-align: center; }
