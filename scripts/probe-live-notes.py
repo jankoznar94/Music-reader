@@ -136,6 +136,35 @@ async def main():
         ok("nota se vloží i uloží (klíč, barva, velikost)",
            bool(sn) and sn[-1]["text"] == "ctvrt_h" and sn[-1]["fill"] == _d.RED
            and sn[-1]["size"] > 0, f"uloženo {sn[-1] if sn else None}")
+        # ⚠️ Produkční bundle hook `window.__navdbg` NEMÁ (je jen v DEV) — stav se
+        # proto čte z DOM: pás úprav je vidět, nástroj ruka je zapnutý a nástroj
+        # Vkládání not už ne (jinak by další klepnutí přidalo další notu).
+        sel = await h.ev("""(() => {
+          const t = [...document.querySelectorAll('.ap-tool')];
+          const b = [...t].find(x => (x.title || '').startsWith('Vkládání not'));
+          const e = [...t].find(x => (x.title || '').startsWith('Upravit'));
+          return { bar: !!document.querySelector('.edit-bar'),
+                   noteOn: !!(b && b.classList.contains('on')),
+                   editOn: !!(e && e.classList.contains('on')),
+                   label: (document.querySelector('.eb-type') || {}).textContent || '' };
+        })()""")
+        ok("po vložení noty se nota sama označí (i na živém webu)",
+           bool(sel) and sel["bar"] and sel["editOn"] and not sel["noteOn"],
+           f"{sel}")
+        await _d.end_edit(h)
+
+        # Obtažení obrysu noty = tlustší nožička (stroke + paint-order) — na živém
+        # webu musí být vidět, že se to nasadilo; značky obtažené být nesmí.
+        st = await h.ev("""(() => [...document.querySelectorAll('.annot-layer text')]
+          .map(t => ({ cp: t.textContent.codePointAt(0) || 0, stroke: t.getAttribute('stroke'),
+                       sw: parseFloat(t.getAttribute('stroke-width') || '0') || 0,
+                       paint: t.getAttribute('paint-order'),
+                       size: parseFloat(getComputedStyle(t).fontSize) })))()""")
+        nt = [s for s in st if 0xE1D2 <= s["cp"] <= 0xE1DA or 0xE4E3 <= s["cp"] <= 0xE4E7]
+        ok("noty mají tlustší nožičku (obtažený obrys úměrně velikosti)",
+           bool(nt) and all(s["stroke"] not in (None, "none") and s["paint"] == "stroke"
+                            and abs(s["sw"] - s["size"] * 0.025) < 0.02 for s in nt),
+           f"např. {nt[0] if nt else 'žádná nota'}")
 
         for key, idx in (("cela", 1), ("poml_ctvrt", 2), ("osm_h", 3)):
             await _d.pick_tool(h, _d.TOOL_TITLE)
@@ -157,6 +186,7 @@ async def main():
             new = [g for g in await _d.glyphs(h) if g not in before]
             ok(f"volba '{key}' vloží U+{_d.NOTES[key][0]:04X}", new == [_d.NOTES[key][0]],
                f"vloženo {['U+%04X' % g for g in new]}")
+            await _d.end_edit(h)   # nota je po vložení vybraná (rámeček by kazil měření)
 
         # --- 5) rámeček ruky sedí na otisku (měřeno z pixelů) -----------------
         await _d.pick_tool(h, "Upravit")
