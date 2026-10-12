@@ -30,6 +30,9 @@ _m.CDP_HTTP = CDP
 Harness = _m.Harness
 
 TOL = 1.5   # px
+# Když se měří ŽIVÝ web, musí se nejdřív odregistrovat service worker a smazat
+# cache — jinak se změří stará nasazená verze a centrování „nevyjde“.
+TARGET = os.environ.get("NOTY_TARGET", "") or None
 
 
 async def tiles(h):
@@ -65,8 +68,19 @@ async def ink_center(img, t, dsf, margin=6):
 
 
 async def main():
-    async with Harness() as h:
+    async with Harness(url=TARGET or _m.APP_URL) as h:
         await h.open()
+        if TARGET:
+            print("měřím živý web:", TARGET)
+            await h.ev("(async () => {"
+                       " const rs = await navigator.serviceWorker.getRegistrations();"
+                       " for (const r of rs) await r.unregister();"
+                       " for (const k of await caches.keys()) await caches.delete(k);"
+                       " return true; })()", await_promise=True)
+            await h.ev("indexedDB.deleteDatabase('noty-app')")
+            await h.cdp("Page.reload", {"ignoreCache": True})
+            await h.wait_for("document.readyState === 'complete'", label="reload")
+            await asyncio.sleep(2.0)
         await h.set_tablet()
         await h.reset_db()
         await h.open_song(pdf=_m.make_pdf(6))
