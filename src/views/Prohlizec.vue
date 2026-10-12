@@ -293,6 +293,7 @@
           <text
             v-else-if="it.tool === 'mark' || it.tool === 'note'"
             :x="it.x" :y="it.y"
+            :transform="noteFlipTransform(it)"
             :fill="it.color"
             :font-size="it.size"
             font-family="'NotyDyn', serif"
@@ -323,6 +324,7 @@
           <text
             v-else-if="isNotationText(activeItem) && activeItem.text"
             :x="activeItem.x" :y="activeItem.y"
+            :transform="noteFlipTransform(activeItem)"
             :fill="activeItem.color"
             :font-size="activeItem.size"
             font-family="'NotyDyn', serif"
@@ -844,6 +846,18 @@
       <!-- Šířka a styl rámu u VLOŽENÉHO textu — jinak by šly měnit jen při vkládání
            a uživatel by musel text smazat a napsat znovu, když si to rozmyslí.
            Vlastní řádek = čipy neodsouvají koš z lišty. -->
+      <!-- Zrcadlení UŽ VLOŽENÉ noty — jinak by šlo měnit jen při vkládání a nota by
+           se musela smazat a vložit znovu. Vlastní řádek = čipy neodsouvají koš. -->
+      <div v-if="editingAnnot && editingAnnot.tool === 'note'"
+           class="eb-row eb-row-frame">
+        <span class="eb-size">Zrcadlení</span>
+        <button class="eb-chip" :class="{ on: !!editingAnnot.flipX }"
+                @click="toggleNoteFlip(editingAnnot, 'x')"
+                title="Vodorovně — nožička i praporek na druhou stranu">Vodorovně</button>
+        <button class="eb-chip" :class="{ on: !!editingAnnot.flipY }"
+                @click="toggleNoteFlip(editingAnnot, 'y')"
+                title="Svisle — nožička nahoru/dolů">Svisle</button>
+      </div>
       <div v-if="editingAnnot && editingAnnot.tool === 'text' && editingAnnot.border"
            class="eb-row eb-row-frame">
         <span class="eb-size">Rám</span>
@@ -941,8 +955,20 @@
           <span class="ti-size-val">{{ noteSizeDraft }}</span>
           <button class="ti-size-btn" @click="bumpNoteSize(1)" title="Větší nota">+</button>
           <span class="ti-size-sample">
-            <span class="ti-size-aa" :style="notePreviewStyle">{{ noteGlyph(annotTextDraft.trim() || 'ctvrt_h').text }}</span>
+            <span class="ti-size-aa nota-nahled" :style="notePreviewStyle">{{ noteGlyph(annotTextDraft.trim() || 'ctvrt_h').text }}</span>
           </span>
+        </div>
+
+        <!-- Zrcadlení noty PŘED vložením — vodorovně (nožička i praporek na druhou
+             stranu) i svisle (nožička nahoru/dolů). Zrcadlí se KOLEM UKOTVENÍ, takže
+             hlavička zůstane přesně v místě klepnutí. Volba se NEPAMATUJE: zrcadlení
+             je vlastnost jedné noty, ne skladby (velikost naopak ano). -->
+        <div v-if="editingAnnotTool === 'note'" class="ti-row">
+          <span class="ti-size-label">Zrcadlení</span>
+          <button class="ti-toggle" :class="{ on: noteFlipX }" @click="toggleFlip('x')"
+                  title="Vodorovně — nožička i praporek na druhou stranu">Vodorovně</button>
+          <button class="ti-toggle" :class="{ on: noteFlipY }" @click="toggleFlip('y')"
+                  title="Svisle — nožička nahoru/dolů">Svisle</button>
         </div>
 
         <div v-if="editingAnnotTool === 'text'" class="ti-size-row">
@@ -1304,15 +1330,58 @@ function saveNoteSize() {
 function bumpNoteSize(dir) {
   noteSizeDraft.value = clampNoteSize(noteSizeDraft.value + dir * TEXT_SIZE_STEP);
 }
+
+// --- Zrcadlení noty (Jan, Oct 2026): „možnost noty zrcadlově otočit, horizontálně
+// --- i vertikálně“ ---------------------------------------------------------------
+// Zrcadlí se KOLEM BODU UKOTVENÍ (střed hlavičky na účaří), takže hlavička zůstane
+// přesně tam, kam uživatel klepl — mění se jen to, na kterou stranu jde nožička.
+// Vertikální zrcadlení NENÍ totéž co „nožička dolů“ z nabídky: tam se nožička i
+// přesune na druhou stranu hlavičky, zrcadlení ji nechá na stejné straně.
+// Volba se ZÁMĚRNĚ NEPAMATUJE (na rozdíl od velikosti): zrcadlení je vlastnost jedné
+// noty, ne skladby, takže další nota začíná nezrcadlená.
+const noteFlipX = ref(false);
+const noteFlipY = ref(false);
+// Transformace pro SVG <text>: měřítko kolem ukotvení (translate → scale → zpět).
+// Bez zrcadlení vrací undefined, aby se atribut vůbec nevypsal.
+function noteFlipTransform(it) {
+  if (!it || it.tool !== 'note' || it.x == null || it.y == null) return undefined;
+  if (!it.flipX && !it.flipY) return undefined;
+  const sx = it.flipX ? -1 : 1, sy = it.flipY ? -1 : 1;
+  return `translate(${it.x} ${it.y}) scale(${sx} ${sy}) translate(${-it.x} ${-it.y})`;
+}
+// Přepnutí zrcadlení v dialogu (před vložením). Propíše se i do rozpracované noty,
+// aby náhled na stránce ukazoval totéž co mini náhled v dialogu.
+function toggleFlip(axis) {
+  if (axis === 'x') noteFlipX.value = !noteFlipX.value;
+  else noteFlipY.value = !noteFlipY.value;
+  const it = activeItem.value;
+  if (it && it.tool === 'note' && editingAnnotationId.value === it.id) {
+    it.flipX = noteFlipX.value;
+    it.flipY = noteFlipY.value;
+  }
+}
+// Přepnutí zrcadlení u UŽ VLOŽENÉ noty (pás úprav nástroje Ruka).
+function toggleNoteFlip(it, axis) {
+  if (!it || it.tool !== 'note') return;
+  if (axis === 'x') it.flipX = !it.flipX;
+  else it.flipY = !it.flipY;
+  noteFlipX.value = !!it.flipX;
+  noteFlipY.value = !!it.flipY;
+  saveAnnotations();
+}
+
 // Náhled noty ve SKUTEČNÉ velikosti — notační font (NotyDyn), ne systémové písmo.
 // Nota je na výšku celá osnova (1 em), takže velké velikosti se v náhledu zmenšují
-// stejně jako u textu (jinak by roztlačily dialog).
+// stejně jako u textu (jinak by roztlačily dialog). Zrcadlení je vidět i tady —
+// uživatel musí vidět, co opravdu dostane (na rozdíl od textu se tu překlápí znak).
 const notePreviewStyle = computed(() => {
   const s = noteSizeDraft.value;
   const scale = Math.min(1, 48 / Math.max(s, 1));
+  const sx = scale * (noteFlipX.value ? -1 : 1);
+  const sy = scale * (noteFlipY.value ? -1 : 1);
   const st = { fontFamily: "'NotyDyn', serif", fontSize: s + 'px', lineHeight: 1,
                color: annotColor.value };
-  if (scale < 1) st.transform = 'scale(' + scale.toFixed(3) + ')';
+  if (sx !== 1 || sy !== 1) st.transform = `scale(${sx.toFixed(3)}, ${sy.toFixed(3)})`;
   return st;
 });
 
@@ -1520,12 +1589,15 @@ function noteInkBox(it) {
   if (!n || it.x == null || it.y == null) return null;
   const s = it.size || noteSize.value;
   const [bx0, bx1, by0, by1] = n.box;
-  return {
-    x: it.x - n.adv * s / 2 + bx0 * s,
-    y: it.y - by1 * s,
-    w: (bx1 - bx0) * s,
-    h: (by1 - by0) * s,
-  };
+  let x0 = it.x + (bx0 - n.adv / 2) * s;
+  let x1 = it.x + (bx1 - n.adv / 2) * s;
+  let y0 = it.y - by1 * s;
+  let y1 = it.y - by0 * s;
+  // Stejné zrcadlení, jaké kreslí noteFlipTransform — jinak by rámeček výběru
+  // i hit-test zůstaly na NEzrcadlené straně a nota by se „dala vybrat jen jinde“.
+  if (it.flipX) { const a = 2 * it.x - x1; x1 = 2 * it.x - x0; x0 = a; }
+  if (it.flipY) { const a = 2 * it.y - y1; y1 = 2 * it.y - y0; y0 = a; }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 // Klepnutí na dlaždici noty: vyplní klíč a rovnou potvrdí (jako u značek).
 // Dlaždice reaguje na POLOŽENÍ (pointerdown), ne na `click` — viz pickMark.
@@ -3584,6 +3656,9 @@ function onLayerDown(e) {
 
   // Text / dynamika / značka / nota: umístění na stránku (vytvoří se po uvolnění)
   if (isTextAnnot(tool.value)) {
+    // Nová nota začíná NEZRCADLENÁ — zrcadlení je vlastnost jedné noty, ne skladby
+    // (na rozdíl od velikosti, ta se pamatuje). Drží to `noteFlipX/Y` z dialogu.
+    if (tool.value === 'note') { noteFlipX.value = false; noteFlipY.value = false; }
     activeItem.value = {
       id: crypto.randomUUID(), page: currentPage.value,
       tool: tool.value,
@@ -3601,6 +3676,9 @@ function onLayerDown(e) {
       border: tool.value === 'text' ? textBorder.value : false,
       borderWidth: tool.value === 'text' ? textBorderWidth.value : undefined,
       borderStyle: tool.value === 'text' ? textBorderStyle.value : undefined,
+      // Zrcadlení nese jen nota (viz noteFlipX/Y a toggleFlip).
+      flipX: tool.value === 'note' ? noteFlipX.value : undefined,
+      flipY: tool.value === 'note' ? noteFlipY.value : undefined,
       x: p.x, y: p.y, text: '',
       pending: true,   // po uvolnění otevře vstup
     };
@@ -3979,6 +4057,8 @@ async function confirmTextAnnot(withHand = false) {
       if (!noteGlyph(it.text).known) return;
       noteSize.value = clampNoteSize(noteSizeDraft.value);
       it.size = noteSize.value;
+      it.flipX = noteFlipX.value;
+      it.flipY = noteFlipY.value;
       saveNoteSize();
     }
   }
@@ -4275,7 +4355,11 @@ function editText(it) {
   // text má vlastní `size`, ne hodnotu z voliče tužky).
   // Nota: dialog musí ukázat velikost TOHOTO prvku, ne tu připravenou pro novou
   // notu — jinak by přepsání noty rukou tiše přehodilo velikost.
-  if (it.tool === 'note') noteSizeDraft.value = clampNoteSize(it.size || noteSize.value);
+  if (it.tool === 'note') {
+    noteSizeDraft.value = clampNoteSize(it.size || noteSize.value);
+    noteFlipX.value = !!it.flipX;
+    noteFlipY.value = !!it.flipY;
+  }
   editingTextSize.value = it.tool === 'text' ? clampTextSize(it.size || 20) : null;
   editingAnnotationId.value = it.id;
   // Aktivní (ještě nevložený) prvek: dialog otevírá sám textSizeDraft.
@@ -5632,6 +5716,9 @@ async function deleteBookmark(b) {
    Řádek má pevnou výšku, aby náhled velkých velikostí neroztlačil dialog;
    velké velikosti se proto zmenšují transformem (poměr zůstává, jen se vejde). */
 .ti-size-aa { line-height: 1; color: var(--text); transform-origin: right center; }
+/* Náhled noty: překlápí se (scale −1) i zmenšuje kolem SVÉHO STŘEDU — u pravého
+   okraje by zrcadlení uteklo mimo náhled. */
+.nota-nahled { transform-origin: center center; }
 /* Barva textu a rámeček — plochý řádek, stejná paleta jako pero (Jan, Oct 2026) */
 .ti-row { display: flex; align-items: center; gap: 8px; }
 .ti-colors { display: flex; flex-wrap: wrap; gap: 8px; }

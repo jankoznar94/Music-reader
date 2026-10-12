@@ -250,6 +250,7 @@ async def install_writer_hook(h):
             const m = val.items.filter(x => x.tool === 'note')
               .map(x => ({ page: x.page, text: x.text, size: Math.round(x.size),
                            fill: (x.color || '').toLowerCase(),
+                           flipX: !!x.flipX, flipY: !!x.flipY,
                            x: Math.round(x.x), y: Math.round(x.y) }));
             if (m.length) window.__notes = m;
           }
@@ -276,6 +277,79 @@ async def font_widths(h):
         out[k] = cx.measureText(String.fromCodePoint(expect[k])).width;
       return out;
     })()""" % json.dumps(expect), await_promise=True)
+
+
+async def anchor_screen(h, it):
+    """Bod ukotvení noty (střed hlavičky) v souřadnicích OBRAZOVKY, přes matici vrstvy."""
+    return await h.ev("""(() => {
+      const m = document.querySelector('.annot-layer').getScreenCTM();
+      if (!m) return null;
+      const p = new DOMPoint(%f, %f).matrixTransform(m);
+      return [p.x, p.y];
+    })()""" % (it["x"], it["y"]))
+
+
+async def flip_toggles(h):
+    return await h.ev("""(() => {
+      const card = document.querySelector('.text-input-card');
+      if (!card) return null;
+      const b = [...card.querySelectorAll('.ti-toggle')];
+      return b.map(x => ({ label: x.textContent.trim(), on: x.classList.contains('on'),
+                           x: Math.round(x.getBoundingClientRect().left
+                                         + x.getBoundingClientRect().width / 2),
+                           y: Math.round(x.getBoundingClientRect().top
+                                         + x.getBoundingClientRect().height / 2) }));
+    })()""")
+
+
+async def tap_label_button(h, label):
+    pt = await h.ev("""(() => {
+      const els = [...document.querySelectorAll('.ti-toggle, .eb-chip')]
+        .filter(x => x.textContent.trim() === %s);
+      if (!els.length) return null;
+      const r = els[0].getBoundingClientRect();
+      return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+    })()""" % json.dumps(label))
+    if not pt:
+        return False
+    await h.pen_tap(pt[0], pt[1])
+    await asyncio.sleep(0.45)
+    return True
+
+
+async def transform_attr(h, idx=-1):
+    return await h.ev("""(() => {
+      const ts = [...document.querySelectorAll('.annot-layer text')];
+      const t = ts[ts.length + %d];
+      return t ? (t.getAttribute('transform') || '') : null;
+    })()""" % idx)
+
+
+async def stem_side(h, ink, dsf=2, bottom=False):
+    """Na kterou stranu od středu otisku leží pás s NOŽIČKOU (vodorovná poloha).
+
+    Vrací (střed_pásu − střed_otisku) v CSS px: kladné = nožička vpravo.
+    Tohle rozliší zrcadlení VODOROVNĚ i tam, kde je obrysová mez symetrická
+    (čtvrťová nota má obrys přesně přes šířku zápisu, takže bounding box se
+    zrcadlením nezmění — změnit se musí jen ROZLOŽENÍ otisku).
+
+    ⚠️ Pás se musí vybrat podle SVISLÉHO zrcadlení: nožička nahoru je v HORNÍM
+    pásu otisku, po svislém zrcadlení visí DOLŮ a je ve SPODNÍM pásu. Když se
+    hledá nožička vždy nahoře, u svisle zrcadlené noty se měří hlavička (a vyjde
+    „nožička uprostřed“).
+    """
+    shot = await h.cdp("Page.captureScreenshot", {"format": "png"})
+    img = Image.open(io.BytesIO(base64.b64decode(shot["data"]))).convert("RGB")
+    x0 = int(ink["x"] * dsf); y0 = int(ink["y"] * dsf)
+    w = int(ink["w"] * dsf); hh = int(ink["h"] * dsf)
+    crop = np.asarray(img.crop((x0, y0, x0 + w, y0 + hh))).astype(int)
+    r, g, b = crop[:, :, 0], crop[:, :, 1], crop[:, :, 2]
+    mask = (r - g > 60) & (r - b > 60)
+    band = mask[max(0, hh - int(hh * 0.3)):] if bottom else mask[:max(1, int(hh * 0.3))]
+    ys, xs = np.nonzero(band)
+    if len(xs) == 0:
+        return None
+    return (x0 + (xs.min() + xs.max() + 1) / 2) / dsf - (ink["x"] + ink["w"] / 2)
 
 
 async def text_box(h, idx=-1):
@@ -530,7 +604,119 @@ async def main():
                f"před={b_item} po={a_item}")
 
 
-        # --- 9) reload --------------------------------------------------------
+        # --- 9) ZRCADLENÍ NOTY (vodorovně / svisle) ----------------------------
+        # Noty se umisťují do VZDUŠNÝCH bodů — měření otisku z pixelů nesmí míchat
+        # sousedy. Zrcadlení se zkouší u čtvrťové noty: má symetrický obrys přes
+        # šířku zápisu, takže zrcadlení VODOROVNĚ se v ohraničujícím boxu neprojeví
+        # a musí se měřit z ROZLOŽENÍ otisku (kde je nožička).
+        cases = [("flipX", True, False), ("flipY", False, True), ("oba", True, True)]
+        measured = {}
+        for i, (name, fx, fy) in enumerate(cases):
+            # Body 4–16 už zabrala zkouška všech hodnot — ber až ty za nimi,
+            # aby se otisky nepřekrývaly (měření z pixelů by míchalo sousedy).
+            at = pts[17 + i] if len(pts) > 17 + i else None
+            if not at:
+                ok(f"místo pro zrcadlení '{name}'", False, "málo vzdušných bodů")
+                continue
+            await pick_tool(h, TOOL_TITLE)
+            p = await open_dialog(h, at)
+            if not p:
+                ok(f"dialog pro zrcadlení '{name}'", False, "neotevřel se")
+                continue
+            tg = await flip_toggles(h)
+            ok(f"dialog nabízí zrcadlení vodorovně i svisle ('{name}')",
+               bool(tg) and [t["label"] for t in tg] == ["Vodorovně", "Svisle"],
+               f"přepínače={tg}")
+            if fx:
+                await tap_label_button(h, "Vodorovně")
+            if fy:
+                await tap_label_button(h, "Svisle")
+            tg2 = await flip_toggles(h)
+            ok(f"přepínače se rozsvítí podle volby ('{name}')",
+               bool(tg2) and tg2[0]["on"] == fx and tg2[1]["on"] == fy, f"{tg2}")
+            tpt = await tile_point(h, NOTES["ctvrt_h"][1])
+            if not tpt:
+                ok(f"dlaždice pro '{name}'", False, "bod nenalezen")
+                await dismiss(h)
+                continue
+            await h.pen_tap(tpt[0], tpt[1])
+            await asyncio.sleep(0.85)
+            sn = await saved_notes(h)
+            last = sn[-1] if sn else {}
+            ok(f"volba zrcadlení se uloží ('{name}')",
+               last.get("text") == "ctvrt_h" and last.get("flipX") == fx
+               and last.get("flipY") == fy, f"uloženo {last}")
+            tr = await transform_attr(h, -1)
+            ok(f"zrcadlená nota má v kreslení transformaci ('{name}')",
+               bool(tr) and tr.count("scale") == 1, f"transform={tr!r}")
+            measured[name] = (last, await text_box(h, -1))
+
+        # Otisk zrcadlených not: horní okraj musí sedět u ÚČAŘÍ (ne o osnovu výš)
+        # a nožička musí zůstat/přesunout se na správnou stranu.
+        await pick_tool(h, "Upravit")
+        await asyncio.sleep(0.4)
+        scale = await layer_scale(h)
+        b0, b1 = BOXES["ctvrt_h"][2], BOXES["ctvrt_h"][3]
+        for name, (item, box) in measured.items():
+            if not box:
+                ok(f"nota '{name}' je na stránce", False, "prvek nenalezen")
+                continue
+            ink = await shot_ink(h, box, dsf)
+            if not ink:
+                ok(f"otisk zrcadlené noty ('{name}')", False, "v pixelech nenalezen")
+                continue
+            anchor = await anchor_screen(h, item)
+            s = item["size"] * scale
+            pred_top = anchor[1] + (b0 * s if item["flipY"] else -b1 * s)
+            ok(f"zrcadlená nota sedí na ukotvení — hlavička u účaří ('{name}')",
+               abs(ink["y"] - pred_top) <= 4,
+               f"horní okraj otisku {ink['y']:.1f} px vs předpověď {pred_top:.1f} px "
+               f"(svisle zrcadleno: {item['flipY']})")
+            side = await stem_side(h, ink, dsf, bottom=bool(item["flipY"]))
+            if item["flipX"]:
+                ok(f"vodorovné zrcadlení posunulo nožičku na druhou stranu ('{name}')",
+                   side is not None and side < -2,
+                   f"nožička {side:+.1f} px od středu otisku (má být vlevo), "
+                   f"měřeno v {'spodním' if item['flipY'] else 'horním'} pásu")
+            else:
+                ok(f"svislé zrcadlení nechalo nožičku na stejné straně ('{name}')",
+                   side is not None and side > 2,
+                   f"nožička {side:+.1f} px od středu otisku (má být vpravo), "
+                   f"měřeno v {'spodním' if item['flipY'] else 'horním'} pásu")
+            pos = [int(ink["x"] + ink["w"] / 2), int(ink["y"] + ink["h"] / 2)]
+            await h.pen_tap(pos[0], pos[1])
+            await asyncio.sleep(0.5)
+            frame = await frame_box(h)
+            if frame:
+                m = [ink["x"] - frame["x"], ink["y"] - frame["y"],
+                     (frame["x"] + frame["w"]) - (ink["x"] + ink["w"]),
+                     (frame["y"] + frame["h"]) - (ink["y"] + ink["h"])]
+                ok(f"rámeček obepíná i ZRCADLENÝ otisk ('{name}')",
+                   all(-1.5 <= v <= 8 * scale + 6 for v in m),
+                   f"mezery L={m[0]:.1f} T={m[1]:.1f} P={m[2]:.1f} D={m[3]:.1f} "
+                   f"(očekáváno ~{8 * scale:.1f} px)")
+            else:
+                ok(f"rámeček obepíná i ZRCADLENÝ otisk ('{name}')", False, "rámeček není")
+            # přepnutí zrcadlení v pásu úprav u UŽ VLOŽENÉ noty
+            eb = await h.ev("""(() => {
+              const bar = document.querySelector('.edit-bar');
+              if (!bar) return null;
+              return (bar.textContent || '').includes('Zrcadlení');
+            })()""")
+            ok(f"pás úprav nabízí zrcadlení u vložené noty ('{name}')", bool(eb))
+            if name == "flipX":
+                before_saved = await saved_notes(h)
+                await tap_label_button(h, "Svisle")
+                after_saved = await saved_notes(h)
+                b_it = next((x for x in before_saved if x["text"] == "ctvrt_h"
+                             and x["flipX"] and not x["flipY"]), None)
+                a_it = next((x for x in after_saved if x["text"] == "ctvrt_h"
+                             and x["flipX"] and x["flipY"]), None)
+                ok("pás úprav zrcadlení zapne i u vložené noty", bool(b_it) and bool(a_it),
+                   f"před={b_it} po={a_it}")
+            await end_edit(h)
+
+        # --- 10) reload --------------------------------------------------------
         n_before = await h.ev("document.querySelectorAll('.annot-layer text').length")
         await h.cdp("Page.reload", {"ignoreCache": True})
         await h.wait_for("document.readyState === 'complete'", label="reload")
@@ -549,8 +735,12 @@ async def main():
         await asyncio.sleep(0.9)
         n_after = await h.ev("document.querySelectorAll('.annot-layer text').length")
         ok("noty přežijí reload", n_after == n_before and n_after > 0, f"{n_before} -> {n_after}")
+        flipped_after = await h.ev("(() => [...document.querySelectorAll('.annot-layer text')]"
+                                   ".filter(t => t.getAttribute('transform')).length)()")
+        ok("zrcadlení přežije reload", flipped_after >= 3,
+           f"zrcadlených not po reloadu: {flipped_after}")
 
-        # --- 10) guma ----------------------------------------------------------
+        # --- 11) guma ----------------------------------------------------------
         await pick_tool(h, "Guma")
         await asyncio.sleep(0.3)
         pos2 = await h.ev("""(() => {
