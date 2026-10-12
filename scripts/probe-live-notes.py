@@ -187,7 +187,65 @@ async def main():
         else:
             ok("nota je na stránce", False, f"{keys_dom}")
 
-        # --- 6) reload --------------------------------------------------------
+        # --- 6) zrcadlení noty (vodorovně + svisle) ---------------------------
+        await _d.pick_tool(h, "Upravit")
+        await h.ev("(() => { const b = document.querySelector('.eb-btn.done');"
+                   " if (b) b.click(); return true; })()")
+        await asyncio.sleep(0.3)
+        await _d.pick_tool(h, _d.TOOL_TITLE)
+        at = pts[5] if len(pts) > 5 else None
+        if at:
+            p = await _d.open_dialog(h, at)
+            if p:
+                await _d.tap_label_button(h, "Vodorovně")
+                await _d.tap_label_button(h, "Svisle")
+                tg = await _d.flip_toggles(h)
+                ok("přepínače zrcadlení se rozsvítí",
+                   bool(tg) and tg[0]["on"] and tg[1]["on"], f"{tg}")
+                tpt = await _d.tile_point(h, _d.NOTES["ctvrt_h"][1])
+                if tpt:
+                    await h.pen_tap(tpt[0], tpt[1])
+                    await asyncio.sleep(0.9)
+                sn = await _d.saved_notes(h)
+                last = next((x for x in reversed(sn) if x["flipX"] and x["flipY"]), None)
+                ok("zrcadlená nota se uloží i s překlopením", bool(last), f"uloženo {sn[-1:]}")
+                ok("kreslení má transformaci zrcadlení",
+                   "scale(-1 -1)" in (await _d.transform_attr(h, -1) or ""),
+                   f"transform={await _d.transform_attr(h, -1)!r}")
+                await _d.pick_tool(h, "Upravit")
+                await asyncio.sleep(0.4)
+                box = await _d.text_box(h, -1)
+                ink = await _d.shot_ink(h, box, dsf) if box else None
+                ok("otisk zrcadlené noty se najde v pixelech", bool(ink))
+                if ink and last:
+                    anchor = await _d.anchor_screen(h, last)
+                    sc = await _d.layer_scale(h)
+                    b0 = _d.BOXES["ctvrt_h"][2]
+                    pred_top = anchor[1] + b0 * last["size"] * sc
+                    ok("zrcadlená nota sedí hlavičkou u účaří",
+                       abs(ink["y"] - pred_top) <= 4,
+                       f"horní okraj {ink['y']:.1f} vs předpověď {pred_top:.1f} px")
+                    side = await _d.stem_side(h, ink, dsf, bottom=True)
+                    ok("nožička se překlopila na druhou stranu",
+                       side is not None and side < -2,
+                       f"nožička {side:+.1f} px od středu otisku")
+                    await h.pen_tap(int(ink["x"] + ink["w"] / 2), int(ink["y"] + ink["h"] / 2))
+                    await asyncio.sleep(0.5)
+                    frame = await _d.frame_box(h)
+                    if frame:
+                        m = [ink["x"] - frame["x"], ink["y"] - frame["y"],
+                             (frame["x"] + frame["w"]) - (ink["x"] + ink["w"]),
+                             (frame["y"] + frame["h"]) - (ink["y"] + ink["h"])]
+                        ok("rámeček obepíná i zrcadlený otisk",
+                           all(-1.5 <= v <= 8 * sc + 6 for v in m),
+                           f"mezery L={m[0]:.1f} T={m[1]:.1f} P={m[2]:.1f} D={m[3]:.1f}")
+                    else:
+                        ok("rámeček obepíná i zrcadlený otisk", False, "rámeček není")
+                    await _d.end_edit(h)
+        else:
+            ok("místo pro zrcadlenou notu", False, "málo vzdušných bodů")
+
+        # --- 7) reload --------------------------------------------------------
         n_before = await h.ev("document.querySelectorAll('.annot-layer text').length")
         await h.cdp("Page.reload", {"ignoreCache": True})
         await h.wait_for("document.readyState === 'complete'", label="reload")
@@ -207,6 +265,9 @@ async def main():
         n_after = await h.ev("document.querySelectorAll('.annot-layer text').length")
         ok("noty přežijí reload i na živém webu", n_after == n_before and n_after > 0,
            f"{n_before} -> {n_after}")
+        fl = await h.ev("(() => [...document.querySelectorAll('.annot-layer text')]"
+                        ".filter(t => t.getAttribute('transform')).length)()")
+        ok("zrcadlení přežije reload i na živém webu", fl >= 1, f"zrcadlených not: {fl}")
 
     return ok.report()
 
