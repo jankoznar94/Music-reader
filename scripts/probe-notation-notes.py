@@ -211,6 +211,22 @@ async def dismiss(h):
     return not await h.ev("!!document.querySelector('.text-input-overlay')")
 
 
+async def eb_button_point(h, title):
+    """Bod na tlačítku pásu úprav podle title (např. „Zvětšit“)."""
+    return await h.ev("""(() => {
+      const b = [...document.querySelectorAll('.edit-bar button')]
+        .find(x => (x.title || '') === %s);
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+    })()""" % json.dumps(title))
+
+
+async def eb_size(h):
+    return await h.ev("(() => { const e = document.querySelector('.eb-val');"
+                      " return e ? parseInt(e.textContent, 10) : null; })()")
+
+
 async def plus_button_point(h):
     return await h.ev("""(() => {
       const card = document.querySelector('.text-input-card');
@@ -501,8 +517,10 @@ async def main():
             await h.pen_tap(pplus[0], pplus[1])
             await asyncio.sleep(0.4)
         d2 = await dialog_state(h)
-        ok("tlačítko + zvětší notu (2 kroky po 3 px)", bool(d2) and d2["size_val"] == size0 + 6,
-           f"{size0} -> {d2['size_val'] if d2 else '?'}")
+        # Jan: „Velikost not bych ideálně měnil po 1px. Teď to skáče po 3px.“
+        ok("tlačítko + zvětší notu po 1 px (2 kroky)",
+           bool(d2) and d2["size_val"] == size0 + 2,
+           f"{size0} -> {d2['size_val'] if d2 else '?'} (čekáno {size0 + 2})")
         ok("náhled noty ukazuje zvolenou velikost", bool(d2) and abs(d2["preview_px"] - d2["size_val"]) < 0.6,
            f"náhled {d2['preview_px'] if d2 else '?'} px vs volba {d2['size_val'] if d2 else '?'}")
         chosen = d2["size_val"] if d2 else 0
@@ -536,6 +554,20 @@ async def main():
            bool(await h.ev("!!document.querySelector('.eb-btn.done')")),
            await h.ev("(() => [...document.querySelectorAll('.edit-bar button')]"
                       ".map(b => (b.title || '') + ':' + (b.className || '')).join(' | '))()"))
+        # Velikost se musí měnit STEJNĚ v dialogu i v pásu úprav — Jan jednou hlásil,
+        # že „+“ ubírá jinde jiný počet bodů než v dialogu. U noty po 1 px.
+        s_before = await eb_size(h)
+        ep = await eb_button_point(h, "Zvětšit")
+        if ep:
+            await h.pen_tap(ep[0], ep[1])
+            await asyncio.sleep(0.35)
+            await h.pen_tap(ep[0], ep[1])
+            await asyncio.sleep(0.5)
+        s_after = await eb_size(h)
+        ok("v pásu úprav u vložené noty se velikost mění po 1 px (2 kroky)",
+           bool(ep) and s_before is not None and s_after == s_before + 2,
+           f"{s_before} -> {s_after} (tlačítko {ep})")
+
         # Uklidit po sobě: zbytek sondy měří bez rámečku výběru (jako předtím).
         await end_edit(h)
 

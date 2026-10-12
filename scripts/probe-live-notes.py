@@ -116,6 +116,18 @@ async def main():
             want = {v[1]: v[0] for v in _d.NOTES.values()}
             bad = [t["title"] for t in d["tiles"] if want.get(t["title"]) != t["cp"]]
             ok("každá dlaždice nese svůj kód", not bad, f"špatně: {bad}")
+            # Jan: „Velikost not bych ideálně měnil po 1px. Teď to skáče po 3px.“
+            size0 = d["size_val"]
+            pp = await _d.plus_button_point(h)
+            if pp:
+                await h.pen_tap(pp[0], pp[1])
+                await asyncio.sleep(0.3)
+                await h.pen_tap(pp[0], pp[1])
+                await asyncio.sleep(0.5)
+            d2 = await _d.dialog_state(h)
+            ok("tlačítko + mění velikost noty po 1 px (2 kroky i na živém webu)",
+               bool(pp) and bool(d2) and d2["size_val"] == size0 + 2,
+               f"{size0} -> {d2['size_val'] if d2 else '?'} (čekáno {size0 + 2})")
         else:
             ok("dialog noty má obsah", False, "karta nenalezena")
 

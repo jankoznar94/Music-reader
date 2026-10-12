@@ -1339,6 +1339,11 @@ function bumpTextSize(dir) {
 // velikost textové poznámky (osnova = 1 em, poznámka ~20 px), proto má vlastní
 // pamatovanou hodnotu. Stejný krok i meze jako u textu (TEXT_SIZE_STEP), aby se
 // „+“ chovalo všude stejně.
+// Krok u NOT je 1 px, ne 3 (Jan, Oct 2026): „Velikost not bych ideálně měnil po 1px.
+// Teď to skáče po 3px.“ Nota se musí trefit do velikosti osnovy V NOTÁCH, a tam je
+// každý pixel znát — u textu zůstává krok 3 (tam je to jedno a ubývá to zbytečně
+// pomalu). Proto vlastní konstanta, ne TEXT_SIZE_STEP.
+const NOTE_SIZE_STEP = 1;
 const noteSize = ref(30);        // velikost, se kterou se vloží další nota
 const noteSizeDraft = ref(30);   // hodnota v dialogu (uloží se až potvrzením)
 function clampNoteSize(v) { return clampTextSize(v); }
@@ -1352,7 +1357,7 @@ function saveNoteSize() {
   try { localStorage.setItem('noty.noteSize', String(noteSize.value)); } catch (e) { /* viz výše */ }
 }
 function bumpNoteSize(dir) {
-  noteSizeDraft.value = clampNoteSize(noteSizeDraft.value + dir * TEXT_SIZE_STEP);
+  noteSizeDraft.value = clampNoteSize(noteSizeDraft.value + dir * NOTE_SIZE_STEP);
 }
 
 // --- Zrcadlení noty (Jan, Oct 2026): „možnost noty zrcadlově otočit, horizontálně
@@ -4463,10 +4468,12 @@ function editText(it) {
 }
 function resizeAnnot(it, dir) {
   if (!it) return;
-  // Stejný krok jako v dialogu před vložením (TEXT_SIZE_STEP) — Jan: velikost
-  // se musí měnit KONZISTENTNĚ. Dřív tu byl pevný krok 4, takže stejná akce
-  // („+“) ubírala jinde jiný počet bodů než v dialogu.
-  it.size = clampTextSize((it.size || 20) + dir * TEXT_SIZE_STEP);
+  // Stejný krok jako v dialogu před vložením — Jan: velikost se musí měnit
+  // KONZISTENTNĚ. Dřív tu byl pevný krok 4, takže stejná akce („+“) ubírala jinde
+  // jiný počet bodů než v dialogu. Noty mají vlastní krok (NOTE_SIZE_STEP = 1 px),
+  // protože se musí trefit do velikosti osnovy; text zůstává na 3 px.
+  const step = it.tool === 'note' ? NOTE_SIZE_STEP : TEXT_SIZE_STEP;
+  it.size = clampTextSize((it.size || 20) + dir * step);
   saveAnnotations();
   // Rámeček se počítá ze SKUTEČNÉ šířky textu — po změně velikosti se musí přeměřit,
   // jinak by rám u nové velikosti neseděl (viz textMetrics).
