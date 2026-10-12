@@ -287,10 +287,11 @@
             :opacity="it.opacity != null ? it.opacity : 1"
             text-anchor="middle"
           >{{ annotDisplayText(it) }}</text>
-          <!-- Značky pro výšky not (posuvky, ozdoby, artikulace) — stejný princip
-               jako dynamika: klepnutím na dlaždici se značka položí na noty. -->
+          <!-- Značky pro výšky not (posuvky, ozdoby, artikulace) a VLOŽENÉ NOTY —
+               stejný princip jako dynamika: klepnutím na dlaždici se glyf položí na
+               noty. Nota se kreslí týmž prvkem i ukotvením (střed = místo klepnutí). -->
           <text
-            v-else-if="it.tool === 'mark'"
+            v-else-if="it.tool === 'mark' || it.tool === 'note'"
             :x="it.x" :y="it.y"
             :fill="it.color"
             :font-size="it.size"
@@ -744,6 +745,9 @@
           <button class="ap-tool" @click="setTool('mark')" :class="{ on: tool === 'mark' }" title="Značky pro výšky not (béčko, odrážka, křížek, ozdoby...)">
             <span class="dyn-ico">{{ markGlyph('k').text }}</span>
           </button>
+          <button class="ap-tool" @click="setTool('note')" :class="{ on: tool === 'note' }" title="Vkládání not (celá, půlová, čtvrťová, osminová, šestnáctinová a pomlky)">
+            <span class="dyn-ico">{{ noteGlyph('ctvrt_h').text }}</span>
+          </button>
         </div>
       </div>
 
@@ -867,7 +871,7 @@
          @pointerdown.capture="dialogArmed = true"
          @click.capture="onDialogClickCapture">
       <div class="text-input-card">
-        <span class="ti-label">{{ editingAnnotTool === 'dynamic' ? 'Dynamika' : editingAnnotTool === 'mark' ? 'Značka' : 'Text' }}</span>
+        <span class="ti-label">{{ editingAnnotTool === 'dynamic' ? 'Dynamika' : editingAnnotTool === 'mark' ? 'Značka' : editingAnnotTool === 'note' ? 'Nota' : 'Text' }}</span>
 
         <!-- Rychlý výběr: klepni na dynamiku, vyplní se do pole (a rovnou se uloží) -->
         <div v-if="editingAnnotTool === 'dynamic'" class="dyn-grid">
@@ -899,10 +903,28 @@
           </div>
         </template>
 
+        <!-- Vkládání not — dlaždice rozdělené do sekcí (noty / pomlky). Stejná
+             dlaždice i stejná past: reaguje na POLOŽENÍ, ne na `click`. -->
+        <template v-if="editingAnnotTool === 'note'">
+          <div v-for="g in NOTE_GROUPS" :key="g.label" class="mark-sec">
+            <div class="mark-sec-label">{{ g.label }}</div>
+            <div class="dyn-grid">
+              <button
+                v-for="n in g.items"
+                :key="n.key"
+                class="dyn-btn"
+                :class="{ on: annotTextDraft.trim().toLowerCase() === n.key }"
+                @pointerdown.prevent="pickNote(n.key)"
+                :title="n.label"
+              >{{ noteGlyph(n.key).text }}</button>
+            </div>
+          </div>
+        </template>
+
         <input
           v-model="annotTextDraft"
           class="ti-input"
-          :placeholder="editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : editingAnnotTool === 'mark' ? 'vyber značku z nabídky výše' : 'Text poznámky'"
+          :placeholder="editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : editingAnnotTool === 'mark' ? 'vyber značku z nabídky výše' : editingAnnotTool === 'note' ? 'vyber notu z nabídky výše' : 'Text poznámky'"
           @keydown.enter="confirmTextAnnot"
         />
 
@@ -910,6 +932,19 @@
              (nástrojem Ruka), takže uživatel musel vkládat „naslepo“ a pak
              dohánět velikost. Volba se pamatuje i pro příští vložení a náhled
              „Aa“ ukazuje skutečnou velikost, jakou text dostane. -->
+        <!-- Velikost noty se volí TADY, ještě před vložením — nota musí sedět na
+             velikost osnovy v notách a ta je u každé skladby jiná. Náhled ukazuje
+             skutečný glyf v této velikosti (co uživatel dostane). -->
+        <div v-if="editingAnnotTool === 'note'" class="ti-size-row">
+          <span class="ti-size-label">Velikost</span>
+          <button class="ti-size-btn" @click="bumpNoteSize(-1)" title="Menší nota">−</button>
+          <span class="ti-size-val">{{ noteSizeDraft }}</span>
+          <button class="ti-size-btn" @click="bumpNoteSize(1)" title="Větší nota">+</button>
+          <span class="ti-size-sample">
+            <span class="ti-size-aa" :style="notePreviewStyle">{{ noteGlyph(annotTextDraft.trim() || 'ctvrt_h').text }}</span>
+          </span>
+        </div>
+
         <div v-if="editingAnnotTool === 'text'" class="ti-size-row">
           <span class="ti-size-label">Velikost</span>
           <button class="ti-size-btn" @click="bumpTextSize(-1)" title="Menší text">−</button>
@@ -982,6 +1017,12 @@
         </span>
         <span v-else-if="editingAnnotTool === 'mark' && markLabel(annotTextDraft)" class="ti-note">
           {{ markLabel(annotTextDraft) }}
+        </span>
+        <span v-if="editingAnnotTool === 'note' && annotTextDraft.trim() && !noteGlyph(annotTextDraft).known" class="ti-warn">
+          Tuhle notu font nezná — vyber ji z nabídky výše.
+        </span>
+        <span v-else-if="editingAnnotTool === 'note' && noteLabel(annotTextDraft)" class="ti-note">
+          {{ noteLabel(annotTextDraft) }}
         </span>
 
         <div class="ti-actions">
@@ -1243,6 +1284,38 @@ function bumpTextSize(dir) {
   textSizeDraft.value = clampTextSize(textSizeDraft.value + dir * TEXT_SIZE_STEP);
 }
 
+// --- VKLÁDÁNÍ NOT: velikost noty (Jan, Oct 2026) --------------------------
+// Nota se musí trefit do velikosti osnovy V NOTÁCH — to je jiné číslo než
+// velikost textové poznámky (osnova = 1 em, poznámka ~20 px), proto má vlastní
+// pamatovanou hodnotu. Stejný krok i meze jako u textu (TEXT_SIZE_STEP), aby se
+// „+“ chovalo všude stejně.
+const noteSize = ref(30);        // velikost, se kterou se vloží další nota
+const noteSizeDraft = ref(30);   // hodnota v dialogu (uloží se až potvrzením)
+function clampNoteSize(v) { return clampTextSize(v); }
+function loadNoteSize() {
+  try {
+    const raw = localStorage.getItem('noty.noteSize');
+    if (raw != null) { const v = clampNoteSize(raw); noteSize.value = v; noteSizeDraft.value = v; }
+  } catch (e) { /* soukromý režim prohlížeče — jede se s výchozí */ }
+}
+function saveNoteSize() {
+  try { localStorage.setItem('noty.noteSize', String(noteSize.value)); } catch (e) { /* viz výše */ }
+}
+function bumpNoteSize(dir) {
+  noteSizeDraft.value = clampNoteSize(noteSizeDraft.value + dir * TEXT_SIZE_STEP);
+}
+// Náhled noty ve SKUTEČNÉ velikosti — notační font (NotyDyn), ne systémové písmo.
+// Nota je na výšku celá osnova (1 em), takže velké velikosti se v náhledu zmenšují
+// stejně jako u textu (jinak by roztlačily dialog).
+const notePreviewStyle = computed(() => {
+  const s = noteSizeDraft.value;
+  const scale = Math.min(1, 48 / Math.max(s, 1));
+  const st = { fontFamily: "'NotyDyn', serif", fontSize: s + 'px', lineHeight: 1,
+               color: annotColor.value };
+  if (scale < 1) st.transform = 'scale(' + scale.toFixed(3) + ')';
+  return st;
+});
+
 // --- Dynamika: psaný text -> SMuFL kód (font NotyDyn, blok U+E520-U+E549) ---
 // Uživatel píše "mf", "sfz", "fp" atd. — v notačním fontu je každá dynamika
 // JEDEN glyf na vlastním kódu, nikoli ASCII písmena. Bez tohoto překladu by
@@ -1290,13 +1363,15 @@ function annotDisplayText(it) {
   if (!it) return '';
   if (it.tool === 'dynamic') return dynGlyph(it.text).text;
   if (it.tool === 'mark') return markGlyph(it.text).text;
+  if (it.tool === 'note') return noteGlyph(it.text).text;
   return it.text || '';
 }
-// Je to dynamika/značka, kterou font neumí? (zvýrazníme v náhledu, ať uživatel ví)
+// Je to dynamika/značka/nota, kterou font neumí? (zvýrazníme v náhledu, ať uživatel ví)
 function dynUnknown(it) {
   if (!it || !it.text) return false;
   if (it.tool === 'dynamic') return !dynGlyph(it.text).known;
   if (it.tool === 'mark') return !markGlyph(it.text).known;
+  if (it.tool === 'note') return !noteGlyph(it.text).known;
   return false;
 }
 
@@ -1368,13 +1443,93 @@ function markLabel(raw) {
 }
 // Je to notační text? (dynamika i značky se vykreslují fontem NotyDyn)
 function isNotationText(it) {
-  return !!it && (it.tool === 'dynamic' || it.tool === 'mark');
+  return !!it && (it.tool === 'dynamic' || it.tool === 'mark' || it.tool === 'note');
+}
+// Rodiny anotací, které se umisťují klepnutím a nesou `x`/`y` (dialogy, přesun
+// rukou, sledování prstu). JEDNO místo pro všechny sourozenecké kontroly —
+// nová rodina se přidá sem a nepropadne na pěti místech zvlášť (přesně ta vada,
+// kdy „někde to funguje a někde ne“).
+const TEXT_ANNOT_TOOLS = new Set(['text', 'dynamic', 'mark', 'note']);
+// Bere i nástroj (řetězec) i hotový prvek — volá se obojím: `isTextAnnot(tool.value)`.
+function isTextAnnot(x) {
+  return TEXT_ANNOT_TOOLS.has(typeof x === 'string' ? x : (x && x.tool));
 }
 // Klepnutí na dlaždici značky: vyplní klíč a rovnou potvrdí.
 // Stejná past jako u dynamiky — dialog se otevírá až po ZVEDNUTÍ pera, a tentýž
 // dotyk se vzápětí vyřídí jako kompatibilitní `click`; dlaždice proto reaguje na
 // POLOŽENÍ (pointerdown), na které zbloudilá událost nedosáhne.
 function pickMark(k) {
+  annotTextDraft.value = k;
+  confirmTextAnnot();
+}
+
+// --- Vkládání not: notové hodnoty a pomlky (SMuFL, blok „Individual notes") ---
+// Stejný princip jako Značky: dlaždice položí JEDEN glyf z fontu NotyDyn na osnovu.
+// Kódy, šířky (adv) i obrysové meze (box = x0, x1, y0, y1 v em; kladné y = nahoru
+// jako v fontu) jsou VYČTENÉ Z FONTU (fontTools), ne odhadem — stejné číslo platí
+// pro rámeček výběru I pro plochu, na kterou se dá klepnout. Nota je posazená na
+// účaří (střed hlavičky = účaří), takže hlavička sedne na místo klepnutí.
+const NOTE_GROUPS = [
+  {
+    label: 'Noty',
+    items: [
+      { key: 'cela',     label: 'celá nota',                            cp: 0xE1D2, adv: 0.4590, box: [0.0000, 0.4590, -0.1370, 0.1360] },
+      { key: 'pulova_h', label: 'půlová nota (nožička nahoru)',         cp: 0xE1D3, adv: 0.3410, box: [0.0000, 0.3410, -0.1450, 0.8750] },
+      { key: 'pulova_d', label: 'půlová nota (nožička dolů)',           cp: 0xE1D4, adv: 0.3410, box: [0.0000, 0.3410, -0.8750, 0.1450] },
+      { key: 'ctvrt_h',  label: 'čtvrťová nota (nožička nahoru)',       cp: 0xE1D5, adv: 0.3320, box: [0.0000, 0.3320, -0.1410, 0.8750] },
+      { key: 'ctvrt_d',  label: 'čtvrťová nota (nožička dolů)',         cp: 0xE1D6, adv: 0.3320, box: [0.0000, 0.3320, -0.8750, 0.1410] },
+      { key: 'osm_h',    label: 'osminová nota (nožička nahoru)',       cp: 0xE1D7, adv: 0.5660, box: [0.0000, 0.5660, -0.1380, 0.8730] },
+      { key: 'osm_d',    label: 'osminová nota (nožička dolů)',         cp: 0xE1D8, adv: 0.3320, box: [0.0000, 0.3320, -0.8820, 0.1410] },
+      { key: 'sestn_h',  label: 'šestnáctinová nota (nožička nahoru)',  cp: 0xE1D9, adv: 0.5810, box: [0.0000, 0.5810, -0.1380, 0.8730] },
+      { key: 'sestn_d',  label: 'šestnáctinová nota (nožička dolů)',    cp: 0xE1DA, adv: 0.3320, box: [0.0000, 0.3320, -0.8830, 0.1410] },
+    ],
+  },
+  {
+    label: 'Pomlky',
+    items: [
+      { key: 'poml_cela',  label: 'pomlka celá',          cp: 0xE4E3, adv: 0.2830, box: [0.0000, 0.2820, -0.1350, 0.0090] },
+      { key: 'poml_pul',   label: 'pomlka půlová',        cp: 0xE4E4, adv: 0.2830, box: [0.0000, 0.2820, -0.0020, 0.1420] },
+      { key: 'poml_ctvrt', label: 'pomlka čtvrťová',      cp: 0xE4E5, adv: 0.2700, box: [0.0010, 0.2700, -0.3750, 0.3730] },
+      { key: 'poml_osm',   label: 'pomlka osminová',      cp: 0xE4E6, adv: 0.2500, box: [0.0000, 0.2470, -0.2510, 0.1740] },
+      { key: 'poml_sestn', label: 'pomlka šestnáctinová', cp: 0xE4E7, adv: 0.3200, box: [0.0000, 0.3200, -0.5000, 0.1790] },
+    ],
+  },
+];
+const NOTE_LOOKUP = (() => {
+  const m = new Map();
+  for (const g of NOTE_GROUPS) for (const it of g.items) m.set(it.key, it);
+  return m;
+})();
+const NOTE_KEYS = new Set(NOTE_LOOKUP.keys());
+function noteGlyph(raw) {
+  const it = NOTE_LOOKUP.get(String(raw || '').trim().toLowerCase());
+  if (!it) return { text: '', known: false };
+  return { text: String.fromCodePoint(it.cp), known: true };
+}
+function noteLabel(raw) {
+  const it = NOTE_LOOKUP.get(String(raw || '').trim().toLowerCase());
+  return it ? it.label : '';
+}
+// Rámeček výběru i hit-test pro notu: SKUTEČNÉ obrysové meze glyfu z fontu.
+// Kreslí se s text-anchor="middle", takže počátek glyfu leží o půl šířky VLEVO
+// od `it.x`; svisle je účaří v `it.y` a kladné y fontu jde na obrazovce NAHORU.
+// Kdyby se sem dostalo jiné číslo než do rámečku, rámeček a klikatelná plocha se
+// rozejdou — u noty je to vidět víc než u značek, protože nožička je vysoká.
+function noteInkBox(it) {
+  const n = NOTE_LOOKUP.get(String(it.text || '').trim().toLowerCase());
+  if (!n || it.x == null || it.y == null) return null;
+  const s = it.size || noteSize.value;
+  const [bx0, bx1, by0, by1] = n.box;
+  return {
+    x: it.x - n.adv * s / 2 + bx0 * s,
+    y: it.y - by1 * s,
+    w: (bx1 - bx0) * s,
+    h: (by1 - by0) * s,
+  };
+}
+// Klepnutí na dlaždici noty: vyplní klíč a rovnou potvrdí (jako u značek).
+// Dlaždice reaguje na POLOŽENÍ (pointerdown), ne na `click` — viz pickMark.
+function pickNote(k) {
   annotTextDraft.value = k;
   confirmTextAnnot();
 }
@@ -1452,8 +1607,13 @@ const selectedBox = computed(() => {
   const it = editingAnnot.value;
   if (!it) return null;
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
-  if (it.tool === 'text' || it.tool === 'dynamic' || it.tool === 'mark') {
-    if (it.x != null && it.y != null) {
+  if (isTextAnnot(it)) {
+    // Nota: rámeček ze SKUTEČNÝCH obrysových mezí glyfu (noteInkBox) — stejné
+    // číslo jako hit-test v itemBox, jinak se „dá vybrat jen někde“.
+    const nb = it.tool === 'note' ? noteInkBox(it) : null;
+    if (nb) {
+      x1 = nb.x; y1 = nb.y; x2 = nb.x + nb.w; y2 = nb.y + nb.h;
+    } else if (it.x != null && it.y != null) {
       const s = it.size || 20;
       x1 = it.x; y1 = it.y - s;
       // Dynamika/značka = glyf z fontu (šířka z metrik, ne odhad), text = odhad podle znaků
@@ -1491,6 +1651,7 @@ const editingTypeLabel = computed(() => {
   const t = editingAnnot.value ? editingAnnot.value.tool : '';
   if (t === 'dynamic') return 'Dynamika';
   if (t === 'mark') return 'Značka';
+  if (t === 'note') return 'Nota';
   return t ? 'Text' : '';
 });
 const wedgePoints = ref([]); // body zobáčku (crescendo/decrescendo), až 3 × {x,y}
@@ -1947,6 +2108,7 @@ onMounted(async () => {
   await nextTick();
   loadTextSize();   // velikost textu zvolená při minulém vkládání (viz textSize)
   loadTextStyle();  // barva textu + rámeček zvolené při minulém vkládání
+  loadNoteSize();   // velikost noty zvolená při minulém vkládání (viz noteSize)
   const s = await dbGetSong(props.id);
   if (!s) { router.push('/'); return; }
   song.id = s.id; song.data = s.data; song.name = s.name; song.fileName = s.fileName;
@@ -3420,8 +3582,8 @@ function onLayerDown(e) {
     return;
   }
 
-  // Text / dynamika / značka: umístění na stránku (vytvoří se po uvolnění)
-  if (tool.value === 'text' || tool.value === 'dynamic' || tool.value === 'mark') {
+  // Text / dynamika / značka / nota: umístění na stránku (vytvoří se po uvolnění)
+  if (isTextAnnot(tool.value)) {
     activeItem.value = {
       id: crypto.randomUUID(), page: currentPage.value,
       tool: tool.value,
@@ -3429,9 +3591,12 @@ function onLayerDown(e) {
       // textu se nastavuje tam, kde i velikost (Jan, Oct 2026).
       color: tool.value === 'text' ? textColor.value : annotColor.value,
       opacity: annotOpacity.value / 100,
-      // Text si nese VLASTNÍ velikost (zvolenou před vložením, viz textSize);
-      // dynamika/značka zůstává na velikosti odvozené od voliče tužky.
-      size: tool.value === 'text' ? textSize.value : Math.max(14, 20 + annotSize.value * 3),
+      // Text i NOTA si nesou VLASTNÍ velikost (zvolenou před vložením, viz
+      // textSize / noteSize); dynamika/značka zůstává na velikosti od voliče tužky.
+      // Nota potřebuje vlastní číslo, protože musí sedět na osnovu v notách.
+      size: tool.value === 'text' ? textSize.value
+          : tool.value === 'note' ? noteSize.value
+          : Math.max(14, 20 + annotSize.value * 3),
       // Rámeček kolem textu (hranatý, stejnou barvou, do čtverce) — volba z dialogu.
       border: tool.value === 'text' ? textBorder.value : false,
       borderWidth: tool.value === 'text' ? textBorderWidth.value : undefined,
@@ -3599,7 +3764,7 @@ function onLayerMove(e) {
     const dy = p.y - _dragFrom.y;
     const it = _dragAnnot;
     const s = _dragSnap;
-    if (it.tool === 'text' || it.tool === 'dynamic' || it.tool === 'mark') {
+    if (isTextAnnot(it)) {
       it.x = s.x + dx; it.y = s.y + dy;
     } else if (isStroke(it)) {
       it.points = s.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
@@ -3620,8 +3785,8 @@ function onLayerMove(e) {
   if (_activePointerId !== e.pointerId) return; // jiný prvek (druhá ruka) — nekreslit
   const p = toLayerCoords(e);
   const prev = _prev;
-  // Text / dynamika / značka: jen sledovat, dokud neuvolníme (pozice se nastaví na up)
-  if (tool.value === 'text' || tool.value === 'dynamic' || tool.value === 'mark') {
+  // Text / dynamika / značka / nota: jen sledovat, dokud neuvolníme (pozice se nastaví na up)
+  if (isTextAnnot(tool.value)) {
     activeItem.value.x = p.x; activeItem.value.y = p.y;
     _prev = p;
     return;
@@ -3735,8 +3900,8 @@ function onLayerUp(e) {
     return;
   }
 
-  // Text / dynamika / značka: místo uvolnění → otevřít dialog (pending)
-  if (tool.value === 'text' || tool.value === 'dynamic' || tool.value === 'mark') {
+  // Text / dynamika / značka / nota: místo uvolnění → otevřít dialog (pending)
+  if (isTextAnnot(tool.value)) {
     _logEv('  up: otevírám vstup ' + tool.value);
     it.pending = true;
     editingAnnotationId.value = it.id;
@@ -3807,6 +3972,14 @@ async function confirmTextAnnot(withHand = false) {
       saveTextSize();
       saveTextStyle();
       nextTick(() => measureTexts());   // skutečná šířka textu pro rám (viz textMetrics)
+    }
+    if (it.tool === 'note') {
+      // Neznámý klíč by vložil PRÁZDNÝ glyf (a v notách by po něm zůstalo jen
+      // prázdné místo) — radši nic neukládej a nech uživatele vybrat z nabídky.
+      if (!noteGlyph(it.text).known) return;
+      noteSize.value = clampNoteSize(noteSizeDraft.value);
+      it.size = noteSize.value;
+      saveNoteSize();
     }
   }
   if (!annotations.value.items.includes(it)) {
@@ -3991,8 +4164,14 @@ function textBorderRects(it) {
 function itemBox(it) {
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
   const pad = 10;
-  if (it.tool === 'text' || it.tool === 'dynamic' || it.tool === 'mark') {
+  if (isTextAnnot(it)) {
     if (it.x == null || it.y == null) return null;
+    if (it.tool === 'note') {
+      // Nota: hit-test ze STEJNÝCH obrysových mezí glyfu jako rámeček (noteInkBox).
+      const b = noteInkBox(it);
+      if (!b) return null;
+      return { x: b.x - pad, y: b.y - pad, w: b.w + pad * 2, h: b.h + pad * 2 };
+    }
     if (it.tool === 'text') {
       // Rámeček se počítá JEDNOU funkcí pro vykreslení, výběr rukou i hit-test.
       const r = textBorderBox(it);
@@ -4094,6 +4273,9 @@ function editText(it) {
   // Stejná logika pro OTEVŘENÍ dialogu klepnutím na noty (pero i prst): dialog
   // musí ukazovat velikost, se kterou se prvek skutečně kreslí (viz itemBox —
   // text má vlastní `size`, ne hodnotu z voliče tužky).
+  // Nota: dialog musí ukázat velikost TOHOTO prvku, ne tu připravenou pro novou
+  // notu — jinak by přepsání noty rukou tiše přehodilo velikost.
+  if (it.tool === 'note') noteSizeDraft.value = clampNoteSize(it.size || noteSize.value);
   editingTextSize.value = it.tool === 'text' ? clampTextSize(it.size || 20) : null;
   editingAnnotationId.value = it.id;
   // Aktivní (ještě nevložený) prvek: dialog otevírá sám textSizeDraft.
@@ -5335,6 +5517,12 @@ async function deleteBookmark(b) {
 /* Značky (♮, ♯, trylek…) mají jiný otisk než „mf“ — kalibrace pro ně vyšla 0,25 px.
    Drž je zvlášť, ať se jedno neladí na úkor druhého. */
 .ap-tool[title^='Značky'] .dyn-ico { --glyph-nudge: 0.25px; }
+/* Ikona nástroje Vkládání not = nota z fontu. Její otisk visí ÚPLNĚ JINAK než
+   „mf“ nebo značky: nota má skoro celý otisk NAD účařím (nožička nahoru), takže
+   ho flex vycentruje vysoko. Naměřeno `scripts/diag-note-icon-centering.py`
+   (z pixelů, výřez přes CELÉ tlačítko): bez posunu je střed otisku 8,5 px nad
+   středem tlačítka → posun 8,5 px. */
+.ap-tool[title^='Vkládání not'] .dyn-ico { --glyph-nudge: 8.5px; }
 .ap-size {
   width: 34px; height: 34px; flex: 0 0 auto; min-width: 0; padding: 0;
   border-radius: 50%; box-sizing: border-box;

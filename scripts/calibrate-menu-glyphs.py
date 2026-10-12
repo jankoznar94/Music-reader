@@ -41,6 +41,7 @@ TARGETS = [
     (".ap-size span", "číslo"),
     (".ap-tool[title^='Dynamika'] .dyn-ico", "dyn mf"),
     (".ap-tool[title^='Značky'] .dyn-ico", "znacka"),
+    (".ap-tool[title^='Vkládání not'] .dyn-ico", "nota"),
     (".ap-tool[title^='Tužka'] .ap-glyph", "emoji"),
 ]
 
