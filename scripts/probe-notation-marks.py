@@ -16,11 +16,15 @@ na celá čísla a na zlomkovém středu může spadnout za hranici dlaždice.
 import asyncio
 import importlib.util
 import json
+import os
 
 _spec = importlib.util.spec_from_file_location(
     "cdp_e2e_harness", "/home/martin_fabian/noty-app/cdp-e2e-harness.py")
 _h = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_h)
+# Bez tohohle sonda ignorovala NOTY_CDP z run-probe-fresh.sh a mířila na 9223,
+# kde žádné Chrome neběželo (proto se musela pouštět ručně).
+_h.CDP_HTTP = os.environ.get("NOTY_CDP", "http://127.0.0.1:9223")
 Harness, Check, make_pdf = _h.Harness, _h.Check, _h.make_pdf
 
 # klíč -> očekávaný SMuFL kód (musí odpovídat MARK_GROUPS v Prohlizec.vue)

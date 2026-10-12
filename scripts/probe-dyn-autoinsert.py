@@ -14,11 +14,14 @@ Scénáře:
 import asyncio
 import importlib.util
 import json
+import os
 
 _spec = importlib.util.spec_from_file_location(
     "cdp_e2e_harness", "/home/martin_fabian/noty-app/cdp-e2e-harness.py")
 _h = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_h)
+# Respektuj NOTY_CDP z run-probe-fresh.sh (jinak sonda míří na 9223 a nenajde Chrome).
+_h.CDP_HTTP = os.environ.get("NOTY_CDP", "http://127.0.0.1:9223")
 Harness, Check, make_pdf = _h.Harness, _h.Check, _h.make_pdf
 
 KEY = {"mp": 0xE52C, "fff": 0xE530, "pp": 0xE52B, "sf": 0xE524}
