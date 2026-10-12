@@ -930,7 +930,9 @@
                 :class="{ on: annotTextDraft.trim().toLowerCase() === n.key }"
                 @pointerdown.prevent="pickNote(n.key)"
                 :title="n.label"
-              >{{ noteGlyphFor(n.key, noteFlipY).text }}</button>
+              ><span class="nota-glyf"
+                 :style="{ transform: 'translateY(' + noteTileNudge(n.key, noteFlipY) + 'px)' }"
+              >{{ noteGlyphFor(n.key, noteFlipY).text }}</span></button>
             </div>
           </div>
         </template>
@@ -1652,6 +1654,23 @@ function noteInkBox(it) {
   if (it.flipX) { const a = 2 * it.x - x1; x1 = 2 * it.x - x0; x0 = a; }
   if (noteMirrorY(it)) { const a = 2 * it.y - y1; y1 = 2 * it.y - y0; y0 = a; }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+// Dlaždice noty se musí vycentrovat na CELÝ OTISK noty, ne na účaří (Jan: „obrázky
+// not [jsou] zarovnané na střed podle bříška. Měly by být zarovnané na střed celé.
+// Nožičky jsou teď mimo tlačítka.“). CSS (flex) vycentruje ÚČAŘÍ — font NotyDyn má
+// souměrné ascent/descent (2,012 em obojí), takže účaří padne přesně do středu
+// dlaždice. Otisk noty ale visí NAD účařím: u noty s nožičkou o (y0+y1)/2 em, což je
+// při 26 px skoro 10 px. Tímtéž posunem se dorovná (stejný princip jako kalibrace
+// ikony nástroje v CSS — tam vyšlo 8,5 px při 24 px, což je 0,367 em × 24 px).
+const NOTE_TILE_PX = 26;   // musí odpovídat font-size v .dyn-btn
+function noteTileNudge(key, flipY) {
+  const n = NOTE_LOOKUP.get(noteEffKey(key, flipY));
+  if (!n) return 0;
+  // Střed otisku je `cy` em NAD účařím → na obrazovce je o `cy × px` VÝŠ, takže ho
+  // musíme posunout DOLŮ (kladné translateY = dolů). Opačné znaménko notu vystrčí
+  // z dlaždice ještě víc (nožička ven) — proto se to měří.
+  const cy = (n.box[2] + n.box[3]) / 2;
+  return Number((cy * NOTE_TILE_PX).toFixed(2));
 }
 // Klepnutí na dlaždici noty: vyplní klíč a rovnou potvrdí (jako u značek).
 // Dlaždice reaguje na POLOŽENÍ (pointerdown), ne na `click` — viz pickMark.
@@ -5830,6 +5849,10 @@ async function deleteBookmark(b) {
 .dyn-btn.on { border-color: var(--accent); background: var(--bg-elev); }
 .ti-warn { font-size: 0.8rem; color: var(--danger); }
 .ti-note { font-size: 0.8rem; color: var(--text-dim); }
+/* Obal glyfu noty v dlaždici: posouvá se tak, aby byl otisk vycentrovaný (viz
+   noteTileNudge). `display: block` drží dlaždici v řádku gridu, `line-height: 1`
+   stejnou výšku jako měření. */
+.nota-glyf { display: block; line-height: 1; }
 /* Sekce nabídky značek (Posuvky / Ozdoby / Drobnosti) — dlaždice zůstávají stejné */
 .mark-sec { display: flex; flex-direction: column; gap: 4px; }
 .mark-sec-label {
