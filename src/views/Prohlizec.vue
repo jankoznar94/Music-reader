@@ -924,13 +924,13 @@
             <div class="mark-sec-label">{{ g.label }}</div>
             <div class="dyn-grid">
               <button
-                v-for="n in g.items"
+                v-for="n in g.items.filter(x => !x.hide)"
                 :key="n.key"
                 class="dyn-btn"
                 :class="{ on: annotTextDraft.trim().toLowerCase() === n.key }"
                 @pointerdown.prevent="pickNote(n.key)"
                 :title="n.label"
-              >{{ noteGlyph(n.key).text }}</button>
+              >{{ noteGlyphFor(n.key, noteFlipY).text }}</button>
             </div>
           </div>
         </template>
@@ -955,7 +955,7 @@
           <span class="ti-size-val">{{ noteSizeDraft }}</span>
           <button class="ti-size-btn" @click="bumpNoteSize(1)" title="Větší nota">+</button>
           <span class="ti-size-sample">
-            <span class="ti-size-aa nota-nahled" :style="notePreviewStyle">{{ noteGlyph(annotTextDraft.trim() || 'ctvrt_h').text }}</span>
+            <span class="ti-size-aa nota-nahled" :style="notePreviewStyle">{{ noteGlyphFor(annotTextDraft.trim() || 'ctvrt_h', noteFlipY).text }}</span>
           </span>
         </div>
 
@@ -1184,6 +1184,25 @@ function upgradeAnnotationColors() {
   }
   return changed;
 }
+// Noty vložené PŘED zrcadlením mají směr nožičky v klíči („ctvrt_d“). Nový zápis
+// drží směr v `flipY` a klíč je vždy výchozí („_h“) — bez tohohle srovnání by se
+// stará nota s nožičkou dolů po přepnutí zrcadlení otočila na „nahoru“.
+// Idempotentní: po prvním průchodu už klíč „_d“ nemá.
+function normalizeNoteFlips() {
+  let changed = false;
+  for (const it of annotations.value.items) {
+    if (!it || it.tool !== 'note') continue;
+    if (it.flipX == null) { it.flipX = false; changed = true; }
+    if (it.flipY == null) { it.flipY = false; changed = true; }
+    const k = String(it.text || '').trim().toLowerCase();
+    if (/_d$/.test(k) && NOTE_DIR_SWAP[k]) {
+      it.text = NOTE_DIR_SWAP[k];
+      it.flipY = true;
+      changed = true;
+    }
+  }
+  return changed;
+}
 const sizes = [1, 2, 3, 4, 6, 8, 12];
 const annotColor = ref('#111111'); // aktuální barva pera
 const annotSize = ref(1);          // aktuální velikost pera (výchozí = nejmenší 1)
@@ -1343,10 +1362,17 @@ const noteFlipX = ref(false);
 const noteFlipY = ref(false);
 // Transformace pro SVG <text>: měřítko kolem ukotvení (translate → scale → zpět).
 // Bez zrcadlení vrací undefined, aby se atribut vůbec nevypsal.
+// Svisle se u not s nožičkou překlápí VÝMĚNOU GLYFU (viz NOTE_DIR_SWAP), takže
+// měřítko svisle se použije jen tam, kde protějšek neexistuje (celá nota, pomlky).
+function noteMirrorY(it) {
+  if (!it || it.tool !== 'note' || !it.flipY) return false;
+  return !NOTE_DIR_SWAP[String(it.text || '').trim().toLowerCase()];
+}
 function noteFlipTransform(it) {
   if (!it || it.tool !== 'note' || it.x == null || it.y == null) return undefined;
-  if (!it.flipX && !it.flipY) return undefined;
-  const sx = it.flipX ? -1 : 1, sy = it.flipY ? -1 : 1;
+  const my = noteMirrorY(it);
+  if (!it.flipX && !my) return undefined;
+  const sx = it.flipX ? -1 : 1, sy = my ? -1 : 1;
   return `translate(${it.x} ${it.y}) scale(${sx} ${sy}) translate(${-it.x} ${-it.y})`;
 }
 // Přepnutí zrcadlení v dialogu (před vložením). Propíše se i do rozpracované noty,
@@ -1377,8 +1403,12 @@ function toggleNoteFlip(it, axis) {
 const notePreviewStyle = computed(() => {
   const s = noteSizeDraft.value;
   const scale = Math.min(1, 48 / Math.max(s, 1));
+  // Svislý směr u not s nožičkou řeší VÝMĚNA GLYFU (níž), takže měřítko svisle
+  // se překlápí jen tam, kde protějšek není (celá nota, pomlky).
+  const mirrorY = noteFlipY.value
+    && !NOTE_DIR_SWAP[String(annotTextDraft.value || '').trim().toLowerCase()];
   const sx = scale * (noteFlipX.value ? -1 : 1);
-  const sy = scale * (noteFlipY.value ? -1 : 1);
+  const sy = scale * (mirrorY ? -1 : 1);
   const st = { fontFamily: "'NotyDyn', serif", fontSize: s + 'px', lineHeight: 1,
                color: annotColor.value };
   if (sx !== 1 || sy !== 1) st.transform = `scale(${sx.toFixed(3)}, ${sy.toFixed(3)})`;
@@ -1432,7 +1462,7 @@ function annotDisplayText(it) {
   if (!it) return '';
   if (it.tool === 'dynamic') return dynGlyph(it.text).text;
   if (it.tool === 'mark') return markGlyph(it.text).text;
-  if (it.tool === 'note') return noteGlyph(it.text).text;
+  if (it.tool === 'note') return noteGlyphFor(it.text, it.flipY).text;
   return it.text || '';
 }
 // Je to dynamika/značka/nota, kterou font neumí? (zvýrazníme v náhledu, ať uživatel ví)
@@ -1440,7 +1470,7 @@ function dynUnknown(it) {
   if (!it || !it.text) return false;
   if (it.tool === 'dynamic') return !dynGlyph(it.text).known;
   if (it.tool === 'mark') return !markGlyph(it.text).known;
-  if (it.tool === 'note') return !noteGlyph(it.text).known;
+  if (it.tool === 'note') return !noteGlyphFor(it.text, it.flipY).known;
   return false;
 }
 
@@ -1540,17 +1570,22 @@ function pickMark(k) {
 // účaří (střed hlavičky = účaří), takže hlavička sedne na místo klepnutí.
 const NOTE_GROUPS = [
   {
+    // V nabídce je JEDNA dlaždice na hodnotu (směr nožičky se přepíná zrcadlením
+    // svisle) — Jan: „po výběru délky noty jsou tam zbytečně i ty zrcadlené
+    // varianty. Stačí možnost to otočit.“ Varianty „_d“ proto zůstávají v datech
+    // (kvůli UŽ ULOŽENÝM notám a kvůli výměně glyfu při svislém zrcadlení), ale
+    // dlaždici nedostanou (`hide`).
     label: 'Noty',
     items: [
-      { key: 'cela',     label: 'celá nota',                            cp: 0xE1D2, adv: 0.4590, box: [0.0000, 0.4590, -0.1370, 0.1360] },
-      { key: 'pulova_h', label: 'půlová nota (nožička nahoru)',         cp: 0xE1D3, adv: 0.3410, box: [0.0000, 0.3410, -0.1450, 0.8750] },
-      { key: 'pulova_d', label: 'půlová nota (nožička dolů)',           cp: 0xE1D4, adv: 0.3410, box: [0.0000, 0.3410, -0.8750, 0.1450] },
-      { key: 'ctvrt_h',  label: 'čtvrťová nota (nožička nahoru)',       cp: 0xE1D5, adv: 0.3320, box: [0.0000, 0.3320, -0.1410, 0.8750] },
-      { key: 'ctvrt_d',  label: 'čtvrťová nota (nožička dolů)',         cp: 0xE1D6, adv: 0.3320, box: [0.0000, 0.3320, -0.8750, 0.1410] },
-      { key: 'osm_h',    label: 'osminová nota (nožička nahoru)',       cp: 0xE1D7, adv: 0.5660, box: [0.0000, 0.5660, -0.1380, 0.8730] },
-      { key: 'osm_d',    label: 'osminová nota (nožička dolů)',         cp: 0xE1D8, adv: 0.3320, box: [0.0000, 0.3320, -0.8820, 0.1410] },
-      { key: 'sestn_h',  label: 'šestnáctinová nota (nožička nahoru)',  cp: 0xE1D9, adv: 0.5810, box: [0.0000, 0.5810, -0.1380, 0.8730] },
-      { key: 'sestn_d',  label: 'šestnáctinová nota (nožička dolů)',    cp: 0xE1DA, adv: 0.3320, box: [0.0000, 0.3320, -0.8830, 0.1410] },
+      { key: 'cela',     label: 'celá nota',              cp: 0xE1D2, adv: 0.4590, box: [0.0000, 0.4590, -0.1370, 0.1360] },
+      { key: 'pulova_h', label: 'půlová nota',            cp: 0xE1D3, adv: 0.3410, box: [0.0000, 0.3410, -0.1450, 0.8750] },
+      { key: 'ctvrt_h',  label: 'čtvrťová nota',          cp: 0xE1D5, adv: 0.3320, box: [0.0000, 0.3320, -0.1410, 0.8750] },
+      { key: 'osm_h',    label: 'osminová nota',          cp: 0xE1D7, adv: 0.5660, box: [0.0000, 0.5660, -0.1380, 0.8730] },
+      { key: 'sestn_h',  label: 'šestnáctinová nota',     cp: 0xE1D9, adv: 0.5810, box: [0.0000, 0.5810, -0.1380, 0.8730] },
+      { key: 'pulova_d', label: 'půlová nota (dolů)',     cp: 0xE1D4, adv: 0.3410, box: [0.0000, 0.3410, -0.8750, 0.1450], hide: true },
+      { key: 'ctvrt_d',  label: 'čtvrťová nota (dolů)',   cp: 0xE1D6, adv: 0.3320, box: [0.0000, 0.3320, -0.8750, 0.1410], hide: true },
+      { key: 'osm_d',    label: 'osminová nota (dolů)',   cp: 0xE1D8, adv: 0.3320, box: [0.0000, 0.3320, -0.8820, 0.1410], hide: true },
+      { key: 'sestn_d',  label: 'šestnáctinová nota (dolů)', cp: 0xE1DA, adv: 0.3320, box: [0.0000, 0.3320, -0.8830, 0.1410], hide: true },
     ],
   },
   {
@@ -1570,11 +1605,29 @@ const NOTE_LOOKUP = (() => {
   return m;
 })();
 const NOTE_KEYS = new Set(NOTE_LOOKUP.keys());
-function noteGlyph(raw) {
-  const it = NOTE_LOOKUP.get(String(raw || '').trim().toLowerCase());
+// Výměna směru nožičky. Klíč nese VÝCHOZÍ směr („_h“), směr DOLŮ drží `flipY`.
+// ⚠️ Svislé zrcadlení u not s nožičkou NENÍ překlopení obrázku, ale VÝMĚNA GLYFU:
+// v Bravuře má „nožička dolů“ (noteQuarterDown) nožičku na druhé straně hlavičky
+// než zrcadlový obraz noty s nožičkou nahoru (v fontu je to vidět: u „_d“ je
+// nožička vlevo, u překlopeného „_h“ by zůstala vpravo). Noty v notách vypadají
+// tak, jak je kreslí `_d`, proto se svislé zrcadlení dělá výměnou glyfu.
+const NOTE_DIR_SWAP = {
+  pulova_h: 'pulova_d', pulova_d: 'pulova_h',
+  ctvrt_h: 'ctvrt_d',   ctvrt_d: 'ctvrt_h',
+  osm_h: 'osm_d',       osm_d: 'osm_h',
+  sestn_h: 'sestn_d',   sestn_d: 'sestn_h',
+};
+// Klíč, kterým se nota SKUTEČNĚ kreslí (zrcadlení svisle vymění směr nožičky).
+function noteEffKey(raw, flipY) {
+  const k = String(raw == null ? '' : raw).trim().toLowerCase();
+  return (flipY && NOTE_DIR_SWAP[k]) ? NOTE_DIR_SWAP[k] : k;
+}
+function noteGlyphFor(raw, flipY) {
+  const it = NOTE_LOOKUP.get(noteEffKey(raw, flipY));
   if (!it) return { text: '', known: false };
   return { text: String.fromCodePoint(it.cp), known: true };
 }
+function noteGlyph(raw) { return noteGlyphFor(raw, false); }
 function noteLabel(raw) {
   const it = NOTE_LOOKUP.get(String(raw || '').trim().toLowerCase());
   return it ? it.label : '';
@@ -1585,7 +1638,8 @@ function noteLabel(raw) {
 // Kdyby se sem dostalo jiné číslo než do rámečku, rámeček a klikatelná plocha se
 // rozejdou — u noty je to vidět víc než u značek, protože nožička je vysoká.
 function noteInkBox(it) {
-  const n = NOTE_LOOKUP.get(String(it.text || '').trim().toLowerCase());
+  // Bere SKUTEČNĚ kreslený glyf (po výměně směru nožičky) — jeho obrys i šířku.
+  const n = NOTE_LOOKUP.get(noteEffKey(it.text, it.flipY));
   if (!n || it.x == null || it.y == null) return null;
   const s = it.size || noteSize.value;
   const [bx0, bx1, by0, by1] = n.box;
@@ -1596,7 +1650,7 @@ function noteInkBox(it) {
   // Stejné zrcadlení, jaké kreslí noteFlipTransform — jinak by rámeček výběru
   // i hit-test zůstaly na NEzrcadlené straně a nota by se „dala vybrat jen jinde“.
   if (it.flipX) { const a = 2 * it.x - x1; x1 = 2 * it.x - x0; x0 = a; }
-  if (it.flipY) { const a = 2 * it.y - y1; y1 = 2 * it.y - y0; y0 = a; }
+  if (noteMirrorY(it)) { const a = 2 * it.y - y1; y1 = 2 * it.y - y0; y0 = a; }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 // Klepnutí na dlaždici noty: vyplní klíč a rovnou potvrdí (jako u značek).
@@ -2216,8 +2270,11 @@ onMounted(async () => {
 
   const saved = await dbGetAnnotations(props.id);
   if (saved && Array.isArray(saved.items)) annotations.value.items = saved.items;
+  // Staré noty (směr nožičky v klíči) → nový zápis se `flipY` (viz normalizeNoteFlips)
+  const norm1 = normalizeNoteFlips();
   // Staré jemné barvy → nová výrazná paleta (rovnou, bez zásahu uživatele)
-  if (upgradeAnnotationColors()) {
+  const upg1 = upgradeAnnotationColors();
+  if (norm1 || upg1) {
     await dbSaveAnnotations({ songId: song.id, items: annotations.value.items });
   }
 
@@ -2902,8 +2959,11 @@ async function switchSong(idx, toEnd) {
   loading.value = true; // loading overlay při přechodu mezi skladbami
   const saved = await dbGetAnnotations(s.id);
   annotations.value.items = (saved && Array.isArray(saved.items)) ? saved.items : [];
+  // Staré noty (směr nožičky v klíči) → nový zápis se `flipY` (viz normalizeNoteFlips)
+  const norm2 = normalizeNoteFlips();
   // Staré jemné barvy → nová výrazná paleta i při přechodu mezi skladbami
-  if (upgradeAnnotationColors()) {
+  const upg2 = upgradeAnnotationColors();
+  if (norm2 || upg2) {
     await dbSaveAnnotations({ songId: song.id, items: annotations.value.items });
   }
   rawPageCount.value = await getPageCount(song);

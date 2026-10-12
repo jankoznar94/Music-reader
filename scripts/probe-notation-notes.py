@@ -40,16 +40,19 @@ TOOL_TITLE = "Vkládání not"
 RED = "#c0392b"
 
 # klíč -> (očekávaný SMuFL kód, popisek dlaždice, šířka glyfu v em z fontu)
+# Klíče „_h“/„_d“: v NABÍDCE je jen jedna dlaždice na hodnotu („_h“), směr dolů
+# vzniká svislým zrcadlením (výměnou glyfu). Klíče „_d“ zůstávají kvůli starším
+# uloženým notám — proto je sonda zná taky.
 NOTES = {
     "cela":       (0xE1D2, "celá nota", 0.4590),
-    "pulova_h":   (0xE1D3, "půlová nota (nožička nahoru)", 0.3410),
-    "pulova_d":   (0xE1D4, "půlová nota (nožička dolů)", 0.3410),
-    "ctvrt_h":    (0xE1D5, "čtvrťová nota (nožička nahoru)", 0.3320),
-    "ctvrt_d":    (0xE1D6, "čtvrťová nota (nožička dolů)", 0.3320),
-    "osm_h":      (0xE1D7, "osminová nota (nožička nahoru)", 0.5660),
-    "osm_d":      (0xE1D8, "osminová nota (nožička dolů)", 0.3320),
-    "sestn_h":    (0xE1D9, "šestnáctinová nota (nožička nahoru)", 0.5810),
-    "sestn_d":    (0xE1DA, "šestnáctinová nota (nožička dolů)", 0.3320),
+    "pulova_h":   (0xE1D3, "půlová nota", 0.3410),
+    "pulova_d":   (0xE1D4, "půlová nota (dolů)", 0.3410),
+    "ctvrt_h":    (0xE1D5, "čtvrťová nota", 0.3320),
+    "ctvrt_d":    (0xE1D6, "čtvrťová nota (dolů)", 0.3320),
+    "osm_h":      (0xE1D7, "osminová nota", 0.5660),
+    "osm_d":      (0xE1D8, "osminová nota (dolů)", 0.3320),
+    "sestn_h":    (0xE1D9, "šestnáctinová nota", 0.5810),
+    "sestn_d":    (0xE1DA, "šestnáctinová nota (dolů)", 0.3320),
     "poml_cela":  (0xE4E3, "pomlka celá", 0.2830),
     "poml_pul":   (0xE4E4, "pomlka půlová", 0.2830),
     "poml_ctvrt": (0xE4E5, "pomlka čtvrťová", 0.2700),
@@ -352,6 +355,50 @@ async def stem_side(h, ink, dsf=2, bottom=False):
     return (x0 + (xs.min() + xs.max() + 1) / 2) / dsf - (ink["x"] + ink["w"] / 2)
 
 
+async def ink_at_layer(h, x, y, dsf, half=40):
+    """Otisk noty v pixelech kolem bodu ukotvení (zadaného v souřadnicích Vrstvy)."""
+    pt = await h.ev("""(() => { const m = document.querySelector('.annot-layer').getScreenCTM();
+      if (!m) return null; const p = new DOMPoint(%f, %f).matrixTransform(m);
+      return [p.x, p.y]; })()""" % (x, y))
+    if not pt:
+        return None
+    return await shot_ink(h, {"x": pt[0] - half, "y": pt[1] - half,
+                              "w": half * 2, "h": half * 2}, dsf, pad=0)
+
+
+async def reload_and_reopen(h):
+    """Reload stránky a znovu otevřít skladbu + anotační režim."""
+    await h.cdp("Page.reload", {"ignoreCache": True})
+    await h.wait_for("document.readyState === 'complete'", label="reload")
+    await asyncio.sleep(2.5)
+    if not await h.ev("!!document.querySelector('.tb-page')"):
+        await h.ev("(() => { const b = document.querySelector('.tb-btn[title=\"Zpět\"]');"
+                   " if (b) b.click(); return true; })()")
+        await asyncio.sleep(1.2)
+        await h.ev(Harness.expand_authors_js())
+        await h.wait_for("document.querySelectorAll('li.song').length > 0",
+                         timeout=25, label="seznam souborů")
+        await h.click(".song-name")
+        await h.wait_for("!!document.querySelector('.tb-page')", timeout=40, label="znovu otevřít")
+        await asyncio.sleep(1.5)
+    await h.annot_toggle()
+    await asyncio.sleep(0.9)
+
+
+async def read_legacy_note(h):
+    """Přečti anotaci id 'legacy-1' přímo z IndexedDB (nový zápis = klíč _h + flipY)."""
+    return await h.ev("""(async () => {
+      const db = await new Promise((res, rej) => { const r = indexedDB.open('noty-app');
+        r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+      const st = db.transaction('annotations', 'readonly').objectStore('annotations');
+      const all = await new Promise((res) => { const rq = st.getAll(); rq.onsuccess = () => res(rq.result); });
+      for (const rec of all) for (const it of (rec.items || []))
+        if (it.id === 'legacy-1') return { text: it.text, flipX: it.flipX, flipY: it.flipY,
+                                           size: it.size, x: it.x, y: it.y };
+      return null;
+    })()""", await_promise=True)
+
+
 async def text_box(h, idx=-1):
     return await h.ev("""(() => {
       const ts = [...document.querySelectorAll('.annot-layer text')];
@@ -427,7 +474,8 @@ async def main():
             ok("dialog se jmenuje Nota", d["label"] == "Nota", f"label={d['label']!r}")
             ok("dialog má sekce Noty a Pomlky", d["sections"] == ["Noty", "Pomlky"],
                f"sekrece={d['sections']}")
-            ok("dialog nabízí 14 dlaždic", len(d["tiles"]) == 14, f"n={len(d['tiles'])}")
+            ok("dialog nabízí 10 dlaždic (jedna na hodnotu)", len(d["tiles"]) == 10,
+               f"n={len(d['tiles'])}")
             want = {v[1]: v[0] for v in NOTES.values()}
             bad = [(t["title"], "U+%04X" % t["cp"]) for t in d["tiles"]
                    if want.get(t["title"]) != t["cp"]]
@@ -489,8 +537,9 @@ async def main():
             await pick_tool(h, TOOL_TITLE)
 
         # --- 5) každá hodnota vloží SPRÁVNÝ kód --------------------------------
-        order = ["cela", "pulova_d", "osm_h", "sestn_d", "poml_ctvrt", "poml_osm",
-                 "pulova_h", "ctvrt_d", "osm_d", "sestn_h", "poml_cela", "poml_pul", "poml_sestn"]
+        # Jen hodnoty, které má nabídka (směrové „_d“ dlaždice už v nabídce nejsou).
+        order = ["cela", "osm_h", "poml_ctvrt", "poml_osm", "pulova_h",
+                 "sestn_h", "poml_cela", "poml_pul", "poml_sestn"]
         for i, key in enumerate(order):
             await pick_tool(h, TOOL_TITLE)
             at = pts[4 + i] if len(pts) > 4 + i else None
@@ -516,7 +565,7 @@ async def main():
         sn = await saved_notes(h)
         keys_saved = sorted({x["text"] for x in sn})
         ok("všechny vložené noty jsou uložené i s klíčem",
-           len(sn) >= 14 and all(k in NOTES for k in keys_saved)
+           len(sn) >= 10 and all(k in NOTES for k in keys_saved)
            and all(x["fill"] == RED for x in sn),
            f"uloženo {len(sn)}: {keys_saved}")
 
@@ -533,7 +582,7 @@ async def main():
         # vrstvy, proto se násobí měřítkem čtečky). Kdyby kód počítal jen hlavičku,
         # výška rámečku u noty s nožičkou vyjde několikanásobně menší.
         bad, rows, stem_case = [], [], None
-        for key in ("ctvrt_h", "osm_h", "cela", "poml_sestn", "poml_ctvrt", "pulova_d"):
+        for key in ("ctvrt_h", "osm_h", "cela", "poml_sestn", "poml_ctvrt", "sestn_h"):
             if (key, NOTES[key][0]) not in keys_dom:
                 bad.append((key, "na stránce není"))
                 continue
@@ -646,9 +695,13 @@ async def main():
             ok(f"volba zrcadlení se uloží ('{name}')",
                last.get("text") == "ctvrt_h" and last.get("flipX") == fx
                and last.get("flipY") == fy, f"uloženo {last}")
-            tr = await transform_attr(h, -1)
-            ok(f"zrcadlená nota má v kreslení transformaci ('{name}')",
-               bool(tr) and tr.count("scale") == 1, f"transform={tr!r}")
+            tr = await transform_attr(h, -1) or ''
+            cp = await h.ev("""(() => { const ts=[...document.querySelectorAll('.annot-layer text')];
+                 return ts.length ? (ts[ts.length-1].textContent.codePointAt(0)||0) : 0; })()""")
+            exp_cp = NOTES["ctvrt_d"][0] if fy else NOTES["ctvrt_h"][0]
+            ok(f"kreslení odpovídá zrcadlení ('{name}')",
+               cp == exp_cp and (("scale(-1 1)" in tr) if fx else tr == ""),
+               f"glyf U+{cp:04X} (čekáno U+{exp_cp:04X}), transform={tr!r}")
             measured[name] = (last, await text_box(h, -1))
 
         # Otisk zrcadlených not: horní okraj musí sedět u ÚČAŘÍ (ne o osnovu výš)
@@ -672,17 +725,16 @@ async def main():
                abs(ink["y"] - pred_top) <= 4,
                f"horní okraj otisku {ink['y']:.1f} px vs předpověď {pred_top:.1f} px "
                f"(svisle zrcadleno: {item['flipY']})")
-            side = await stem_side(h, ink, dsf, bottom=bool(item["flipY"]))
-            if item["flipX"]:
-                ok(f"vodorovné zrcadlení posunulo nožičku na druhou stranu ('{name}')",
-                   side is not None and side < -2,
-                   f"nožička {side:+.1f} px od středu otisku (má být vlevo), "
-                   f"měřeno v {'spodním' if item['flipY'] else 'horním'} pásu")
-            else:
-                ok(f"svislé zrcadlení nechalo nožičku na stejné straně ('{name}')",
-                   side is not None and side > 2,
-                   f"nožička {side:+.1f} px od středu otisku (má být vpravo), "
-                   f"měřeno v {'spodním' if item['flipY'] else 'horním'} pásu")
+            # Svisle = výměna glyfu (nožička dolů je vlevo), vodorovně = zrcadlení
+            # (strana se obrátí). Očekávaná strana je tedy XOR obojího.
+            dirn = "down" if item["flipY"] else "up"
+            side = await stem_side(h, ink, dsf, bottom=(dirn == "down"))
+            expect_right = (dirn == "up") != bool(item["flipX"])
+            ok(f"nožička je po zrcadlení na správné straně ('{name}')",
+               side is not None and (side > 2 if expect_right else side < -2),
+               f"nožička {side:+.1f} px od středu otisku, směr {dirn}, vodorovně "
+               f"zrcadleno {item['flipX']} → čekáno {'vpravo' if expect_right else 'vlevo'}, "
+               f"měřeno v {'spodním' if dirn == 'down' else 'horním'} pásu")
             pos = [int(ink["x"] + ink["w"] / 2), int(ink["y"] + ink["h"] / 2)]
             await h.pen_tap(pos[0], pos[1])
             await asyncio.sleep(0.5)
@@ -718,29 +770,66 @@ async def main():
 
         # --- 10) reload --------------------------------------------------------
         n_before = await h.ev("document.querySelectorAll('.annot-layer text').length")
-        await h.cdp("Page.reload", {"ignoreCache": True})
-        await h.wait_for("document.readyState === 'complete'", label="reload")
-        await asyncio.sleep(2.5)
-        if not await h.ev("!!document.querySelector('.tb-page')"):
-            await h.ev("(() => { const b = document.querySelector('.tb-btn[title=\"Zpět\"]');"
-                       " if (b) b.click(); return true; })()")
-            await asyncio.sleep(1.2)
-            await h.ev(Harness.expand_authors_js())
-            await h.wait_for("document.querySelectorAll('li.song').length > 0",
-                             timeout=25, label="seznam souborů")
-            await h.click(".song-name")
-            await h.wait_for("!!document.querySelector('.tb-page')", timeout=40, label="znovu otevřít")
-            await asyncio.sleep(1.5)
-        await h.annot_toggle()
-        await asyncio.sleep(0.9)
+        await reload_and_reopen(h)
         n_after = await h.ev("document.querySelectorAll('.annot-layer text').length")
         ok("noty přežijí reload", n_after == n_before and n_after > 0, f"{n_before} -> {n_after}")
-        flipped_after = await h.ev("(() => [...document.querySelectorAll('.annot-layer text')]"
-                                   ".filter(t => t.getAttribute('transform')).length)()")
-        ok("zrcadlení přežije reload", flipped_after >= 3,
-           f"zrcadlených not po reloadu: {flipped_after}")
+        counts = await h.ev("""(() => {
+          const ts = [...document.querySelectorAll('.annot-layer text')];
+          const down = [0xE1D4, 0xE1D6, 0xE1D8, 0xE1DA];
+          return { tr: ts.filter(t => t.getAttribute('transform')).length,
+                   down: ts.filter(t => down.includes(t.textContent.codePointAt(0))).length };
+        })()""")
+        ok("zrcadlení přežije reload (vodorovné i svislé)",
+           counts["tr"] >= 1 and counts["down"] >= 1, f"{counts}")
 
-        # --- 11) guma ----------------------------------------------------------
+        # --- 12) STARŠÍ NOTY (klíč „…_d“) — musí se dál kreslit a srovnat se ---
+        # Noty vložené před zrcadlením mají směr nožičky v klíči. Nový zápis drží
+        # směr ve `flipY`, takže se při načtení srovnávají — a hlavně: kreslit se
+        # musí POŘÁD stejně (nožička dolů), jinak by uživateli v notách zmizely.
+        song_id = await h.ev("""(async () => {
+          const db = await new Promise((res, rej) => { const r = indexedDB.open('noty-app');
+            r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+          const stores = [...db.objectStoreNames];
+          const st = db.transaction('annotations', 'readwrite').objectStore('annotations');
+          const all = await new Promise((res) => { const rq = st.getAll(); rq.onsuccess = () => res(rq.result); });
+          const rec = all[0];
+          if (!rec || stores.indexOf('annotations') < 0) return null;
+          rec.items.push({ id: 'legacy-1', page: 0, tool: 'note', text: 'ctvrt_d',
+                           color: '#c0392b', opacity: 1, size: 36, x: 620, y: 320 });
+          await new Promise((res) => { const rq = st.put(rec); rq.onsuccess = () => res(); });
+          return rec.songId;
+        })()""", await_promise=True)
+        ok("starší nota (klíč „ctvrt_d“) se podařilo zapsat do databáze", bool(song_id),
+           f"songId={song_id}")
+        if song_id:
+            await reload_and_reopen(h)
+            cps = await h.ev("(() => [...document.querySelectorAll('.annot-layer text')]"
+                             ".map(t => t.textContent.codePointAt(0) || 0))()")
+            ok("starší nota s nožičkou dolů se kreslí dál",
+               NOTES["ctvrt_d"][0] in cps, f"kódy: {['U+%04X' % c for c in cps]}")
+            legacy_item = await read_legacy_note(h)
+            ok("starší nota je srovnaná na nový zápis (klíč „_h“ + flipY)",
+               bool(legacy_item) and legacy_item.get("text") == "ctvrt_h"
+               and legacy_item.get("flipY") is True,
+               f"{legacy_item}")
+            # a pás úprav ji umí přepnout na nožičku nahoru
+            await pick_tool(h, "Upravit")
+            await asyncio.sleep(0.4)
+            if legacy_item:
+                ink = await ink_at_layer(h, legacy_item["x"], legacy_item["y"], dsf)
+                if ink:
+                    await h.pen_tap(int(ink["x"] + ink["w"] / 2), int(ink["y"] + ink["h"] / 2))
+                    await asyncio.sleep(0.5)
+                    await tap_label_button(h, "Svisle")
+                    flipped = await read_legacy_note(h)
+                    ok("starší notu lze přepnout na nožičku nahoru",
+                       bool(flipped) and flipped.get("flipY") is False,
+                       f"{flipped}")
+                    await end_edit(h)
+                else:
+                    ok("starší notu lze najít v pixelech", False, "otisk nenalezen")
+
+        # --- 13) guma ----------------------------------------------------------
         await pick_tool(h, "Guma")
         await asyncio.sleep(0.3)
         pos2 = await h.ev("""(() => {
@@ -749,11 +838,14 @@ async def main():
           const r = ts[ts.length - 1].getBoundingClientRect();
           return [Math.round(r.left + r.width/2), Math.round(r.top + r.height/2)];
         })()""")
+        # Počet se bere TADY, ne z reloadu — mezi tím přibyla starší nota z databáze.
+        n_before_guma = await h.ev("document.querySelectorAll('.annot-layer text').length")
         if pos2:
             await h.pen_stroke(pos2[0] - 20, pos2[1], pos2[0] + 20, pos2[1], steps=10)
             await asyncio.sleep(0.7)
             n_gone = await h.ev("document.querySelectorAll('.annot-layer text').length")
-            ok("guma notu smaže", n_gone < n_after, f"{n_after} -> {n_gone}")
+            ok("guma notu smaže", n_gone < n_before_guma,
+               f"{n_before_guma} -> {n_gone}")
         else:
             ok("guma notu smaže", False, "žádný glyf na stránce")
 

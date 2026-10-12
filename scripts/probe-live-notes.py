@@ -111,7 +111,8 @@ async def main():
             ok("dialog se jmenuje Nota", d["label"] == "Nota", f"label={d['label']!r}")
             ok("dialog má sekce Noty a Pomlky", d["sections"] == ["Noty", "Pomlky"],
                f"sekrece={d['sections']}")
-            ok("dialog nabízí 14 dlaždic", len(d["tiles"]) == 14, f"n={len(d['tiles'])}")
+            ok("dialog nabízí 10 dlaždic (jedna na hodnotu)", len(d["tiles"]) == 10,
+               f"n={len(d['tiles'])}")
             want = {v[1]: v[0] for v in _d.NOTES.values()}
             bad = [t["title"] for t in d["tiles"] if want.get(t["title"]) != t["cp"]]
             ok("každá dlaždice nese svůj kód", not bad, f"špatně: {bad}")
@@ -209,9 +210,12 @@ async def main():
                 sn = await _d.saved_notes(h)
                 last = next((x for x in reversed(sn) if x["flipX"] and x["flipY"]), None)
                 ok("zrcadlená nota se uloží i s překlopením", bool(last), f"uloženo {sn[-1:]}")
-                ok("kreslení má transformaci zrcadlení",
-                   "scale(-1 -1)" in (await _d.transform_attr(h, -1) or ""),
-                   f"transform={await _d.transform_attr(h, -1)!r}")
+                tr = await _d.transform_attr(h, -1) or ""
+                cp = await h.ev("""(() => { const ts=[...document.querySelectorAll('.annot-layer text')];
+                     return ts.length ? (ts[ts.length-1].textContent.codePointAt(0)||0) : 0; })()""")
+                ok("kreslení odpovídá zrcadlení (glyf dolů + vodorovné měřítko)",
+                   cp == _d.NOTES["ctvrt_d"][0] and "scale(-1 1)" in tr,
+                   f"glyf U+{cp:04X}, transform={tr!r}")
                 await _d.pick_tool(h, "Upravit")
                 await asyncio.sleep(0.4)
                 box = await _d.text_box(h, -1)
@@ -225,10 +229,12 @@ async def main():
                     ok("zrcadlená nota sedí hlavičkou u účaří",
                        abs(ink["y"] - pred_top) <= 4,
                        f"horní okraj {ink['y']:.1f} vs předpověď {pred_top:.1f} px")
+                    # svisle = glyf s nožičkou dolů (vlevo), vodorovně stranu obrátí
                     side = await _d.stem_side(h, ink, dsf, bottom=True)
-                    ok("nožička se překlopila na druhou stranu",
-                       side is not None and side < -2,
-                       f"nožička {side:+.1f} px od středu otisku")
+                    ok("nožička je po zdvojím zrcadlení na správné straně",
+                       side is not None and side > 2,
+                       f"nožička {side:+.1f} px od středu otisku (spodní pás, "
+                       f"vodorovně zrcadleno → čekáno vpravo)")
                     await h.pen_tap(int(ink["x"] + ink["w"] / 2), int(ink["y"] + ink["h"] / 2))
                     await asyncio.sleep(0.5)
                     frame = await _d.frame_box(h)
@@ -265,9 +271,14 @@ async def main():
         n_after = await h.ev("document.querySelectorAll('.annot-layer text').length")
         ok("noty přežijí reload i na živém webu", n_after == n_before and n_after > 0,
            f"{n_before} -> {n_after}")
-        fl = await h.ev("(() => [...document.querySelectorAll('.annot-layer text')]"
-                        ".filter(t => t.getAttribute('transform')).length)()")
-        ok("zrcadlení přežije reload i na živém webu", fl >= 1, f"zrcadlených not: {fl}")
+        counts = await h.ev("""(() => {
+          const ts = [...document.querySelectorAll('.annot-layer text')];
+          const down = [0xE1D4, 0xE1D6, 0xE1D8, 0xE1DA];
+          return { tr: ts.filter(t => t.getAttribute('transform')).length,
+                   down: ts.filter(t => down.includes(t.textContent.codePointAt(0))).length };
+        })()""")
+        ok("zrcadlení přežije reload i na živém webu",
+           counts["tr"] >= 1 and counts["down"] >= 1, f"{counts}")
 
     return ok.report()
 
