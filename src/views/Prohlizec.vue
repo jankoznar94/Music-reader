@@ -295,6 +295,9 @@
             :x="it.x" :y="it.y"
             :transform="noteFlipTransform(it)"
             :fill="it.color"
+            :stroke="it.tool === 'note' ? it.color : 'none'"
+            :stroke-width="noteStroke(it)"
+            paint-order="stroke"
             :font-size="it.size"
             font-family="'NotyDyn', serif"
             :opacity="it.opacity != null ? it.opacity : 1"
@@ -748,7 +751,7 @@
             <span class="dyn-ico">{{ markGlyph('k').text }}</span>
           </button>
           <button class="ap-tool" @click="setTool('note')" :class="{ on: tool === 'note' }" title="Vkládání not (celá, půlová, čtvrťová, osminová, šestnáctinová a pomlky)">
-            <span class="dyn-ico">{{ noteGlyph('ctvrt_h').text }}</span>
+            <span class="dyn-ico nota-ico">{{ noteGlyph('ctvrt_h').text }}</span>
           </button>
         </div>
       </div>
@@ -1672,11 +1675,26 @@ function noteTileNudge(key, flipY) {
   const cy = (n.box[2] + n.box[3]) / 2;
   return Number((cy * NOTE_TILE_PX).toFixed(2));
 }
+// Tloušťka nožičky noty. Font kreslí nožičku 0,030 em (0,12 notové mezery, doporučení
+// SMuFL) — při velikosti 30 je to jen 0,9 px, takže na obrazovce šedne a působí tence
+// (Jan: „Nešla by nožička noty udělat o trochu tlustší?“). Tloušťku jednoho tahu UVNITŘ
+// glyfu měnit nelze, proto se celý obrys obtáhne (stroke + `paint-order: stroke`) —
+// nožička se tím ztluští relativně nejvíc, hlavička jen o ~8 %. Hodnota je v em, takže
+// drží i při jiné velikosti noty. Změřeno `scripts/diag-note-stem-thickness.py`.
+const NOTE_STEM_GAIN = 0.025;
+function noteStroke(it) {
+  return it.tool === 'note' ? Number((it.size * NOTE_STEM_GAIN).toFixed(2)) : 0;
+}
 // Klepnutí na dlaždici noty: vyplní klíč a rovnou potvrdí (jako u značek).
 // Dlaždice reaguje na POLOŽENÍ (pointerdown), ne na `click` — viz pickMark.
+// Jan: „Po vložení noty by se nota automaticky měla označit. Aby mohl uživatel hned
+// notu upravit a přemístit.“ → dlaždice se chová jako „Uložit a ruka“: nota se vloží,
+// nástroj přepne na ruku a nota se ROVNOU vybere (rámeček + pás úprav), takže se s ní
+// dá hned hýbat a měnit velikost. Znamená to ale, že na další notu se nástroj vybírá
+// znovu — vkládání více not v řadě po sobě tak nejde (tak to Jan chce).
 function pickNote(k) {
   annotTextDraft.value = k;
-  confirmTextAnnot();
+  confirmTextAnnot(true);
 }
 
 // Nabídka dynamik v dialogu — pořadí odpovídá běžnému notačnímu úzu (od slabé k silné).
@@ -5853,6 +5871,11 @@ async function deleteBookmark(b) {
    noteTileNudge). `display: block` drží dlaždici v řádku gridu, `line-height: 1`
    stejnou výšku jako měření. */
 .nota-glyf { display: block; line-height: 1; }
+/* Stejné ztluštění nožičky jako na stránce (SVG `stroke` + `paint-order`) — dlaždice
+   i mini náhled musí ukazovat přesně to, co se vloží. Hodnota v em drží s velikostí. */
+.nota-glyf, .nota-nahled, .ap-tool[title^='Vkládání not'] .dyn-ico {
+  -webkit-text-stroke: 0.025em currentColor;
+}
 /* Sekce nabídky značek (Posuvky / Ozdoby / Drobnosti) — dlaždice zůstávají stejné */
 .mark-sec { display: flex; flex-direction: column; gap: 4px; }
 .mark-sec-label {

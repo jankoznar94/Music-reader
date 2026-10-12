@@ -251,7 +251,7 @@ async def install_writer_hook(h):
         try {
           if (this.name === 'annotations' && val && val.items) {
             const m = val.items.filter(x => x.tool === 'note')
-              .map(x => ({ page: x.page, text: x.text, size: Math.round(x.size),
+              .map(x => ({ id: x.id, page: x.page, text: x.text, size: Math.round(x.size),
                            fill: (x.color || '').toLowerCase(),
                            flipX: !!x.flipX, flipY: !!x.flipY,
                            x: Math.round(x.x), y: Math.round(x.y) }));
@@ -519,9 +519,30 @@ async def main():
         ok("vložená nota má barvu pera (červená)", first.get("fill") == RED,
            f"fill={first.get('fill')!r}")
 
+        # Jan: „Po vložení noty by se nota automaticky měla označit. Aby mohl uživatel
+        # hned notu upravit a přemístit.“ = dlaždice se chová jako „Uložit a ruka“.
+        nv = await h.ev("window.__navdbg()") or {}
+        bar = await h.ev("!!document.querySelector('.edit-bar')")
+        ok("po vložení noty se nota sama označí (pás úprav + výběr)",
+           nv.get("tool") == "edit" and nv.get("editingId") == first.get("id") and bar,
+           f"nástroj {nv.get('tool')!r}, vybráno {nv.get('editingId')!r} vs nota "
+           f"{first.get('id')!r}, pás úprav v DOM: {bar}")
+        ok("nástroj Vkládání not už není zapnutý (další klepnutí notu nepřidá)",
+           not await h.ev("(() => { const b = [...document.querySelectorAll('.ap-tool')]"
+                          ".find(x => (x.title || '').startsWith('Vkládání not'));"
+                          " return !!(b && b.classList.contains('on')); })()"),
+           "")
+        ok("v pásu úprav je i „Hotovo“ a koš (nota se dá hned upravit i smazat)",
+           bool(await h.ev("!!document.querySelector('.eb-btn.done')")),
+           await h.ev("(() => [...document.querySelectorAll('.edit-bar button')]"
+                      ".map(b => (b.title || '') + ':' + (b.className || '')).join(' | '))()"))
+        # Uklidit po sobě: zbytek sondy měří bez rámečku výběru (jako předtím).
+        await end_edit(h)
+
         # --- 4) samovolné vložení (past zabloudilého kliku) --------------------
         auto = []
         for i in range(3):
+            await pick_tool(h, TOOL_TITLE)      # po vložení je aktivní ruka (auto označení)
             before = await glyphs(h)
             p = await open_dialog(h, pts[1 + i] if len(pts) > 1 + i else None)
             if not p:
@@ -560,6 +581,7 @@ async def main():
             new = [g for g in await glyphs(h) if g not in before]
             ok(f"volba '{key}' vloží U+{NOTES[key][0]:04X}", new == [NOTES[key][0]],
                f"vloženo {['U+%04X' % g for g in new]}")
+            await end_edit(h)   # nota je po vložení vybraná — uklidit před dalším krokem
 
         await asyncio.sleep(0.6)
         sn = await saved_notes(h)
@@ -570,6 +592,26 @@ async def main():
            f"uloženo {len(sn)}: {keys_saved}")
 
         # --- 6) rámeček ruky = obrys glyfu + 8 px (nezávislý přepočet metrik) --
+        # Obtažení obrysu = ztluštění nožičky (Jan: „Nešla by nožička noty udělat
+        # o trochu tlustší?“). Tloušťku tahu UVNITŘ glyfu měnit nelze, proto se obarví
+        # celý obrys (paint-order: stroke) — nožička se ztluští relativně nejvíc.
+        # Značky se obtažené být NESMÍ (mění se jen noty).
+        strokes = await h.ev("""(() => [...document.querySelectorAll('.annot-layer text')]
+          .map(t => ({ cp: t.textContent.codePointAt(0) || 0,
+                       stroke: t.getAttribute('stroke'),
+                       sw: parseFloat(t.getAttribute('stroke-width') || '0') || 0,
+                       paint: t.getAttribute('paint-order'),
+                       size: parseFloat(getComputedStyle(t).fontSize) })))()""")
+        notes_s = [s for s in strokes if 0xE1D2 <= s["cp"] <= 0xE1DA or 0xE4E3 <= s["cp"] <= 0xE4E7]
+        marks_s = [s for s in strokes if s not in notes_s]
+        ok("noty jsou obtažené (nožička tlustší) přesně na svou velikost",
+           bool(notes_s) and all(s["stroke"] not in (None, "none") and s["paint"] == "stroke"
+                                 and abs(s["sw"] - s["size"] * 0.025) < 0.02 for s in notes_s),
+           f"např. {notes_s[0] if notes_s else 'žádná nota'}")
+        ok("značky obtažené nejsou (mění se jen nožičky not)",
+           all(s["stroke"] in (None, "none") or s["sw"] == 0 for s in marks_s),
+           f"obtažené značky: {[s for s in marks_s if s['stroke'] not in (None, 'none')]}")
+
         await pick_tool(h, "Upravit")
         await asyncio.sleep(0.4)
         scale = await layer_scale(h)
@@ -703,6 +745,9 @@ async def main():
                cp == exp_cp and (("scale(-1 1)" in tr) if fx else tr == ""),
                f"glyf U+{cp:04X} (čekáno U+{exp_cp:04X}), transform={tr!r}")
             measured[name] = (last, await text_box(h, -1))
+            # Nota je po vložení vybraná — před měřením z pixelů rámeček sundat,
+            # jinak by se do otisku noty přimíchal rámeček (má stejnou červenou).
+            await end_edit(h)
 
         # Otisk zrcadlených not: horní okraj musí sedět u ÚČAŘÍ (ne o osnovu výš)
         # a nožička musí zůstat/přesunout se na správnou stranu.
