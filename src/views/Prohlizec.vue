@@ -513,6 +513,31 @@
           Číslování je posunuté o {{ pagesOffset > 0 ? '+' : '' }}{{ pagesOffset }}
           (1. stránka PDF = {{ 1 + pagesOffset }}.).
         </div>
+        <!-- SKOKY V ČÍSLOVÁNÍ — noty, kde jsou vynechané stránky sólistů, mají
+             v číslech díry. Na libovolné stránce se prostě řekne, jaké číslo
+             na papíře MÁ, a od té stránky dál se počítadlo posune. Skok drží,
+             dokud se nezruší, a ukládá se na skladbu (putuje do zálohy). -->
+        <div class="pg-offset">
+          <span class="pg-offset-label">Tato stránka má číslo</span>
+          <input
+            v-model="thisPageValue"
+            class="pg-offset-input"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            placeholder="např. 9"
+            @keydown.enter="applyNumberHere"
+          />
+          <button class="pg-btn" @click="applyNumberHere">Nastavit odsud</button>
+        </div>
+        <div v-if="numberJumpsSorted.length" class="pg-jumps">
+          <div class="jp-subtitle">Skoky v číslování</div>
+          <div v-for="j in numberJumpsSorted" :key="j.page" class="jp-item">
+            <span class="jp-item-label">od str. {{ withOffset(jumpSlot(j)) }} dál</span>
+            <span class="jp-item-pages">skok {{ j.delta > 0 ? '+' : '' }}{{ j.delta }}</span>
+            <button class="jp-btn" @click="removeNumberJump(j.page)" title="Zrušit tento skok">Zrušit</button>
+          </div>
+        </div>
         <div v-if="hiddenPages.length" class="pg-hint">Stránky {{ hiddenLabel }} jsou odebrané — čísluje se {{ withOffset(totalPages) }} zobrazenými z {{ withOffset(rawPageCount) }} původních.</div>
       </div>
     </div>
@@ -1948,15 +1973,60 @@ const hiddenLabel = computed(() =>
 // se nemění (ty pracují dál s indexy do PDF). Ukládá se na skladbu, takže
 // s ní putuje do zálohy a platí i po zavření appky.
 const pagesOffset = ref(0);
+// --- SKOKY V ČÍSLOVÁNÍ (chybějící stránky sólistů) --------------------------
+// Jan: „Často se stává, že máme noty, kde jsou vynechány stránky sólistů. Jsou
+// tam tedy skoky v číslech. … Přidali možnost na libovolných stránkách změnit
+// počítadlo, od dané stránky by se posunulo.“
+// `numberJumps` = seznam skoků [{ page, delta }], kde `page` je INDEX DO PDF
+// (jako u záložek a skoků — při odebírání stránek se nic nepřepočítává) a
+// `delta` se PŘIČTE od této stránky dál (kumulativně přes všechny skoky).
+// `pagesOffset` výše zůstává jako posun CELÉ skladby („první stránka má číslo“),
+// skoky se přičítají k němu.
+const numberJumps = ref([]);   // [{ page: <0-based index do PDF>, delta: <int> }]
+// Pořadí ZOBRAZENÉ stránky (1-based) pro index do PDF; odebraná stránka → null.
+function slotOfPdf(idx) {
+  const i = visiblePages.value.indexOf(idx);
+  return i < 0 ? null : i + 1;
+}
+// Skok je ukotvený na stránce PDF; když je ta stránka odebraná, platí od první
+// ZOBRAZENÉ stránky za ní (jinak by se číslo ztratilo a skok by nikdy nezačal).
+function jumpSlot(j) {
+  if (!j || j.page == null) return null;
+  const s = slotOfPdf(j.page);
+  if (s != null) return s;
+  for (let p = j.page; p < rawPageCount.value; p++) {
+    const t = slotOfPdf(p);
+    if (t != null) return t;
+  }
+  return null;
+}
+const numberJumpsSorted = computed(() =>
+  [...numberJumps.value].sort((a, b) => (jumpSlot(a) || 0) - (jumpSlot(b) || 0))
+);
+// Kumulativní posun od skoků pro dané POŘADÍ ZOBRAZENÉ stránky (1-based).
+function jumpsUptoSlot(slot) {
+  let s = 0;
+  for (const j of numberJumps.value) {
+    const at = jumpSlot(j);
+    if (at != null && at <= slot) s += j.delta;
+  }
+  return s;
+}
 // Zobrazené číslo stránky včetně posunu (pro všechny výpisy adresované uživateli).
+// Vstup je VŽDY pořadí zobrazené stránky (výsledek dispPage / totalPages).
 function withOffset(n) {
   if (n == null || n === '') return '';
-  return n + pagesOffset.value;
+  return n + pagesOffset.value + jumpsUptoSlot(n);
 }
 async function loadHiddenPages() {
   const s = await dbGetSong(song.id);
   hiddenPages.value = Array.isArray(s?.hiddenPages) ? [...s.hiddenPages].sort((a, b) => a - b) : [];
   pagesOffset.value = Number.isFinite(s?.pagesOffset) ? s.pagesOffset : 0;
+  numberJumps.value = Array.isArray(s?.numberJumps)
+    ? s.numberJumps
+        .filter(j => j && Number.isFinite(j.page) && Number.isFinite(j.delta) && j.delta !== 0)
+        .map(j => ({ page: j.page, delta: j.delta }))
+    : [];
 }
 // Po jakékoli změně množiny odebraných stránek: přepočítat `totalPages`
 // (počítadlo, slider i pás miniatur pracují se ZOBRAZENÝMI stránkami).
@@ -1998,6 +2068,58 @@ async function applyFirstPage() {
   await persistPagesOffset();
   showToast('Číslování nastaveno — 1. strana je ' + n + '.');
   firstPageValue.value = '';
+}
+// --- Skoky v číslování: „tato stránka má číslo K" --------------------------
+// Uloží se na skladbu (jako odebrané stránky a posun) — je to vlastnost not,
+// ne stav UI, takže s ní putuje do zálohy.
+async function persistNumberJumps() {
+  const s = await dbGetSong(song.id);
+  if (!s) return;
+  s.numberJumps = numberJumps.value.map(j => ({ page: j.page, delta: j.delta }));
+  await dbSaveSong(s);
+}
+// Nejbližší POŘADÍ ZOBRAZENÉ stránky pro zadané zobrazené číslo (inverze
+// k `withOffset`). Slouží k zadání čísla stránky, když jsou ve hře skoky.
+function slotForDisplayed(n) {
+  const total = visiblePages.value.length;
+  if (total <= 0) return 0;
+  let best = 0, bestErr = Infinity;
+  for (let s = 1; s <= total; s++) {
+    const err = Math.abs(s + pagesOffset.value + jumpsUptoSlot(s) - n);
+    if (err < bestErr) { bestErr = err; best = s; }
+  }
+  return best - 1;   // 0-based slot
+}
+// „Tato stránka má číslo K": nastaví skok ukotvený na AKTUÁLNÍ stránce tak,
+// aby tato stránka hlásila K a od ní dál se číslování posunulo. Skok, který na
+// téže stránce už je, se přepíše — nemusí se nic rušit předem.
+async function applyNumberHere() {
+  const raw = String(thisPageValue.value).trim();
+  const n = parseInt(raw, 10);
+  if (!raw || !Number.isFinite(n)) return;
+  const idx = currentPage.value;              // index do PDF — kotva skoku
+  const slot = visibleIndex.value + 1;        // pořadí zobrazené stránky (1-based)
+  // Posun platný PŘED touto stránkou + základní posun celé skladby.
+  const before = pagesOffset.value + jumpsUptoSlot(slot - 1);
+  const delta = n - slot - before;
+  // Zruš případný skok, který působí právě na téhle stránce (i když je ukotvený
+  // na odebrané stránce před ní) — jinak by se oba sečetly.
+  const rest = numberJumps.value.filter(j => jumpSlot(j) !== slot);
+  numberJumps.value = delta === 0
+    ? rest
+    : [...rest, { page: idx, delta }].sort((a, b) => a.page - b.page);
+  await persistNumberJumps();
+  showToast(delta === 0
+    ? 'Číslo ' + n + ' už této stránce odpovídá'
+    : 'Od této stránky se čísluje ' + (delta > 0 ? '+' : '') + delta
+      + ' (tato stránka = ' + n + '.)');
+  thisPageValue.value = '';
+}
+// Zrušení jednoho skoku v číslování (stránky za ním se vrátí k předchozímu číslování).
+async function removeNumberJump(page) {
+  numberJumps.value = numberJumps.value.filter(j => j.page !== page);
+  await persistNumberJumps();
+  showToast('Skok v číslování zrušen');
 }
 // Odebere stránku z listování (VRATNĚ). Když uživatel odebere stránku, na které
 // PRÁVĚ STOJÍ, přesune se na nejbližší viditelnou; když odebere jinou (třeba
@@ -4779,6 +4901,7 @@ async function deleteJump(j) {
 const pageGoOpen = ref(false);
 const pageGoValue = ref('');
 const firstPageValue = ref('');   // „první stránka" pro posun číslování
+const thisPageValue = ref('');    // „tato stránka má číslo" pro skok v číslování
 const pageGoInputEl = ref(null);
 let _pageGoPrevPage = null;   // stránka, ze které jsme zadání otevřeli (Esc = zpět na ni)
 
@@ -4787,6 +4910,9 @@ function openPageGo() {
   // Předvyplní se číslo, které uživatel VIDÍ v notách (tedy včetně posunu).
   pageGoValue.value = String(withOffset(dispPage(currentPage.value)));
   firstPageValue.value = '';
+  // Prázdné schválně: předvyplněné číslo by se dalo omylem potvrdit a zrušilo
+  // by skok, který na stránce už je. Aktuální číslo je vidět v počítadle.
+  thisPageValue.value = '';
   pageGoOpen.value = true;
   // panel se otevře i mimo anotační režim; ostatní mody zavřít, aby se nepřekrývaly
   annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false;
@@ -4808,8 +4934,8 @@ function goToTypedPage() {
   pageGoOpen.value = false;
   if (!raw || !Number.isFinite(n)) return;
   // Uživatel píše POŘADÍ ZOBRAZENÝCH stránek (to vidí v počítadle), ne index do PDF.
-  // S posunem číslování se zadané číslo překládá zpět na pořadí odečtením posunu.
-  const slot = Math.max(0, Math.min(visiblePages.value.length - 1, n - 1 - pagesOffset.value));
+  // S posunem číslování a skoky se zadané číslo překládá zpět na pořadí.
+  const slot = slotForDisplayed(n);
   const target = visiblePages.value[slot];
   if (target == null) return;
   // gotoPage je synchronní fire-and-forget (token v renderCurrent vykreslí jen poslední stránku)
@@ -5487,6 +5613,10 @@ async function deleteBookmark(b) {
   display: flex; flex-direction: column; gap: 10px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 16px;
   padding: 12px 14px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); max-width: 94vw;
+  /* Dialog má víc sekcí (posun i skoky v číslování) — na malém displeji se
+     musí dát odscrollovat, jinak poslední řádek zmizí pod okrajem. */
+  max-height: calc(100dvh - var(--topbar-h, 96px) - 32px);
+  overflow-y: auto;
 }
 .pg-label { font-weight: 700; font-size: 0.95rem; }
 .pg-row { display: flex; align-items: center; gap: 8px; }
@@ -5573,6 +5703,13 @@ async function deleteBookmark(b) {
   color: var(--text); font-size: 0.95rem;
 }
 .zp-val.dim { opacity: 0.55; }
+/* Seznam skoků v číslování — pod zadávacím řádkem, ploché řádky bez karet. */
+.pg-jumps {
+  display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px solid var(--border); padding-top: 10px;
+}
+.pg-jumps .jp-item { padding: 6px 8px; }
+.pg-jumps .jp-item .jp-btn { flex: 0 0 auto; }
 .thumb-item {
   position: relative; flex: 0 0 auto; width: 72px; height: 96px;
   border-radius: 6px; overflow: hidden; border: 2px solid var(--border);
