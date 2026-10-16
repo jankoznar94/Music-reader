@@ -89,7 +89,13 @@
          Dokud je otevřený, gesto dvěma prsty dělá POUZE zoom a posun
          (rotace je vypnutá) — Jan: „Při otevření nabídky zoomu se bude dělat
          zoom a změna pozice.“ -->
-    <div v-if="zoomPanelOpen" class="zoom-panel">
+    <div v-if="zoomPanelOpen" class="zoom-panel" data-panel="zoom" :style="panelStyle('zoom')">
+      <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
+              @pointerdown="panelDragStart($event, 'zoom')" @pointermove="panelDragMove"
+              @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
+              @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
+              @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
+
       <!-- Vycentrovat a ukládání stavu jsou na HLAVNÍ LIŠTĚ (jsou to akce
            k celému zobrazení, ne k zoomu) — a `clearPageView` je tam taky,
            aby se tři ukládací akce nepletly dohromady v jednom panelu.
@@ -122,7 +128,13 @@
     <!-- Panel ODEBRÁNÍ STRÁNEK — vlastní nabídka v liště. Odebírání je VRATNÉ:
          nic se nevyhazuje z PDF, jen se stránka přestane zobrazovat a listovat
          přes ni (anotace, záložky a skoky na ní zůstávají v datech). -->
-    <div v-if="pagesPanelOpen" class="zoom-panel">
+    <div v-if="pagesPanelOpen" class="zoom-panel" data-panel="pages" :style="panelStyle('pages')">
+      <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
+              @pointerdown="panelDragStart($event, 'pages')" @pointermove="panelDragMove"
+              @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
+              @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
+              @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
+
       <button class="zp-btn" @click="removeCurrentPage" :disabled="totalPages <= 1" title="Odebrat tuto stránku ze skladby">−</button>
       <span class="zp-val">Odebrat str. {{ dispPage(currentPage) }}</span>
       <span class="zp-sep" />
@@ -159,7 +171,13 @@
          s zoomem v jednom panelu a gesto pak nevědělo, co má dělat).
          Dokud je otevřený, gesto dvěma prsty dělá POUZE rotaci.
          Referenční mřížka se zobrazuje JEN u rotace, u zoomu ne. -->
-    <div v-if="rotPanelOpen" class="zoom-panel rot-panel">
+    <div v-if="rotPanelOpen" class="zoom-panel rot-panel" data-panel="rot" :style="panelStyle('rot')">
+      <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
+              @pointerdown="panelDragStart($event, 'rot')" @pointermove="panelDragMove"
+              @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
+              @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
+              @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
+
       <!-- Otočení stránky: hrubé po 90° (na šířku), jemné po 1° a nejjemnější
            po 0,1° (křivý sken). Tlačítka 1° a 0,1° jdou DRŽET — úhel plynule
            nabíhá, takže se dostane i na velký úhel bez mnoha klepání. -->
@@ -570,7 +588,13 @@
     </div>
 
     <!-- Panel pro vytváření skoku (při umisťování se schová — jinak zakrývá noty) -->
-    <div v-if="jumpMode && !jumpPlaceMode" class="jump-panel">
+    <div v-if="jumpMode && !jumpPlaceMode" class="jump-panel" data-panel="jump" :style="panelStyle('jump')">
+      <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
+              @pointerdown="panelDragStart($event, 'jump')" @pointermove="panelDragMove"
+              @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
+              @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
+              @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
+
       <div class="jp-title">Nový skok</div>
       <div class="jp-row">
         <button class="jp-btn" @click="setJumpStart" :class="{ on: jumpStart !== null }">
@@ -611,7 +635,13 @@
          na jejím řádku v seznamu níže (Jan, Oct 2026): plnit při úpravě pole
          „Nová záložka“ nahoře bylo zavádějící — nebylo jasné, kterou záložku
          uživatel vlastně mění. Horní pole slouží VÝHRADNĚ k vytvoření nové. -->
-    <div v-if="bookmarkMode" class="jump-panel">
+    <div v-if="bookmarkMode" class="jump-panel" data-panel="bookmark" :style="panelStyle('bookmark')">
+      <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
+              @pointerdown="panelDragStart($event, 'bookmark')" @pointermove="panelDragMove"
+              @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
+              @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
+              @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
+
       <div class="jp-title">Nová záložka</div>
       <div class="jp-row">
         <span class="jp-cur">Stránka {{ withOffset(dispPage(currentPage)) }}</span>
@@ -741,10 +771,16 @@
 
     <!-- Plovoucí panel anotací (v anotačním režimu; při umisťování skoku schovaný,
          aby nezakrýval noty, na které se klepá) -->
-    <div v-if="annotMode && !jumpPlaceMode" class="annot-panel">
+    <div v-if="annotMode && !jumpPlaceMode" class="annot-panel" data-panel="annot" :style="panelStyle('annot')">
       <!-- Hlavička: sbalit/rozbalit -->
       <div class="ap-header">
         <span class="ap-title">Anotace</span>
+        <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
+                @pointerdown="panelDragStart($event, 'annot')" @pointermove="panelDragMove"
+                @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
+                @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
+                @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
+
         <button class="ap-collapse" @click="annotCollapsed = !annotCollapsed" :title="annotCollapsed ? 'Rozbalit' : 'Sbalit'">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path v-if="!annotCollapsed" d="M6 9l6 6 6-6"/><path v-else d="M6 15l6-6 6 6"/></svg>
         </button>
@@ -2396,6 +2432,8 @@ function pathD(it) {
 // --- Načtení ---
 onMounted(async () => {
   await nextTick();
+  loadPanelOffsets();   // panely tam, kam si je uživatel odtáhl
+  installBackGuard();   // obrana proti systémovému gestu zpět
   loadTextSize();   // velikost textu zvolená při minulém vkládání (viz textSize)
   loadTextStyle();  // barva textu + rámeček zvolené při minulém vkládání
   loadNoteSize();   // velikost noty zvolená při minulém vkládání (viz noteSize)
@@ -2486,6 +2524,8 @@ function measureBar() {
 }
 
 onUnmounted(() => {
+  panelDragEnd();          // nedokončené tažení panelu nesmí nechat viset listenery
+  uninstallBackGuard();
   window.removeEventListener('resize', onResize);
   if (barObs) { barObs.disconnect(); barObs = null; }
   disconnectThumbObserver();
@@ -2921,6 +2961,9 @@ function onResize() { syncViewerW(); computeFit(); renderCurrent(); }
 function syncViewerW() {
   const el = viewerEl.value;
   if (el) viewerW.value = el.clientWidth;
+  // Přetažené panely mohou po změně velikosti/otočení displeje skončit mimo
+  // obrazovku — vrátit úchyt na dosah (viz rescuePanelOffsets).
+  nextTick(rescuePanelOffsets);
 }
 
 // Vyčistí viditelný canvas — při přechodu na novou stránku se nezobrazuje stará
@@ -3241,6 +3284,9 @@ function onTouchStart(e) {
   // Rozlišení je na úrovni pointerType (viz onLayerDown), tady rozhoduje jen
   // to, že pero zrovna kreslí nebo kreslilo → dotyk patří opřené ruce.
   if (blockedNav()) { _touchStart = null; _pinch = null; _rot3 = null; return; }
+  // Dotyk v notách ozbrojí okno, ve kterém se spolkne náhodné gesto zpět
+  // (swipe od okraje displeje) — viz backGuard().
+  armBackGuard();
   // Tah na liště záložek (horizontální scroll) nekreslí jako swipe stránky
   if (e.target && e.target.closest && e.target.closest('.bookmark-strip')) return;
   const fs = fingersNow(e.touches);
@@ -4853,7 +4899,141 @@ async function flushAnnotations() {
   await dbSaveAnnotations({ songId: song.id, items: annotations.value.items });
 }
 
-function goBack() { router.push('/'); }
+// --- PŘETAHOVÁNÍ PANELŮ (Jan, Oct 2026) -----------------------------------
+// „Přidáme možnost Drag And drop ke všem dropdown oknům v menu." Panely se
+// kotví pod horní lištu a na malém displeji zakrývají noty, proto si je
+// uživatel může odtáhnout. Posun se pamatuje (localStorage), aby panel zůstal
+// tam, kam si ho kdo dal — a klepnutí na úchyt (bez tažení) ho vrátí zpátky,
+// jinak by se odtažený panel nedal rozumně vrátit.
+const PANEL_POS_KEY = 'noty-panel-pos';
+const panelOffsets = ref({});   // { jméno panelu: { x, y } }
+let _panelDrag = null;
+let _panelMoved = 0;
+const PANEL_SNAP_PX = 6;        // pod tuhle vzdálenost je to klepnutí, ne tažení
+function loadPanelOffsets() {
+  try {
+    const raw = localStorage.getItem(PANEL_POS_KEY);
+    panelOffsets.value = raw ? (JSON.parse(raw) || {}) : {};
+  } catch (e) { panelOffsets.value = {}; }
+}
+function savePanelOffsets() {
+  try { localStorage.setItem(PANEL_POS_KEY, JSON.stringify(panelOffsets.value)); } catch (e) { /* nevadí */ }
+}
+// Posun panelu jde přes CSS proměnné — transform panelů zůstává v CSS, protože
+// ho potřebuje centrování (.zoom-panel je na středu lišty přes translateX(-50%)).
+function panelStyle(name) {
+  const o = panelOffsets.value[name];
+  return { '--pd-x': (o ? o.x : 0) + 'px', '--pd-y': (o ? o.y : 0) + 'px' };
+}
+// Gesto patří panelu, ne listování stránek: `.viewer` poslouchá dotyky PASIVNĚ,
+// takže tah po úchytu by jinak zároveň obracel stránky (stejná pojistka jako
+// u přetahování záložek — touch-action: none na úchytu + stop u pointerdown).
+// Záchrana pozic: když panel po uložené pozici vyjede mimo displej (změna
+// orientace, jiná velikost okna, pozice z doby před omezením tahu), vrátíme
+// posun tak, aby úchyt zůstal na displeji. Úchyt je jediná cesta, jak panel
+// dostat klepnutím zpět na výchozí místo — mimo displej by se ztratil.
+function rescuePanelOffsets() {
+  const M = 8;
+  const out = { ...panelOffsets.value };
+  let changed = false;
+  for (const name of Object.keys(out)) {
+    const grip = document.querySelector('[data-panel="' + name + '"] .panel-grip');
+    if (!grip) continue;   // panel zrovna není otevřený, nemá co měřit
+    const r = grip.getBoundingClientRect();
+    const o = out[name] || { x: 0, y: 0 };
+    let dx = 0, dy = 0;
+    if (r.left < 0) dx = -r.left + M;
+    else if (r.right > window.innerWidth) dx = window.innerWidth - M - r.right;
+    if (r.top < 0) dy = -r.top + M;
+    else if (r.bottom > window.innerHeight) dy = window.innerHeight - M - r.bottom;
+    if (dx || dy) { out[name] = { x: o.x + dx, y: o.y + dy }; changed = true; }
+  }
+  if (changed) { panelOffsets.value = out; savePanelOffsets(); }
+}
+// Otevření kteréhokoli panelu zkontroluje, že jeho úchyt je na displeji.
+watch([zoomPanelOpen, rotPanelOpen, pagesPanelOpen, jumpMode, bookmarkMode, annotMode],
+  () => { nextTick(rescuePanelOffsets); });
+
+function panelDragStart(e, name) {
+  e.stopPropagation();
+  const o = panelOffsets.value[name] || { x: 0, y: 0 };
+  _panelMoved = 0;
+  // Rozměry úchytu v době uchopení — podle nich se tah OMEZÍ (clamp) tak, aby
+  // úchyt zůstal na displeji. Bez toho se panel dá odtáhnout mimo obrazovku
+  // a úchyt (jediná cesta k vrácení klepnutím) zmizí — naměřeno: panel na
+  // x = −74 px a úchyt mimo displej, takže se nedal vrátit.
+  const gr = e.currentTarget.getBoundingClientRect();
+  _panelDrag = {
+    name, x0: e.clientX, y0: e.clientY, bx: o.x, by: o.y,
+    grip: { left: gr.left, right: gr.right, top: gr.top, bottom: gr.bottom },
+  };
+  window.addEventListener('pointermove', panelDragMove);
+  window.addEventListener('pointerup', panelDragEnd);
+  window.addEventListener('pointercancel', panelDragEnd);
+}
+function panelDragMove(e) {
+  if (!_panelDrag) return;
+  const M = 8;   // rezerva od okraje displeje, aby byl úchyt pořád chytatelný
+  const gp = _panelDrag.grip;
+  // Posun se OMEZÍ (clamp): úchyt musí zůstat na displeji, jinak panel zmizí.
+  const dx = Math.min(Math.max(e.clientX - _panelDrag.x0, M - gp.left),
+                      window.innerWidth - M - gp.right);
+  const dy = Math.min(Math.max(e.clientY - _panelDrag.y0, M - gp.top),
+                      window.innerHeight - M - gp.bottom);
+  _panelMoved = Math.max(_panelMoved, Math.abs(e.clientX - _panelDrag.x0) + Math.abs(e.clientY - _panelDrag.y0));
+  panelOffsets.value = {
+    ...panelOffsets.value,
+    [_panelDrag.name]: { x: _panelDrag.bx + dx, y: _panelDrag.by + dy },
+  };
+}
+function panelDragEnd() {
+  if (!_panelDrag) return;
+  const name = _panelDrag.name;
+  const moved = _panelMoved >= PANEL_SNAP_PX;
+  _panelDrag = null;
+  window.removeEventListener('pointermove', panelDragMove);
+  window.removeEventListener('pointerup', panelDragEnd);
+  window.removeEventListener('pointercancel', panelDragEnd);
+  if (!moved) panelOffsets.value = { ...panelOffsets.value, [name]: { x: 0, y: 0 } };
+  savePanelOffsets();
+}
+// Prázdný cíl pro touch listenery úchytu (`.prevent` = NEPASIVNÍ listener,
+// který skutečně zabrání posunu/listování; v pasivním by jen hlásil chybu).
+function noopTouch() {}
+
+// --- Obrana proti systémovému gestu zpět (swipe od okraje displeje) --------
+// Appka sama do knihovny NIKDY neskočí — sonda scripts/probe-nav-jump-to-library.py
+// projela 40 listovacích gest (čtení, anotace, odebraná stránka, skok
+// v číslování, sestava) a historie zůstala netknutá. „Vyskočení do seznamu
+// skladeb" tedy dělá prohlížeč/OS gestem zpět: historie je [knihovna, čtečka],
+// takže gesto zpět = knihovna — a gesto se chytá právě od okraje displeje
+// (na některých tabletech až do poloviny šířky), tedy přesně v zóně listování.
+// Řešení: dotyk v notách ozbrojí krátké okno; dorazí-li v něm navigace zpět,
+// zrušíme ji a vrátíme adresu i záznam do not. Tlačítko Zpět v liště je vždy
+// úmysl a projde okamžitě.
+const BACK_GUARD_MS = 1500;
+let _backGuardUntil = 0;
+let _exitByButton = false;
+let _unhookBackGuard = null;
+function armBackGuard() { _backGuardUntil = Date.now() + BACK_GUARD_MS; }
+function backGuard(to, from) {
+  if (to.path !== '/' || !from.path.startsWith('/prohlizec')) return true;
+  if (_exitByButton) { _exitByButton = false; return true; }
+  if (Date.now() >= _backGuardUntil) return true;
+  _backGuardUntil = 0;
+  // Záznam v historii je už spolknutý prohlížečem — vrátíme adresu zpět do not.
+  history.pushState(history.state, '', from.fullPath);
+  return false;
+}
+function installBackGuard() {
+  if (!_unhookBackGuard) _unhookBackGuard = router.beforeEach(backGuard);
+}
+function uninstallBackGuard() {
+  if (_unhookBackGuard) { _unhookBackGuard(); _unhookBackGuard = null; }
+}
+
+// Tlačítko Zpět v liště = úmysl odejít (obrana proti gestu zpět ho nechá projít).
+function goBack() { _exitByButton = true; router.push('/'); }
 
 // --- Skoky (Da Capo / VIDE) ---
 function toggleJumpMode() {
@@ -5272,7 +5452,9 @@ async function deleteBookmark(b) {
 /* Panel zvětšení — otevírá se z tlačítka s procenty, kotví se POD lištu */
 .zoom-panel {
   position: absolute; top: calc(var(--topbar-h, 96px) + 6px); left: 50%;
-  transform: translateX(-50%);
+  /* Centrování i posun přetažením v jednom transformu — posun drží
+     --pd-x/--pd-y z panelStyle(). */
+  transform: translateX(-50%) translate(var(--pd-x, 0px), var(--pd-y, 0px));
   display: flex; align-items: center; gap: 8px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 26px;
   padding: 8px 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); z-index: 30;
@@ -5521,6 +5703,21 @@ async function deleteBookmark(b) {
   touch-action: manipulation; pointer-events: auto;
 }
 .jump-btn:active { background: var(--bg-elev2); border-color: var(--border); color: var(--text); }
+
+/* --- PŘETAHOVÁNÍ PANELŮ (Jan, Oct 2026) ---
+   Panely (anotace, zvětšení, rotace, odebrání stránek, skoky, záložky) se dají
+   odtáhnout mimo noty. Posun drží --pd-x/--pd-y z panelStyle(); transform
+   panelů proto zůstává tady v CSS (jinak by se ztratilo centrování zoomu). */
+.jump-panel, .annot-panel {
+  transform: translate(var(--pd-x, 0px), var(--pd-y, 0px));
+}
+.panel-grip {
+  flex: 0 0 auto; width: 30px; height: 30px; padding: 0; line-height: 1;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text-dim); font-size: 0.95rem; cursor: grab;
+  touch-action: none;   /* tah po úchytu nesmí posouvat stránku ani listovat */
+}
+.panel-grip:active { background: var(--accent); border-color: var(--accent); color: #17130f; }
 
 .jump-panel {
   position: absolute; top: calc(var(--topbar-h, 96px) + 8px); left: 16px;
