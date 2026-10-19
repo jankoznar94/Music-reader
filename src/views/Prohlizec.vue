@@ -3151,7 +3151,9 @@ async function renderCurrent() {
   frameActive = framed;
   pageFramed.value = framed;
   const usedFrac = framed ? frac : { x: 0, y: 0, w: 1, h: 1 };
-  const geo = pageGeometry(dim, usedFrac, ref, availW, framed ? availH : 0);
+  // Oříznutá stránka nedostane plnou šířku: 15 px rezervy z každé strany,
+  // aby osnovy nebyly nalepené na hraně displeje (Jan).
+  const geo = pageGeometry(dim, usedFrac, ref, availW - (framed ? 30 : 0), framed ? availH : 0);
   cropBox.value = geo.box;
   // fitFor počítá měřítko bitmapy vůči těmhle rozměrům (referenční px).
   baseDims.value = { w: geo.box.w, h: geo.box.h };
@@ -3209,7 +3211,9 @@ async function prefetchSiblings(center) {
     const frac = await getPageCrop(i);
     const framed = preferredFrame(i) && !(frac.x <= 0.001 && frac.y <= 0.001 && frac.w >= 0.999 && frac.h >= 0.999);
     const usedFrac = framed ? frac : { x: 0, y: 0, w: 1, h: 1 };
-    const geo = pageGeometry(dim, usedFrac, ref, availW, framed ? availH : 0);
+    // Oříznutá stránka nedostane plnou šířku: 15 px rezervy z každé strany,
+  // aby osnovy nebyly nalepené na hraně displeje (Jan).
+  const geo = pageGeometry(dim, usedFrac, ref, availW - (framed ? 30 : 0), framed ? availH : 0);
     const off = getOrCreateCacheCanvas(key, geo.w, geo.h);
     const p = renderPageRegion(song, i + 1, off, geo.cropPt, geo.w, geo.h).then(() => {
       preRendered.add(key);

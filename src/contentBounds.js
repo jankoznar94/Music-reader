@@ -429,7 +429,7 @@ export function analyzeContent(rgba, w, h) {
     staffX = { x0: (hx0 - lp) / w, x1: (hx1 + 1 + rp) / w };
   }
 
-  const padX = 0.012, padY = 0.02;
+  const padX = 0.012, padY = 0.025;
   const rawX0 = ex0 / w, rawX1 = (ex1 + 1) / w;
   const rawY0 = ey0 / h, rawY1 = (ey1 + 1) / h;
   const cx = (rawX0 + rawX1) / 2, cy = (rawY0 + rawY1) / 2;

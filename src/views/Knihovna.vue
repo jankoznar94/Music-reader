@@ -347,7 +347,7 @@ import {
 } from '../db.js';
 import { getPageCount, clearPdfCache } from '../pdf.js';
 import { getLibraryState, saveLibraryState } from '../libraryState.js';
-import { registerSW } from 'virtual:pwa-register';
+import { checkForUpdate, applyUpdate } from '../update';
 
 const router = useRouter();
 const libState = getLibraryState();
@@ -999,22 +999,14 @@ watch(() => groupByComposer.value, () => {
   persistState();
 });
 
-// --- Aktualizace Service Workeru (tlačítko v topbaru) ---
+// --- Aktualizace (tlačítko v topbaru vpravo nahoře) -------------------------
+// ŽÁDNÁ automatika: appka se sama neobnovuje. Tlačítko jen zjistí, jestli je na
+// serveru jiný bundle, a když ano, zahodí cache + SW a načte appku znovu
+// (Jan: „Aktualizace budou jen na tlačítko“). Registraci service workeru dělá
+// main.js — tady se needituje, aby nevznikla druhá registrace ani auto-reload.
 const checking = ref(false);
 const toast = ref('');
 let toastTimer = null;
-let registration = null;
-let refreshing = false; // prevence vícenásobného reloadu
-
-const { updateSW } = registerSW({
-  immediate: true,
-  onOfflineReady() {
-    console.log('Noty App připravena pro offline použití.');
-  },
-  onRegisteredSW(_swUrl, reg) {
-    registration = reg;
-  },
-});
 
 function showToast(msg) {
   toast.value = msg;
@@ -1030,61 +1022,16 @@ onMounted(() => {
   }
 });
 
-// Robustní obnova po aktivaci nového SW — funguje i v standalone PWA režimu.
-function setupReloadOnActivate() {
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing) return;
-    refreshing = true;
-    window.location.reload();
-  });
-}
-
-// Počká, dokud se nový worker nedostane do stavu 'installed'
-function waitForInstalled(worker) {
-  return new Promise((resolve) => {
-    if (worker.state === 'installed') return resolve();
-    worker.addEventListener('statechange', () => {
-      if (worker.state === 'installed') resolve();
-    });
-  });
-}
-
 async function checkAndApply() {
   if (checking.value) return;
   checking.value = true;
   try {
-    if (!registration) return;
-    await registration.update();
-
-    // Po `update()` začne nový SW instalovat assety asynchronně (až o pár ms
-    // později vyjede `updatefound`). Čtení workeru IHNED po update() čte na
-    // začátku stahování ještě null → spinner by okamžitě zmizel. Proto počkáme,
-    // dokud se nový worker vůbec neobjeví.
-    let newWorker = registration.waiting || registration.installing;
-    if (!newWorker) {
-      newWorker = await new Promise((resolve) => {
-        const done = (w) => { cleanup(); resolve(w || null); };
-        const cleanup = () => {
-          registration.removeEventListener('updatefound', onFound);
-          clearTimeout(timer);
-        };
-        const onFound = () => done(registration.installing);
-        registration.addEventListener('updatefound', onFound);
-        const timer = setTimeout(() => done(registration.installing), 15000);
-      });
-    }
-    if (!newWorker) {
-      showToast('Verze je aktuální.');
+    if (await checkForUpdate()) {
+      sessionStorage.setItem('noty-updated', '1');
+      await applyUpdate();          // smaže cache + SW a načte znovu
       return;
     }
-    if (newWorker.state === 'installing') {
-      // checking zůstává true, dokud sestor nedoinstaluje (state -> 'installed'),
-      // takže spinner je vidět po CELOU dobu stahování nových assetů.
-      await waitForInstalled(newWorker);
-    }
-    sessionStorage.setItem('noty-updated', '1');
-    setupReloadOnActivate();
-    newWorker.postMessage({ type: 'SKIP_WAITING' });
+    showToast('Verze je aktuální.');
   } catch (err) {
     console.warn('Kontrola aktualizace selhala', err);
     showToast('Kontrola aktualizace selhala.');
