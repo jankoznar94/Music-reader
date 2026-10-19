@@ -269,9 +269,13 @@
          obstarají dvě samostatná tlačítka — jen v anotaci. -->
     <div v-if="annotMode" class="annot-nav">
       <button class="annot-nav-btn" :disabled="!canPrevPage" @click.stop="prevPage"
-              title="Předchozí stránka">‹</button>
+              title="Předchozí stránka">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 5L8.5 12l7 7"/></svg>
+      </button>
       <button class="annot-nav-btn" :disabled="!canNextPage" @click.stop="nextPage"
-              title="Další stránka">›</button>
+              title="Další stránka">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 5l7 7-7 7"/></svg>
+      </button>
     </div>
     <!-- .stage = vnější box, jehož rozměry odpovídají tomu, jak stránka zabírá
          na obrazovce PO OTOČENÍ (při 90°/270° prohozené). Nese zoom a posun.
@@ -5979,10 +5983,13 @@ async function deleteBookmark(b) {
   display: flex; align-items: center; justify-content: center;
   background: rgba(24, 22, 20, 0.78); color: #f0ece4;
   border: 1px solid rgba(255, 255, 255, 0.22);
-  font-size: 1.8rem; line-height: 1; padding-bottom: 4px;
+  /* Ikona je SVG (dřív textový znak ‹ / ›, který seděl opticky výš) — flex
+     ji teď vycentruje přesně na střed knoflíku, bez dorovnávacího paddingu. */
+  padding: 0; line-height: 0;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
   -webkit-tap-highlight-color: transparent;
 }
+.annot-nav-btn svg { display: block; }
 .annot-nav-btn:disabled { opacity: 0.35; }
 .annot-nav-btn:active:not(:disabled) { background: rgba(60, 56, 50, 0.9); }
 .annot-layer .hl { mix-blend-mode: multiply; opacity: 0.9; }
