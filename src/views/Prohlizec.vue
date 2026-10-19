@@ -1986,24 +1986,53 @@ const viewBoxStr = computed(() =>
   `${cropBox.value.x} ${cropBox.value.y} ${cropBox.value.w} ${cropBox.value.h}`);
 // Výchozí stav je VYPNUTO (Jan: „nedávej to zatím defaultně, jen jako
 // tlačítko“) — uživatel si rám zapne vědomě a volba se pamatuje.
-const autoFrame = ref(localStorage.getItem('noty-auto-frame') === '1');
+// Nový klíč (v2): stará hodnota z testování se ignoruje, aby se rám po
+// aktualizaci neobjevil „automaticky“.
+const autoFrame = ref(localStorage.getItem('noty-auto-frame-v2') === '1');
 const cropCache = new Map();   // `${songId}:${pageIdx}` -> {x,y,w,h} v poměrech 0..1
 function clearCropCache() { cropCache.clear(); }
 function toggleAutoFrame() {
   autoFrame.value = !autoFrame.value;
-  localStorage.setItem('noty-auto-frame', autoFrame.value ? '1' : '0');
+  localStorage.setItem('noty-auto-frame-v2', autoFrame.value ? '1' : '0');
   clearCropCache();
   cached.clear();
   preRendered.clear();
   renderPromises.clear();
   renderCurrent();
+  if (autoFrame.value && pageHasSavedView(currentPage.value)) {
+    showToast('Uložené zobrazení má přednost před rámem');
+  }
+}
+
+// Má tahle stránka (nebo celá skladba) uložené zobrazení? Uložená preference
+// je Janovo ruční nastavení, takže má přednost před automatickým rámem.
+function pageHasSavedView(page) {
+  const pv = pageViews.get(page);
+  if (pv && (pv.zoom != null || pv.rot != null || pv.panX != null || pv.panY != null || pv.frame != null)) return true;
+  const v = songView.value;
+  return !!(v && (v.zoom != null || v.rot != null || v.panX != null || v.panY != null || v.frame != null));
+}
+// Jaký rám si přeje uložená preference? Starší uložená zobrazení příznak
+// nemají — byla vytvořena na celé stránce, takže = bez rámu.
+function preferredFrame(page) {
+  const pv = pageViews.get(page);
+  if (pv && (pv.zoom != null || pv.rot != null || pv.panX != null || pv.panY != null || pv.frame != null)) {
+    return !!pv.frame;
+  }
+  const v = songView.value;
+  if (v && (v.zoom != null || v.rot != null || v.panX != null || v.panY != null || v.frame != null)) {
+    return !!v.frame;
+  }
+  return autoFrame.value;
 }
 
 // Detekce obsahu běží nad malým náhledem stránky (rychlost ~30 ms) a výsledek
 // se drží v paměti pro každou stránku. Selhání = celá stránka (nic neořezat).
 const ANALYZE_W = 560;
 async function getPageCrop(pageIdx) {
-  if (!autoFrame.value) return { x: 0, y: 0, w: 1, h: 1 };
+  // Analýza má smysl, jen když je rám zapnutý nebo si ho přeje uložená
+  // preference; jinak se rovnou vrací celá stránka.
+  if (!autoFrame.value && !pageHasSavedView(pageIdx)) return { x: 0, y: 0, w: 1, h: 1 };
   const key = `${song.id}:${pageIdx}`;
   if (cropCache.has(key)) return cropCache.get(key);
   const job = (async () => {
@@ -2709,11 +2738,12 @@ function updatePageViewFlag() {
 }
 // Uloží aktuální zoom + posun + rotaci jako výchozí pro CELOU skladbu
 async function saveZoomAsDefault() {
-  songView.value = { zoom: zoom.value, panX: panX.value, panY: panY.value, rot: rot.value };
+  songView.value = { zoom: zoom.value, panX: panX.value, panY: panY.value, rot: rot.value, frame: frameActive ? 1 : 0 };
   songZoom.value = zoom.value;
   hasSavedZoom.value = true;
   await dbSaveSongView({
     songId: song.id, zoom: zoom.value, panX: panX.value, panY: panY.value, rot: rot.value,
+    frame: frameActive ? 1 : 0,
   });
   showToast('Výchozí zobrazení skladby uloženo');
 }
@@ -2723,7 +2753,7 @@ async function savePageViewAsDefault() {
   const page = currentPage.value;
   const view = {
     songId: song.id, page, zoom: zoom.value, panX: panX.value, panY: panY.value,
-    rot: rot.value,
+    rot: rot.value, frame: frameActive ? 1 : 0,
   };
   pageViews.set(page, view);
   hasSavedPageView.value = true;
@@ -2958,10 +2988,13 @@ async function renderCurrent() {
   refH.value = ref.h;
   const frac = await getPageCrop(page);
   if (myToken !== renderToken) return;
-  // Rám je aktivní jen když je zapnutý A detekce našla skutečný výřez.
-  const framed = autoFrame.value && !(frac.x <= 0.001 && frac.y <= 0.001 && frac.w >= 0.999 && frac.h >= 0.999);
+  // Rám je aktivní jen když si ho přeje preference (uložené zobrazení má
+  // přednost) nebo je zapnutý, A detekce našla skutečný výřez.
+  const wantFrame = preferredFrame(page);
+  const framed = wantFrame && !(frac.x <= 0.001 && frac.y <= 0.001 && frac.w >= 0.999 && frac.h >= 0.999);
   frameActive = framed;
-  const geo = pageGeometry(dim, frac, ref, framed ? safeW : availW);
+  const usedFrac = framed ? frac : { x: 0, y: 0, w: 1, h: 1 };
+  const geo = pageGeometry(dim, usedFrac, ref, framed ? safeW : availW);
   cropBox.value = geo.box;
   // fitFor počítá měřítko bitmapy vůči těmhle rozměrům (referenční px).
   baseDims.value = { w: geo.box.w, h: geo.box.h };
@@ -3017,8 +3050,9 @@ async function prefetchSiblings(center) {
     const dim = await getPageWidthHeight(song, i + 1);
     const ref = pageReference(dim);
     const frac = await getPageCrop(i);
-    const framed = autoFrame.value && !(frac.x <= 0.001 && frac.y <= 0.001 && frac.w >= 0.999 && frac.h >= 0.999);
-    const geo = pageGeometry(dim, frac, ref, framed ? safeW : availW);
+    const framed = preferredFrame(i) && !(frac.x <= 0.001 && frac.y <= 0.001 && frac.w >= 0.999 && frac.h >= 0.999);
+    const usedFrac = framed ? frac : { x: 0, y: 0, w: 1, h: 1 };
+    const geo = pageGeometry(dim, usedFrac, ref, framed ? safeW : availW);
     const off = getOrCreateCacheCanvas(key, geo.w, geo.h);
     const p = renderPageRegion(song, i + 1, off, geo.cropPt, geo.w, geo.h).then(() => {
       preRendered.add(key);
@@ -3030,7 +3064,7 @@ async function prefetchSiblings(center) {
 // Klíč cache = jen stránka. Rotace do klíče NEPATŘÍ — bitmapa je vždy neotočená,
 // takže otočení stránky nesmí invalidovat cache (dřív se tu klíčovalo `page@deg`,
 // což při každé změně úhlu vyhodilo celou cache a přinutilo překreslit PDF).
-function keyFor(pageIdx) { return String(pageIdx); }
+function keyFor(pageIdx) { return pageIdx + (preferredFrame(pageIdx) ? '@f' : '@n'); }
 
 function getOrCreateCacheCanvas(i, w, h) {
   if (cached.has(i)) return cached.get(i);
@@ -5004,9 +5038,11 @@ function zoomFit() { zoom.value = 1.0; panX.value = 0; panY.value = 0; }
 // Ruční vycentrování zároveň VYPNE automatický rám — jinak by tlačítko
 // „nešlo přemazat“ (stránka by zůstala oříznutá a zbytečně malá).
 function resetView() {
-  if (autoFrame.value) {
+  // Uložená preference (stránka/skladba) má přednost a nese si vlastní
+  // příznak rámu — pak se do ní nesahá.
+  if (!pageHasSavedView(currentPage.value) && autoFrame.value) {
     autoFrame.value = false;
-    localStorage.setItem('noty-auto-frame', '0');
+    localStorage.setItem('noty-auto-frame-v2', '0');
     clearCropCache();
     cached.clear();
     preRendered.clear();
