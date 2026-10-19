@@ -123,40 +123,36 @@
               @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
 
       <div class="prefs-row">
-        <button class="zp-btn prefs-icon" :class="{ on: hasSavedPageView }"
-                @click="savePageViewAsDefault" title="Uložit zobrazení této stránky">
-          <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedPageView ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4z"/><path d="M15 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
-        </button>
-        <button class="zp-btn prefs-icon" :class="{ on: hasSavedZoom }"
-                @click="saveZoomAsDefault" title="Uložit zobrazení celé skladby">
-          <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
-        </button>
+        <div class="prefs-slot">
+          <button class="zp-btn prefs-icon" :class="{ on: hasSavedPageView }"
+                  @click="savePageViewAsDefault" title="Uložit zobrazení této stránky">
+            <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedPageView ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4z"/><path d="M15 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+          </button>
+          <!-- Koš je IKONA, ne text (Jan), ale sedí přesně v rohu ikony stránky,
+               takže je jasné, kterou preferenci maže. -->
+          <button v-if="hasSavedPageView" class="prefs-trash-badge" @click="deletePageView"
+                  title="Smazat uložené zobrazení této stránky">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/></svg>
+          </button>
+        </div>
+        <div class="prefs-slot">
+          <button class="zp-btn prefs-icon" :class="{ on: hasSavedZoom }"
+                  @click="saveZoomAsDefault" title="Uložit zobrazení celé skladby">
+            <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
+          </button>
+          <button v-if="hasSavedZoom" class="prefs-trash-badge" @click="deleteSongView"
+                  title="Smazat výchozí zobrazení celé skladby">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/></svg>
+          </button>
+        </div>
+        <span class="zp-sep" />
         <button class="zp-btn prefs-icon" :class="{ on: pageFramed }"
-                @click="applyFrameToPage" title="Oříznout okraje (rám)">
+                @click="toggleGlobalFrame" title="Oříznout okraje — celá skladba">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v15h15"/><path d="M3 6h15v15"/></svg>
         </button>
-        <span class="zp-sep" />
         <button class="zp-btn prefs-icon" @click="resetView"
                 title="Vycentrovat na uložené zobrazení">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
-        </button>
-      </div>
-
-      <div v-if="hasSavedPageView || hasSavedZoom || pageFrameSaved" class="prefs-row prefs-trash">
-        <button v-if="hasSavedPageView" class="zp-btn prefs-trash-btn" @click="deletePageView"
-                title="Smazat uložené zobrazení této stránky">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/></svg>
-          <span>stránka</span>
-        </button>
-        <button v-if="hasSavedZoom" class="zp-btn prefs-trash-btn" @click="deleteSongView"
-                title="Smazat výchozí zobrazení celé skladby">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/></svg>
-          <span>skladba</span>
-        </button>
-        <button v-if="pageFrameSaved" class="zp-btn prefs-trash-btn" @click="clearPageFrame"
-                title="Zrušit rám této stránky (vrátit okraje)">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/></svg>
-          <span>rám</span>
         </button>
       </div>
     </div>
@@ -1968,13 +1964,6 @@ let barObs = null;
 // i vlastní panel, protože jedno gesto nemůže dělat obojí najednou.
 const zoomPanelOpen = ref(false);
 const prefsPanelOpen = ref(false);   // menu Zobrazení (stránka / skladba / rám)
-// Je rám uložený u téhle stránky? (pro aktivní stav koše v menu)
-// Uložené zobrazení stránky nese i `frame: 0` („bez rámu“), takže samotná
-// existence klíče nestačí — rám je „uložený“ jen když je ZAPNUTÝ.
-const pageFrameSaved = computed(() => {
-  const pv = pageViews.get(currentPage.value);
-  return !!pv && pv.frame === 1;
-});
 function togglePrefsPanel() {
   prefsPanelOpen.value = !prefsPanelOpen.value;
   if (prefsPanelOpen.value) {
@@ -2042,37 +2031,47 @@ const refH = ref(1100);
 const cropBox = ref({ x: 0, y: 0, w: 800, h: 1100 });
 const viewBoxStr = computed(() =>
   `${cropBox.value.x} ${cropBox.value.y} ${cropBox.value.w} ${cropBox.value.h}`);
-// Rám je RUČNÍ akce: žádný automatický režim. Stav se ukládá k jednotlivé
-// stránce (`frame` v uloženém zobrazení stránky), takže se sám nikdy nezapne.
-const autoFrame = ref(false);
+// Rám (ořez okrajů) je GLOBÁLNÍ volba celé skladby (Jan: „ořez by měl být
+// globální, ne jen pro danou stránku“), ukládá se na skladbu jako `frame`.
+// Priorita zobrazení je: preference STRÁNKY → preference CELÉ SKLADBY → rám.
+// Díky tomu si stránka může ořez sama vypnout (uložené zobrazení má `frame: 0`),
+// ale dokud žádná preference není, platí globální přepínač rámu.
+const songFrame = ref(false);
 const cropCache = new Map();   // `${songId}:${pageIdx}` -> {x,y,w,h} v poměrech 0..1
 const pageFramed = ref(false); // je AKTUÁLNÍ stránka právě oříznutá?
 function clearCropCache() { cropCache.clear(); }
 
-// Ruční zapnutí/vypnutí rámu pro aktuální stránku. Ukládá se jen příznak
-// `frame`, zoom/posun/rotace stránky zůstávají nedotčené.
-async function applyFrameToPage() {
-  const page = currentPage.value;
-  const enable = !pageFramed.value;
-  const prev = pageViews.get(page) || { songId: song.id, page };
-  // Ořez je „celá stránka se vejde na displej“. Kdyby zůstalo přiblížení a
-  // posun z celé stránky, oříznutá (a tedy zvětšená) stránka přeteče obrazovku
-  // a její obsah uteče doprava/dolů (Jan: „zvětší na větší velikost než se
-  // vejde… celé posunuté dolů a doprava“). Stav srovnáme na fit a uložíme ho,
-  // aby se příští otevření stránky chovalo stejně.
-  const view = {
-    ...prev, songId: song.id, page, frame: enable ? 1 : 0,
-    zoom: 1, panX: 0, panY: 0,
-  };
-  pageViews.set(page, view);
-  hasSavedPageView.value = true;
+// Přepnutí rámu pro CELOU skladbu. Uloží se globálně a překreslí se všechny
+// stránky (cache klíčuje rám, takže se staré bitmapy zahodí).
+async function toggleGlobalFrame() {
+  const enable = !songFrame.value;
+  songFrame.value = enable;
+  // Uložit na skladbu (přežije zavření appky i přepnutí skladby).
+  const s = await dbGetSong(song.id);
+  if (s) { s.frame = enable ? 1 : 0; await dbSaveSong(s); }
+  // Když existuje globální preference zobrazení, drží se s přepínačem ve shodě —
+  // jinak by tlačítko nic nedělalo (global preference má před rámem přednost).
+  if (songView.value) {
+    songView.value = { ...songView.value, songId: song.id, frame: enable ? 1 : 0 };
+    await dbSaveSongView(songView.value);
+  }
+  // Uložené zobrazení AKTUÁLNÍ stránky má přednost; aby přepínač vždy něco
+  // udělal, sundá se z něj jen příznak rámu (zoom/posun/rotace zůstávají).
+  const pv = pageViews.get(currentPage.value);
+  if (pv && pv.frame != null) {
+    const rest = { ...pv };
+    delete rest.frame;
+    pageViews.set(currentPage.value, rest);
+    await dbSavePageView(rest);
+  }
+  // Ořez je „stránka se vejde na displej“ — srovnat přiblížení a posun, aby
+  // obsah neutíkal doprava/dolů (Jan).
   zoom.value = 1; panX.value = 0; panY.value = 0;
-  await dbSavePageView(view);
   cached.clear();
   preRendered.clear();
   renderPromises.clear();
   await renderCurrent();
-  showToast(enable ? 'Rám: stránka oříznuta' : 'Rám: celá stránka');
+  showToast(enable ? 'Rám: celá skladba oříznuta' : 'Rám: celá skladba');
 }
 
 // Jaký rám si přeje uložená preference? Starší uložená zobrazení příznak
@@ -2086,7 +2085,7 @@ function preferredFrame(page) {
   if (v && (v.zoom != null || v.rot != null || v.panX != null || v.panY != null || v.frame != null)) {
     return !!v.frame;
   }
-  return autoFrame.value;
+  return songFrame.value;
 }
 
 // Detekce obsahu běží nad malým náhledem stránky (rychlost ~30 ms) a výsledek
@@ -2216,6 +2215,8 @@ function withOffset(n) {
 async function loadHiddenPages() {
   const s = await dbGetSong(song.id);
   hiddenPages.value = Array.isArray(s?.hiddenPages) ? [...s.hiddenPages].sort((a, b) => a - b) : [];
+  // Rám (ořez) je globální volba skladby — načte se s ní.
+  songFrame.value = !!(s && s.frame === 1);
   pagesOffset.value = Number.isFinite(s?.pagesOffset) ? s.pagesOffset : 0;
   numberJumps.value = Array.isArray(s?.numberJumps)
     ? s.numberJumps
@@ -2798,12 +2799,12 @@ function updatePageViewFlag() {
 }
 // Uloží aktuální zoom + posun + rotaci jako výchozí pro CELOU skladbu
 async function saveZoomAsDefault() {
-  songView.value = { zoom: zoom.value, panX: panX.value, panY: panY.value, rot: rot.value, frame: frameActive ? 1 : 0 };
+  songView.value = { zoom: zoom.value, panX: panX.value, panY: panY.value, rot: rot.value, frame: songFrame.value ? 1 : 0 };
   songZoom.value = zoom.value;
   hasSavedZoom.value = true;
   await dbSaveSongView({
     songId: song.id, zoom: zoom.value, panX: panX.value, panY: panY.value, rot: rot.value,
-    frame: frameActive ? 1 : 0,
+    frame: songFrame.value ? 1 : 0,
   });
   showToast('Výchozí zobrazení skladby uloženo');
 }
@@ -2848,23 +2849,8 @@ async function deleteSongView() {
   await dbDeleteSongView(song.id);
   await afterPrefsChange('Výchozí zobrazení skladby smazáno');
 }
-// Zruší jen rám (ořez) u aktuální stránky, ostatní uložené hodnoty nechá.
-async function clearPageFrame() {
-  const page = currentPage.value;
-  const pv = pageViews.get(page);
-  if (!pv || pv.frame == null) return;
-  const rest = { ...pv };
-  delete rest.frame;
-  const hasOther = Object.keys(rest).some(k => !['songId', 'page'].includes(k));
-  if (hasOther) {
-    pageViews.set(page, rest);
-    await dbSavePageView(rest);
-  } else {
-    pageViews.delete(page);
-    await dbDeletePageView(song.id, page);
-  }
-  await afterPrefsChange('Rám zrušen — celá stránka');
-}
+// Rám je GLOBÁLNÍ přepínač skladby — žádné mazání „rámu stránky“ tu není;
+// vypnutí dělá totéž tlačítko ořezu.
 // Otočení stránky o delta stupňů (kladné = vpravo) — z TLAČÍTEK.
 // Rotace je ČISTĚ CSS záležitost (bitmapa je vždy neotočená), takže velký skok
 // (90°) se dá plynule DOBĚHNOUT animací úhlu — nic se přitom nepočítá z pdf.js
@@ -5724,15 +5710,15 @@ async function deleteBookmark(b) {
 .prefs-row { display: flex; align-items: center; gap: 7px; }
 .prefs-icon { width: 40px; height: 40px; }
 .prefs-icon svg { display: block; }
-/* Koše: druhá, drobná řada jen pro uložené položky — ikona + název, ať je
-   jasné, co se maže (dřív měla každá skupina vlastní koš). */
-.prefs-trash { gap: 5px; flex-basis: 100%; }
-.prefs-trash-btn {
-  width: auto; height: 26px; padding: 0 9px; gap: 5px;
-  border-radius: 13px; background: transparent; font-size: 0.68rem;
-  color: #e0836f; border-color: rgba(224, 131, 111, 0.38);
+/* Koš = malá ikona v ROHU té které ukládací ikony. Je to ikona (žádný text),
+   ale je zřejmé, kterou preferenci maže (Jan). */
+.prefs-slot { position: relative; }
+.prefs-trash-badge {
+  position: absolute; right: -3px; bottom: -3px; width: 18px; height: 18px;
+  padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-elev); border: 1px solid rgba(224, 131, 111, 0.65);
+  color: #e0836f; z-index: 1; touch-action: manipulation;
 }
-.prefs-trash-btn span { line-height: 1; }
 .zp-btn.danger { color: #e0836f; border-color: rgba(224, 131, 111, 0.45); }
 .zp-btn:disabled { opacity: 0.3; }
 .zoom-panel {

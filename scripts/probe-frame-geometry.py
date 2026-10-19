@@ -124,7 +124,7 @@ async def scenario(h, chk, pdf, label):
         d and all(i['hasSvg'] for i in d['icons']) and
         [i['title'] for i in d['icons']] == [
             'Uložit zobrazení této stránky', 'Uložit zobrazení celé skladby',
-            'Oříznout okraje (rám)', 'Vycentrovat na uložené zobrazení'],
+            'Oříznout okraje — celá skladba', 'Vycentrovat na uložené zobrazení'],
         str(d and [i['title'] for i in d['icons']]))
     chk(f'{label}: žádné textové „Uložit“', d and not d['textUlozit'])
     chk(f'{label}: ikony jsou v jedné řadě zarovnané doleva',
