@@ -2,7 +2,7 @@
   <div
     class="viewer"
     ref="viewerEl"
-    :style="{ '--topbar-h': barPad + 'px', '--page-pad': 'calc(8px + env(safe-area-inset-top, 0px))', '--edge-w': edgeW + 'px' }"
+    :style="{ '--topbar-h': barPad + 'px', '--page-pad': 'calc(8px + env(safe-area-inset-top, 0px))', '--page-pad-b': 'calc(8px + env(safe-area-inset-bottom, 0px))', '--edge-w': edgeW + 'px' }"
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
     @touchend.passive="onTouchEnd"
@@ -3077,10 +3077,13 @@ function computeFit() {
   // lišty. Odečteme ho, aby se noty vešly POD lištu a nepod ni nezajely.
   const el = pageAreaEl.value || viewerEl.value;
   if (el) {
-    // Lišta je overlay → do fitu nevstupuje. Odečítá se jen malý stálý
-    // odstup (stejný jako --page-pad), takže ořez využije celou výšku.
-    const pagePad = 8;
-    availH = Math.max(200, el.clientHeight - pagePad - 12);
+    // Lišta je overlay → do fitu nevstupuje. Odečítá se jen skutečné odsazení
+    // plochy (symetrické, včetně safe-area), takže ořez využije celou výšku
+    // a papír zůstane vycentrovaný.
+    const cs = getComputedStyle(el);
+    const padT = parseFloat(cs.paddingTop) || 0;
+    const padB = parseFloat(cs.paddingBottom) || 0;
+    availH = Math.max(200, el.clientHeight - padT - padB - 8);
     availW = Math.max(200, el.clientWidth - 12);
   }
 }
@@ -5922,7 +5925,11 @@ async function deleteBookmark(b) {
      objevit jako overlay, nesmí posunout zbytek stránky“). Plocha má proto
      stálý malý odstup + safe-area, ať noty nelezou pod notche; když se lišta
      ukáže, prostě se překryje přes horní pruh not. */
-  padding-top: var(--page-pad, 8px);
+  /* Odsazení je SYMETRICKÉ (nahoře i dole stejně). Jednostranný padding
+     posouval střed plochy dolů — stránka pak seděla níž, „jakoby pořád
+     počítala s horní lištou“ (Jan). Se symetrickým odsazením je papír
+     vycentrovaný na displeji a zároveň neleze pod notch ani pod gesture bar. */
+  padding: var(--page-pad, 8px) 0 var(--page-pad-b, 8px);
   display: flex; align-items: center; justify-content: center;
   /* overflow: hidden má DVA důvody:
      1) Stránka nesmí přetéct nad horní lištu ani pod displej. V krajině je

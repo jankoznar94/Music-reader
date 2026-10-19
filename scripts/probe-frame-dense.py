@@ -86,6 +86,12 @@ async def main():
         chk('nejnižší nota je uvnitř s okrajem', s['inkBottom'] is not None and 4 <= s['inkBottom'] <= 60,
             str(s['inkBottom']))
         chk('nahoře je taky okraj', s['inkTop'] is not None and s['inkTop'] >= 3, str(s['inkTop']))
+        # Jan: „furt je posunutá dolů, jak kdyby počítala s horní lištou“ —
+        # papír musí být vycentrovaný, okraje nahoře a dole stejné.
+        gap_top = s['top']
+        gap_bottom = s['winH'] - s['bottom']
+        chk('papír je vycentrovaný (okraje nahoře ≈ dole)',
+            abs(gap_top - gap_bottom) <= 12, f"nahoře {gap_top}, dole {gap_bottom}")
     return chk.report()
 
 
