@@ -2808,6 +2808,15 @@ async function applyPageView() {
   rot.value  = (pv && pv.rot  != null) ? pv.rot  : ((v && v.rot)  ? v.rot  : 0);
   panX.value = (pv && pv.panX != null) ? pv.panX : ((v && v.panX) ? v.panX : 0);
   panY.value = (pv && pv.panY != null) ? pv.panY : ((v && v.panY) ? v.panY : 0);
+  // Rám znamená „výřez se vejde na displej“. Uložený posun/přiblížení
+  // z dřívějška by výřez posunul dolů a doprava a spodek vystrčil z obrazovky
+  // (Jan: „celé posunuté dolů a doprava, část mimo obrazovku“). Když je rám
+  // aktivní, zoom i posun se proto nulují — jinak by spodek neměl prioritu.
+  if (preferredFrame(currentPage.value)) {
+    zoom.value = 1;
+    panX.value = 0;
+    panY.value = 0;
+  }
   // Měřítko musí odpovídat právě nastavenému úhlu — uložená stránka na šířku
   // (nebo vrácení na 0°) se musí správně vejít, ne zdědit měřítko z jiné orientace.
   liveFit.value = fitTargetFor(rot.value);
@@ -3116,6 +3125,9 @@ function pageGeometry(dim, frac, ref, targetW, maxH = 0) {
 async function renderCurrent() {
   const doc = song.data;
   if (!doc) return;
+  // Čerstvé měření plochy PŘED geometrií: uložená (zastaralá) výška by
+  // nechala výřez přerůst displej a spodek by se ořízl.
+  computeFit();
   // Nárok na tuto generaci renderu — při rychlém listování se starší render zruší
   const myToken = ++renderToken;
   const page = currentPage.value;
