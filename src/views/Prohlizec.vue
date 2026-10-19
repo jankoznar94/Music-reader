@@ -2,7 +2,7 @@
   <div
     class="viewer"
     ref="viewerEl"
-    :style="{ '--topbar-h': topBarH + 'px', '--edge-w': edgeW + 'px' }"
+    :style="{ '--topbar-h': barPad + 'px', '--edge-w': edgeW + 'px' }"
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
     @touchend.passive="onTouchEnd"
@@ -13,7 +13,7 @@
          Jeden řádek: zpět · název skladby · počítadlo stránek · anotace · záložka · skok ·
          zvětšení (panel) · přehled stránek · listování sestavou
          Ploché, bez hover/focus efektů — jediný feedback je :active (Jan: mobilní PWA). -->
-    <div class="top-bar" ref="barEl">
+    <div class="top-bar" :class="{ hidden: barHidden }" ref="barEl">
       <div class="tb-row">
         <!-- Levá skupina -->
         <div class="tb-side left">
@@ -1971,6 +1971,13 @@ const hasPageItems = computed(() => annotations.value.items.some(x => x.page ===
 // nic se nepřekryje. ResizeObserver to drží v aktuální hodnotě.
 const topBarH = ref(96);
 let barObs = null;
+// Horní lišta se dá schovat (Jan: „schovat horní lištu a zobrazit ji až po
+// tapu na střední oblast stránky“) — pak noty využijí i horní pruh. Volba se
+// pamatuje; v anotaci se lišta vždy ukáže, aby se z ní dalo vystoupit.
+const barHidden = ref(localStorage.getItem('topbarHidden') !== '0');
+// Rezervovaná výška nad stránkou: celá lišta, nebo jen malý odstup od notche
+// (safe-area řeší horní lišta, když je vidět).
+const barPad = computed(() => (barHidden.value ? 10 : (topBarH.value || 0)));
 // Panel zvětšení (z tlačítka s procenty v liště) — z lišty zmizela 4 samostatná
 // tlačítka zoomu, která zabírala skoro polovinu šířky a nutila zbytek na 35 px.
 // Od Sep 2026 je to nabídka ZVĚTŠENÍ A POSUNU: rotace má vlastní tlačítko
@@ -3061,7 +3068,7 @@ function computeFit() {
   // lišty. Odečteme ho, aby se noty vešly POD lištu a nepod ni nezajely.
   const el = pageAreaEl.value || viewerEl.value;
   if (el) {
-    const barH = topBarH.value || 0;
+    const barH = barPad.value || 0;
     availH = Math.max(200, el.clientHeight - barH - 12);
     availW = Math.max(200, el.clientWidth - 12);
   }
@@ -3916,12 +3923,40 @@ function onTap(e) {
   if (e.target.closest('.zoom-panel, .annot-panel, .edit-bar, .jp-list, .page-go')) return;
   // Ťuknutí na stránku (mimo lištu i panely) = režimy gesta končí. Dělá se to
   // PŘED listováním, aby se panel zavřel i při klepnutí v okrajové zóně.
+  // Když tap jen zavírá otevřený panel, lišta se NEsundává (jinak by uživatel
+  // při zavírání panelu přišel i o lištu, ze které ho otevřel).
+  const hadPanel = zoomPanelOpen.value || rotPanelOpen.value || prefsPanelOpen.value
+    || pagesPanelOpen.value || sliderOpen.value || jumpMode.value || bookmarkMode.value;
   closeGesturePanels();
+  if (hadPanel) return;
   const el = viewerEl.value;
   if (!el) return;
   const localX = e.clientX - el.getBoundingClientRect().left;
   if (localX < edgeWidth()) prevPage();
   else if (localX > el.clientWidth - edgeWidth()) nextPage();
+  // Střed = přepínač horní lišty (Jan: schovat a ukázat tapem na střed).
+  else toggleTopBar();
+}
+
+// Schování/ukázání horní lišty. Noty se při schované liště roztáhnou do
+// uvolněného pruhu, proto se po přepnutí znovu spočítá fit a překreslí stránka.
+function toggleTopBar() {
+  if (annotMode.value || jumpPlaceMode.value) return;   // v anotaci se kreslí
+  barHidden.value = !barHidden.value;
+  try { localStorage.setItem('topbarHidden', barHidden.value ? '1' : '0'); } catch (e) {}
+  if (barHidden.value) {
+    // Panely visí na liště — se schovanou lištou by zůstaly bez kontextu.
+    zoomPanelOpen.value = false; rotPanelOpen.value = false; prefsPanelOpen.value = false;
+    pagesPanelOpen.value = false; pagesListOpen.value = false; sliderOpen.value = false;
+    jumpMode.value = false; bookmarkMode.value = false; endEdit();
+  }
+  nextTick(() => { computeFit(); renderCurrent(); });
+}
+function showTopBar() {
+  if (!barHidden.value) return;
+  barHidden.value = false;
+  try { localStorage.setItem('topbarHidden', '0'); } catch (e) {}
+  nextTick(() => { computeFit(); renderCurrent(); });
 }
 
 // --- Anotace ---
@@ -3935,6 +3970,7 @@ function toggleAnnot() {
 // přechod skladby…), výběr prvku se zruší. Dřív se endEdit() volal ručně na ~8 místech
 // a stačilo jedno opomenutí a rámeček zůstal viset přes celou obrazovku.
 watch(annotMode, (on) => {
+  if (on) showTopBar();   // v anotaci musí být lišta vidět (východ z režimu)
   if (!on) {
     endEdit();
     // Přerušené umisťování skončí — jinak by zůstal viset režim sběru bodů
@@ -5626,6 +5662,14 @@ async function deleteBookmark(b) {
   /* Vlastní vrstva NAD podkladem modalu (41) — podklad je zkrácený pod lištu,
      takže lišta zůstává čitelná a klikatelná i s otevřeným modalem. */
   z-index: 45;
+  /* Skrytí/ukázání tapem na střed stránky — plynulý, ale krátký přesun. */
+  transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.3, 1), opacity 0.15s linear;
+}
+/* Schovaná lišta: pryč z obrazu i z dosahu dotyku, aby tap prošel na noty. */
+.top-bar.hidden {
+  transform: translateY(-105%);
+  opacity: 0;
+  pointer-events: none;
 }
 .top-bar::-webkit-scrollbar { display: none; }
 .tb-row {
