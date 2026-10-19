@@ -42,7 +42,10 @@ async def main():
 
         # Rám na stránce 1 — musí být PŘES CELOU šířku
         await h.ev("(()=>{const b=[...document.querySelectorAll('.tb-btn')]"
-                   ".find(x=>(x.title||'').startsWith('Rám:'));b&&b.click()})()")
+                   ".find(x=>(x.title||'').startsWith('Vycentrovat a preference'));b&&b.click()})()")
+        await asyncio.sleep(0.5)
+        await h.ev("(()=>{const b=[...document.querySelectorAll('.prefs-panel button')]"
+                   ".find(x=>x.textContent.trim()==='Rám');b&&b.click()})()")
         await asyncio.sleep(2.2)
         s = await h.ev(STATE)
         print('2 rám (do krajů)     ', s)

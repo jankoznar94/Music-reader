@@ -53,21 +53,12 @@
              a uživatel nerozeznal, které z nich ukládá STRÁNKU a které CELOU
              SKLADBU (Jan: „když ho teď sdílí dvě různé funkce“). Na liště jsou
              vidět trvale a jejich stav (uloženo / neuloženo) je po ruce. -->
-        <button class="tb-btn sm" @click="resetView" title="Vycentrovat (uložené výchozí zobrazení)">
+        <!-- Jedno tlačítko pro veškeré uložené zobrazení: po klepnutí se
+             otevře menu preferencí (stránka / celá skladba / rám) s vlastním
+             košem u každé skupiny. -->
+        <button class="tb-btn sm" :class="{ on: prefsPanelOpen }" @click="togglePrefsPanel"
+                title="Vycentrovat a preference zobrazení">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
-        </button>
-        <button class="tb-btn sm" :class="{ on: hasSavedPageView }" @click="savePageViewAsDefault" title="Uložit jako výchozí jen pro tuto stránku (má přednost)">
-          <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedPageView ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4z"/><path d="M15 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
-        </button>
-        <!-- Rám = RUČNÍ ořez okrajů pro TOUTO stránku. Žádný automatický
-             režim: uživatel si ho vědomě zapne/vypne a stav se uloží ke
-             stránce. Krajní noty pak nejsou pod pruhy pro listování. -->
-        <button class="tb-btn sm" :class="{ on: pageFramed }" @click="applyFrameToPage"
-                title="Rám: oříznout okraje a vycentrovat tuto stránku">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v15h15"/><path d="M3 6h15v15"/></svg>
-        </button>
-        <button class="tb-btn sm" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit jako výchozí pro celou skladbu">
-          <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
         </button>
         <!-- Zvětšení a posun — vlastní nabídka (dropdown). Gesto se v ní věnuje
              JEN zoomu a posunu, nikdy rotaci. -->
@@ -117,20 +108,65 @@
            originál moc velký") — meze jsou v ZOOM_MIN/ZOOM_MAX. -->
       <button class="zp-btn num" @click="zoomOutBig" title="Oddálit po 10 %">−10</button>
       <button class="zp-btn num" @click="zoomInBig" title="Přiblížit po 10 %">+10</button>
-      <!-- Smazání uloženého nastavení stránky = ODPADNÍ KOŠ, ne křížek.
-           Jan: „Křížek je hrozně zavádějící, uživatelé se tím snaží zavřít
-           menu.“ Křížek v liště znamená „zavřít panel“ — tady se ale maže
-           uložený stav stránky, proto koš.
-           Oddělovač PATŘÍ DO `v-if` — bez uloženého stavu se zobrazuje jen
-           koš, takže by za „+10“ zůstal viset osamocený svislý pruh
-           (Jan: „zůstal tam separátor, i když tam není tlačítko“). -->
-      <template v-if="hasSavedPageView || hasSavedZoom">
-        <span class="zp-sep" />
-        <button class="zp-btn" @click="clearPageView"
-                :title="hasSavedPageView ? 'Smazat uložené zobrazení této stránky' : 'Vynulovat výchozí zobrazení celé skladby'">
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>
-        </button>
-      </template>
+    </div>
+
+    <!-- MENU PREFERENCÍ — otevírá ho tlačítko „Vycentrovat“ na hlavní liště.
+         Všechny formy uloženého zobrazení a jejich mazání na jednom místě:
+         stránka / celá skladba / rám. Každá skupina má VLASTNÍ koš, aby bylo
+         jasné, co se maže. -->
+    <div v-if="prefsPanelOpen" class="zoom-panel prefs-panel" data-panel="prefs" :style="panelStyle('prefs')">
+      <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
+              @pointerdown="panelDragStart($event, 'prefs')" @pointermove="panelDragMove"
+              @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
+              @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
+              @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
+
+      <div class="prefs-head">
+        <span class="prefs-title">Zobrazení</span>
+        <button class="zp-btn" @click="resetView" title="Vycentrovat na uložené zobrazení">Vycentrovat</button>
+      </div>
+
+      <div class="prefs-group">
+        <div class="prefs-group-head">
+          <span>Tato stránka</span>
+          <span class="prefs-state" :class="{ on: hasSavedPageView }">{{ hasSavedPageView ? 'uloženo' : 'neuloženo' }}</span>
+        </div>
+        <div class="prefs-group-actions">
+          <button class="zp-btn wide" @click="savePageViewAsDefault">Uložit</button>
+          <button class="zp-btn danger" :disabled="!hasSavedPageView" @click="deletePageView"
+                  title="Smazat uložené zobrazení této stránky">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="prefs-group">
+        <div class="prefs-group-head">
+          <span>Celá skladba</span>
+          <span class="prefs-state" :class="{ on: hasSavedZoom }">{{ hasSavedZoom ? 'uloženo' : 'neuloženo' }}</span>
+        </div>
+        <div class="prefs-group-actions">
+          <button class="zp-btn wide" @click="saveZoomAsDefault">Uložit</button>
+          <button class="zp-btn danger" :disabled="!hasSavedZoom" @click="deleteSongView"
+                  title="Smazat výchozí zobrazení celé skladby">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="prefs-group">
+        <div class="prefs-group-head">
+          <span>Rám — ořez okrajů</span>
+          <span class="prefs-state" :class="{ on: pageFramed }">{{ pageFramed ? 'zapnutý' : 'vypnutý' }}</span>
+        </div>
+        <div class="prefs-group-actions">
+          <button class="zp-btn wide" :class="{ on: pageFramed }" @click="applyFrameToPage">Rám</button>
+          <button class="zp-btn danger" :disabled="!pageFrameSaved" @click="clearPageFrame"
+                  title="Zrušit rám této stránky (vrátit okraje)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Panel ODEBRÁNÍ STRÁNEK — vlastní nabídka v liště. Odebírání je VRATNÉ:
@@ -1939,9 +1975,23 @@ let barObs = null;
 // Od Sep 2026 je to nabídka ZVĚTŠENÍ A POSUNU: rotace má vlastní tlačítko
 // i vlastní panel, protože jedno gesto nemůže dělat obojí najednou.
 const zoomPanelOpen = ref(false);
+const prefsPanelOpen = ref(false);   // menu Zobrazení (stránka / skladba / rám)
+// Je rám uložený u téhle stránky? (pro aktivní stav koše v menu)
+const pageFrameSaved = computed(() => {
+  const pv = pageViews.get(currentPage.value);
+  return !!(pv && pv.frame != null);
+});
+function togglePrefsPanel() {
+  prefsPanelOpen.value = !prefsPanelOpen.value;
+  if (prefsPanelOpen.value) {
+    annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false;
+    sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
+    pagesPanelOpen.value = false; pagesListOpen.value = false; endEdit();
+  }
+}
 function toggleZoomPanel() {
   zoomPanelOpen.value = !zoomPanelOpen.value;
-  if (zoomPanelOpen.value) { annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; endEdit(); }
+  if (zoomPanelOpen.value) { annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false; endEdit(); }
 }
 // Panel ODEBRÁNÍ STRÁNEK — samostatná nabídka, vzájemně se vylučuje s ostatními
 // (jako všechny ostatní panely; Jan: „když kliknu na něco jiného, anotační mód
@@ -1967,6 +2017,7 @@ function toggleRotPanel() {
     annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false;
     sliderOpen.value = false; zoomPanelOpen.value = false; endEdit();
     pagesPanelOpen.value = false; pagesListOpen.value = false;
+    prefsPanelOpen.value = false;
     cancelRotTween(true);        // ať úhel nevisí mezi polohami
   }
 }
@@ -2764,30 +2815,49 @@ async function savePageViewAsDefault() {
   showToast('Výchozí zobrazení stránky ' + (page + 1) + ' uloženo');
 }
 // Zruší zvláštní nastavení této stránky → zpět na globální / fit
-async function clearPageView() {
-  const page = currentPage.value;
-  // Nejdřív zrušíme nejspecifičtější uložené zobrazení. Když stránka žádné
-  // nemá, maže se GLOBÁLNÍ preference skladby (dřív tu možnost nebylo —
-  // tlačítko existovalo, ale smazalo jen stránku, takže globál zůstal).
-  if (pageViews.has(page)) {
-    pageViews.delete(page);
-    await dbDeletePageView(song.id, page);
-    showToast('Zobrazení stránky zrušeno');
-  } else if (songView.value) {
-    songView.value = null;
-    songZoom.value = 1.0;
-    hasSavedZoom.value = false;
-    await dbDeleteSongView(song.id);
-    showToast('Výchozí zobrazení skladby vynulováno');
-  } else {
-    return;
-  }
+// Pomocná cesta po jakékoli změně preferencí: zahodit cache (mění se rám,
+// zoom i rozměry) a překreslit podle nového stavu.
+async function afterPrefsChange(msg) {
   cached.clear();
   preRendered.clear();
   renderPromises.clear();
   await applyPageView();
   updatePageViewFlag();
   await renderCurrent();
+  if (msg) showToast(msg);
+}
+// Samostatné mazání pro každou formu preference (menu Zobrazení).
+async function deletePageView() {
+  const page = currentPage.value;
+  if (!pageViews.has(page)) return;
+  pageViews.delete(page);
+  await dbDeletePageView(song.id, page);
+  await afterPrefsChange('Zobrazení stránky smazáno');
+}
+async function deleteSongView() {
+  if (!songView.value) return;
+  songView.value = null;
+  songZoom.value = 1.0;
+  hasSavedZoom.value = false;
+  await dbDeleteSongView(song.id);
+  await afterPrefsChange('Výchozí zobrazení skladby smazáno');
+}
+// Zruší jen rám (ořez) u aktuální stránky, ostatní uložené hodnoty nechá.
+async function clearPageFrame() {
+  const page = currentPage.value;
+  const pv = pageViews.get(page);
+  if (!pv || pv.frame == null) return;
+  const rest = { ...pv };
+  delete rest.frame;
+  const hasOther = Object.keys(rest).some(k => !['songId', 'page'].includes(k));
+  if (hasOther) {
+    pageViews.set(page, rest);
+    await dbSavePageView(rest);
+  } else {
+    pageViews.delete(page);
+    await dbDeletePageView(song.id, page);
+  }
+  await afterPrefsChange('Rám zrušen — celá stránka');
 }
 // Otočení stránky o delta stupňů (kladné = vpravo) — z TLAČÍTEK.
 // Rotace je ČISTĚ CSS záležitost (bitmapa je vždy neotočená), takže velký skok
@@ -3780,6 +3850,7 @@ function normDeg(v) {
 function closeGesturePanels() {
   zoomPanelOpen.value = false;
   rotPanelOpen.value = false;
+  prefsPanelOpen.value = false;
 }
 
 // Tap: okraje → listování (jen mimo anotaci, tlačítka, lištu a formuláře).
@@ -3810,7 +3881,7 @@ function onTap(e) {
 // --- Anotace ---
 function toggleAnnot() {
   annotMode.value = !annotMode.value;
-  if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; } // jiné panely zavřít
+  if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false; } // jiné panely zavřít
   // vypnutí řeší watch na annotMode níže (pokrývá i cesty, které by na endEdit zapomněly)
 }
 
@@ -5632,6 +5703,26 @@ async function deleteBookmark(b) {
    breakpoint 620 px výše, tady zůstává jen skrytí úhlu u rotace.) */
 
 /* Panel zvětšení — otevírá se z tlačítka s procenty, kotví se POD lištu */
+.prefs-panel {
+  flex-direction: column; align-items: stretch; gap: 10px;
+  width: 272px; max-width: 92vw; border-radius: 18px; padding: 10px 12px;
+}
+.prefs-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.prefs-title { font-weight: 700; font-size: 0.95rem; }
+.prefs-group {
+  display: flex; flex-direction: column; gap: 8px;
+  border-top: 1px solid var(--border); padding-top: 10px;
+}
+.prefs-group-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 0.85rem; color: var(--text);
+}
+.prefs-state { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.55; }
+.prefs-state.on { color: var(--accent); opacity: 1; }
+.prefs-group-actions { display: flex; gap: 8px; align-items: center; }
+.prefs-group-actions .zp-btn.wide { flex: 1 1 auto; width: auto; height: 42px; border-radius: 12px; }
+.zp-btn.danger { color: #e0836f; border-color: rgba(224, 131, 111, 0.45); }
+.zp-btn:disabled { opacity: 0.3; }
 .zoom-panel {
   position: absolute; top: calc(var(--topbar-h, 96px) + 6px); left: 50%;
   /* Centrování i posun přetažením v jednom transformu — posun drží
