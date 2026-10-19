@@ -415,18 +415,19 @@ export function analyzeContent(rgba, w, h) {
     // do něj zasahoval text („piano forte“), rámeček se zastaví kousek před
     // ním — nikdy neprostřed písmene.
     const padPx = Math.max(2, Math.round(w * 0.012));
-    const limit = Math.round(w * 0.06);
-    const gapTo = (fromX, dir) => {
-      for (let d = 1; d <= limit; d++) {
-        const x = fromX + dir * d;
-        if (x < 0 || x >= w) return d;
-        for (let y = 0; y < h; y++) if (ink[y * w + x]) return d - 1;
-      }
-      return padPx;
+    // Značky těsně u osnov (názvy hlasů „S.“, „Organ“, dynamika) patří do
+    // výřezu CELÉ — dřív se řezalo doprostřed slova (Jan: uříznuté „Organ“).
+    // Hledá se jen do 5 % šířky od konce osnov, aby text z okraje stránky
+    // (např. „piano forte“) noty zbytečně neposouval.
+    const near = Math.round(w * 0.05);
+    const colHasInk = (x) => {
+      for (let y = 0; y < h; y++) if (ink[y * w + x]) return true;
+      return false;
     };
-    const lp = Math.min(padPx, Math.max(1, gapTo(hx0, -1)));
-    const rp = Math.min(padPx, Math.max(1, gapTo(hx1, +1)));
-    staffX = { x0: (hx0 - lp) / w, x1: (hx1 + 1 + rp) / w };
+    let nx0 = hx0, nx1 = hx1 + 1;
+    for (let x = Math.max(0, hx0 - near); x < hx0; x++) if (colHasInk(x)) { nx0 = x; break; }
+    for (let x = Math.min(w - 1, hx1 + near); x > hx1; x--) if (colHasInk(x)) { nx1 = x + 1; break; }
+    staffX = { x0: (nx0 - padPx) / w, x1: (nx1 + padPx) / w };
   }
 
   const padX = 0.012, padY = 0.025;

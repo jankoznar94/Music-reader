@@ -2137,6 +2137,8 @@ async function getPageCrop(pageIdx) {
       sctx.drawImage(cv, 0, 0, w, h);
       const data = sctx.getImageData(0, 0, w, h).data;
       const res = analyzeContent(data, w, h);
+      window.__crops = window.__crops || {};
+      window.__crops[key] = { crop: res.crop, staff: res.staff, ink: res.ink };
       return res.ok ? res.crop : { x: 0, y: 0, w: 1, h: 1 };
     } catch (e) {
       console.warn('[auto-ram] detekce selhala', e);
