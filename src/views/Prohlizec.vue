@@ -5966,7 +5966,11 @@ async function deleteBookmark(b) {
    Okrajové tap zóny jsou v anotaci vypnuté (kraj patří psaní poznámek),
    takže listování obstarají tahle dvě tlačítka. Jen v anotaci. */
 .annot-nav {
-  position: absolute; left: 0; right: 0; bottom: 14px;
+  /* FIXED, ne absolute: kotví se k OBRAZOVCE, ne ke čtecí ploše. Na telefonu
+     se tím tlačítka nikdy nedostanou pod spodní hranu (Jan: „mimo obrazovku,
+     příliš nízko“). `--sab` drží odstup od systémové lišty a 56 px je nad
+     lištou záložek, která sedí u spodní hrany. */
+  position: fixed; left: 0; right: 0; bottom: calc(56px + var(--sab));
   display: flex; justify-content: space-between;
   padding: 0 14px; z-index: 31; pointer-events: none;
 }

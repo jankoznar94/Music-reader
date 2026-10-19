@@ -397,14 +397,15 @@ export function analyzeContent(rgba, w, h) {
   const halfH = Math.max(0.05, (rawY1 - rawY0) / 2 + padY);
   let x0 = cx - halfW, x1 = cx + halfW;
   let y0 = cy - halfH, y1 = cy + halfH;
-  // Když výřez přeteče okraj stránky, posunout ho (ne zmenšit) — obsah
-  // zůstane uprostřed a jen se dorovná k okraji.
-  if (x0 < 0) { x1 -= x0; x0 = 0; }
-  if (x1 > 1) { x0 -= (x1 - 1); x1 = 1; }
-  if (y0 < 0) { y1 -= y0; y0 = 0; }
-  if (y1 > 1) { y0 -= (y1 - 1); y1 = 1; }
-  x0 = Math.max(0, x0); y0 = Math.max(0, y0);
-  x1 = Math.min(1, x1); y1 = Math.min(1, y1);
+  // Rámeček smí přesáhnout okraj stránky jen o PADDING. Dřív se při přetečení
+  // POSOUVAL, aby zůstal celý na papíře — jenže tím se na jedné straně okraj
+  // přidal a na druhé zmizel (dole pak nejnižší basové noty seděly na hraně,
+  // nahoře zbylo 20 px). Rovnoměrné okraje jsou důležitější; plocha mimo
+  // stránku je bílá, takže to vypadá jako papír s okrajem.
+  x0 = Math.max(-padX, x0);
+  x1 = Math.min(1 + padX, x1);
+  y0 = Math.max(-padY, y0);
+  y1 = Math.min(1 + padY, y1);
 
   return {
     crop: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 },
