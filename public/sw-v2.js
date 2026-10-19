@@ -10,24 +10,16 @@ if (workbox) {
   console.error('Workbox nebylo načteno.');
 }
 
-// Nová verze se ujme kontroly OKAMŽITĚ — jinak appka po nasazení běží
-// z staré cache a uživatel vidí staré chování (Jan: „stále to ořezává“).
-self.addEventListener('install', () => {
-  self.skipWaiting();
-});
+// ŽÁDNÉ automatické přebírání kontroly: nová verze SW se nesmí ujmout pod
+// běžící stránkou (appka by se pod rukama obnovila / rozbily by se lazy chunky).
+// Aktualizaci provádí výhradně tlačítko „Aktualizovat“ (src/update.js):
+// zruší registraci SW i cache a načte appku znovu ze sítě.
 
-// Reakce na zprávu "SKIP_WAITING" od registerSW() — umožní nové verzi
-// převzít kontrolu okamžitě (skipWaiting + clients.claim), takže reload
-// z banneru provede okamžitý přechod na novou verzi.
+// Reakce na zprávu "SKIP_WAITING" — ponecháno pro případ ručního přepnutí.
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
-});
-
-// Jakmile nový SW převezme kontrolu (po skipWaiting), okamžitě ovládá stránky.
-self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
 });
 
 // Veškerá data aplikace (PDF soubory + anotace) žijí v IndexedDB — žádná síť.
