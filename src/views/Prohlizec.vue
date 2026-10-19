@@ -59,6 +59,13 @@
         <button class="tb-btn sm" :class="{ on: hasSavedPageView }" @click="savePageViewAsDefault" title="Uložit jako výchozí jen pro tuto stránku (má přednost)">
           <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedPageView ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4z"/><path d="M15 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
         </button>
+        <!-- Rám = RUČNÍ ořez okrajů pro TOUTO stránku. Žádný automatický
+             režim: uživatel si ho vědomě zapne/vypne a stav se uloží ke
+             stránce. Krajní noty pak nejsou pod pruhy pro listování. -->
+        <button class="tb-btn sm" :class="{ on: pageFramed }" @click="applyFrameToPage"
+                title="Rám: oříznout okraje a vycentrovat tuto stránku">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v15h15"/><path d="M3 6h15v15"/></svg>
+        </button>
         <button class="tb-btn sm" :class="{ on: hasSavedZoom }" @click="saveZoomAsDefault" title="Uložit jako výchozí pro celou skladbu">
           <svg width="18" height="18" viewBox="0 0 24 24" :fill="hasSavedZoom ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.6 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z"/></svg>
         </button>
@@ -105,11 +112,6 @@
       <span class="zp-val">{{ Math.round(zoom * 100) }} %</span>
       <button class="zp-btn" @click="zoomIn" title="Přiblížit">+</button>
       <button class="zp-btn num wide" @click="zoomFit" title="Zpět na 100 % (fit na šířku)">100 %</button>
-      <span class="zp-sep" />
-      <!-- Automatický rám: ořízne prázdné okraje podle prvního černého obsahu
-           a vycentruje noty; obsah se vejde VNITŘ pruhů pro listování. -->
-      <button class="zp-btn num wide" :class="{ on: autoFrame }" @click="toggleAutoFrame"
-              title="Automaticky oříznout okraje a vycentrovat noty">Rám</button>
       <span class="zp-sep" />
       <!-- Zoom dolů pod 100 % (Jan: „abych mohl oddálit stránku, když je
            originál moc velký") — meze jsou v ZOOM_MIN/ZOOM_MAX. -->
@@ -1984,34 +1986,30 @@ const refH = ref(1100);
 const cropBox = ref({ x: 0, y: 0, w: 800, h: 1100 });
 const viewBoxStr = computed(() =>
   `${cropBox.value.x} ${cropBox.value.y} ${cropBox.value.w} ${cropBox.value.h}`);
-// Výchozí stav je VYPNUTO (Jan: „nedávej to zatím defaultně, jen jako
-// tlačítko“) — uživatel si rám zapne vědomě a volba se pamatuje.
-// Nový klíč (v2): stará hodnota z testování se ignoruje, aby se rám po
-// aktualizaci neobjevil „automaticky“.
-const autoFrame = ref(localStorage.getItem('noty-auto-frame-v2') === '1');
+// Rám je RUČNÍ akce: žádný automatický režim. Stav se ukládá k jednotlivé
+// stránce (`frame` v uloženém zobrazení stránky), takže se sám nikdy nezapne.
+const autoFrame = ref(false);
 const cropCache = new Map();   // `${songId}:${pageIdx}` -> {x,y,w,h} v poměrech 0..1
+const pageFramed = ref(false); // je AKTUÁLNÍ stránka právě oříznutá?
 function clearCropCache() { cropCache.clear(); }
-function toggleAutoFrame() {
-  autoFrame.value = !autoFrame.value;
-  localStorage.setItem('noty-auto-frame-v2', autoFrame.value ? '1' : '0');
-  clearCropCache();
+
+// Ruční zapnutí/vypnutí rámu pro aktuální stránku. Ukládá se jen příznak
+// `frame`, zoom/posun/rotace stránky zůstávají nedotčené.
+async function applyFrameToPage() {
+  const page = currentPage.value;
+  const enable = !pageFramed.value;
+  const prev = pageViews.get(page) || { songId: song.id, page };
+  const view = { ...prev, songId: song.id, page, frame: enable ? 1 : 0 };
+  pageViews.set(page, view);
+  hasSavedPageView.value = true;
+  await dbSavePageView(view);
   cached.clear();
   preRendered.clear();
   renderPromises.clear();
-  renderCurrent();
-  if (autoFrame.value && pageHasSavedView(currentPage.value)) {
-    showToast('Uložené zobrazení má přednost před rámem');
-  }
+  await renderCurrent();
+  showToast(enable ? 'Rám: stránka oříznuta' : 'Rám: celá stránka');
 }
 
-// Má tahle stránka (nebo celá skladba) uložené zobrazení? Uložená preference
-// je Janovo ruční nastavení, takže má přednost před automatickým rámem.
-function pageHasSavedView(page) {
-  const pv = pageViews.get(page);
-  if (pv && (pv.zoom != null || pv.rot != null || pv.panX != null || pv.panY != null || pv.frame != null)) return true;
-  const v = songView.value;
-  return !!(v && (v.zoom != null || v.rot != null || v.panX != null || v.panY != null || v.frame != null));
-}
 // Jaký rám si přeje uložená preference? Starší uložená zobrazení příznak
 // nemají — byla vytvořena na celé stránce, takže = bez rámu.
 function preferredFrame(page) {
@@ -2030,9 +2028,8 @@ function preferredFrame(page) {
 // se drží v paměti pro každou stránku. Selhání = celá stránka (nic neořezat).
 const ANALYZE_W = 560;
 async function getPageCrop(pageIdx) {
-  // Analýza má smysl, jen když je rám zapnutý nebo si ho přeje uložená
-  // preference; jinak se rovnou vrací celá stránka.
-  if (!autoFrame.value && !pageHasSavedView(pageIdx)) return { x: 0, y: 0, w: 1, h: 1 };
+  // Analýza má smysl jen pro stránky, které si rám přejí (uložený příznak).
+  if (!preferredFrame(pageIdx)) return { x: 0, y: 0, w: 1, h: 1 };
   const key = `${song.id}:${pageIdx}`;
   if (cropCache.has(key)) return cropCache.get(key);
   const job = (async () => {
@@ -2993,6 +2990,7 @@ async function renderCurrent() {
   const wantFrame = preferredFrame(page);
   const framed = wantFrame && !(frac.x <= 0.001 && frac.y <= 0.001 && frac.w >= 0.999 && frac.h >= 0.999);
   frameActive = framed;
+  pageFramed.value = framed;
   const usedFrac = framed ? frac : { x: 0, y: 0, w: 1, h: 1 };
   const geo = pageGeometry(dim, usedFrac, ref, framed ? safeW : availW);
   cropBox.value = geo.box;
@@ -5037,20 +5035,7 @@ function zoomFit() { zoom.value = 1.0; panX.value = 0; panY.value = 0; }
 // KONKRÉTNÍ stránky má přednost před globálním nastavením skladby.
 // Ruční vycentrování zároveň VYPNE automatický rám — jinak by tlačítko
 // „nešlo přemazat“ (stránka by zůstala oříznutá a zbytečně malá).
-function resetView() {
-  // Uložená preference (stránka/skladba) má přednost a nese si vlastní
-  // příznak rámu — pak se do ní nesahá.
-  if (!pageHasSavedView(currentPage.value) && autoFrame.value) {
-    autoFrame.value = false;
-    localStorage.setItem('noty-auto-frame-v2', '0');
-    clearCropCache();
-    cached.clear();
-    preRendered.clear();
-    renderPromises.clear();
-    renderCurrent();
-  }
-  applyPageView();
-}
+function resetView() { applyPageView(); }
 
 // save
 let saveTimer = null;
