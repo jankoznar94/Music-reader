@@ -9,7 +9,10 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'public',
       filename: 'sw-v2.js',
-      registerType: 'prompt',
+      // Registraci děláme sami v main.js (kvůli okamžité aktualizaci a reloadu
+      // po nasazení) — automatická injektáž by přidala druhou registraci.
+      injectRegister: false,
+      registerType: 'autoUpdate',
       workbox: {
         maximumFileSizeToCacheInBytes: 5242880,
         // woff2 = font dynamiky NotyDyn; bez něj by offline režim ukázal rozbité znaky.

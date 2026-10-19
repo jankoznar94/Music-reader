@@ -201,6 +201,11 @@ export async function dbGetSongView(songId) {
   return val === undefined ? null : val;
 }
 
+// Smazání uloženého výchozího zobrazení CELÉ skladby (vynulování preference).
+export function dbDeleteSongView(songId) {
+  return tx('meta', 'readwrite', (s) => s.delete('view:' + songId));
+}
+
 // --- Nastavení zobrazení KONKRÉTNÍ stránky (per skladba + stránka) ---
 // Klíč 'pview:<songId>:<page>' v meta store → { songId, page, zoom, panX, panY, rot, manual }
 // `manual` = uživatel tuhle stránku nastavil ručně. Při vycentrování má přednost

@@ -10,6 +10,12 @@ if (workbox) {
   console.error('Workbox nebylo načteno.');
 }
 
+// Nová verze se ujme kontroly OKAMŽITĚ — jinak appka po nasazení běží
+// z staré cache a uživatel vidí staré chování (Jan: „stále to ořezává“).
+self.addEventListener('install', () => {
+  self.skipWaiting();
+});
+
 // Reakce na zprávu "SKIP_WAITING" od registerSW() — umožní nové verzi
 // převzít kontrolu okamžitě (skipWaiting + clients.claim), takže reload
 // z banneru provede okamžitý přechod na novou verzi.

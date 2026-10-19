@@ -126,7 +126,8 @@
            (Jan: „zůstal tam separátor, i když tam není tlačítko“). -->
       <template v-if="hasSavedPageView || hasSavedZoom">
         <span class="zp-sep" />
-        <button class="zp-btn" @click="clearPageView" title="Smazat uložené nastavení této stránky">
+        <button class="zp-btn" @click="clearPageView"
+                :title="hasSavedPageView ? 'Smazat uložené zobrazení této stránky' : 'Vynulovat výchozí zobrazení celé skladby'">
           <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>
         </button>
       </template>
@@ -1162,7 +1163,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
-import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView } from '../db.js';
+import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView } from '../db.js';
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount } from '../pdf.js';
 import { analyzeContent } from '../contentBounds.js';
 
@@ -2764,12 +2765,29 @@ async function savePageViewAsDefault() {
 }
 // Zruší zvláštní nastavení této stránky → zpět na globální / fit
 async function clearPageView() {
-  pageViews.delete(currentPage.value);
-  await dbDeletePageView(song.id, currentPage.value);
+  const page = currentPage.value;
+  // Nejdřív zrušíme nejspecifičtější uložené zobrazení. Když stránka žádné
+  // nemá, maže se GLOBÁLNÍ preference skladby (dřív tu možnost nebylo —
+  // tlačítko existovalo, ale smazalo jen stránku, takže globál zůstal).
+  if (pageViews.has(page)) {
+    pageViews.delete(page);
+    await dbDeletePageView(song.id, page);
+    showToast('Zobrazení stránky zrušeno');
+  } else if (songView.value) {
+    songView.value = null;
+    songZoom.value = 1.0;
+    hasSavedZoom.value = false;
+    await dbDeleteSongView(song.id);
+    showToast('Výchozí zobrazení skladby vynulováno');
+  } else {
+    return;
+  }
+  cached.clear();
+  preRendered.clear();
+  renderPromises.clear();
   await applyPageView();
   updatePageViewFlag();
   await renderCurrent();
-  showToast('Nastavení stránky zrušeno');
 }
 // Otočení stránky o delta stupňů (kladné = vpravo) — z TLAČÍTEK.
 // Rotace je ČISTĚ CSS záležitost (bitmapa je vždy neotočená), takže velký skok
