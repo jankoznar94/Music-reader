@@ -2,7 +2,7 @@
   <div
     class="viewer"
     ref="viewerEl"
-    :style="{ '--topbar-h': barPad + 'px', '--edge-w': edgeW + 'px' }"
+    :style="{ '--topbar-h': barPad + 'px', '--page-pad': 'calc(8px + env(safe-area-inset-top, 0px))', '--edge-w': edgeW + 'px' }"
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
     @touchend.passive="onTouchEnd"
@@ -3068,8 +3068,10 @@ function computeFit() {
   // lišty. Odečteme ho, aby se noty vešly POD lištu a nepod ni nezajely.
   const el = pageAreaEl.value || viewerEl.value;
   if (el) {
-    const barH = barPad.value || 0;
-    availH = Math.max(200, el.clientHeight - barH - 12);
+    // Lišta je overlay → do fitu nevstupuje. Odečítá se jen malý stálý
+    // odstup (stejný jako --page-pad), takže ořez využije celou výšku.
+    const pagePad = 8;
+    availH = Math.max(200, el.clientHeight - pagePad - 12);
     availW = Math.max(200, el.clientWidth - 12);
   }
 }
@@ -3950,13 +3952,12 @@ function toggleTopBar() {
     pagesPanelOpen.value = false; pagesListOpen.value = false; sliderOpen.value = false;
     jumpMode.value = false; bookmarkMode.value = false; endEdit();
   }
-  nextTick(() => { computeFit(); renderCurrent(); });
+  // Žádné přepočítávání fitu: lišta je overlay, stránka se nesmí pohnout.
 }
 function showTopBar() {
   if (!barHidden.value) return;
   barHidden.value = false;
   try { localStorage.setItem('topbarHidden', '0'); } catch (e) {}
-  nextTick(() => { computeFit(); renderCurrent(); });
 }
 
 // --- Anotace ---
@@ -5905,9 +5906,11 @@ async function deleteBookmark(b) {
 /* Oblast stránky pod lištou — z její velikosti se počítá fit not */
 .page-area {
   flex: 1 1 auto; min-height: 0; position: relative;
-  /* Lišta je absolutní overlay (neposouvá dokument), ale noty pod ni zajet nesmí —
-     plocha si proto drží odsazení přesně o její výšku. */
-  padding-top: var(--topbar-h, 96px);
+  /* Lišta je jen OVERLAY — stránku nikdy neposouvá (Jan: „lišta se musí
+     objevit jako overlay, nesmí posunout zbytek stránky“). Plocha má proto
+     stálý malý odstup + safe-area, ať noty nelezou pod notche; když se lišta
+     ukáže, prostě se překryje přes horní pruh not. */
+  padding-top: var(--page-pad, 8px);
   display: flex; align-items: center; justify-content: center;
   /* overflow: hidden má DVA důvody:
      1) Stránka nesmí přetéct nad horní lištu ani pod displej. V krajině je

@@ -159,8 +159,9 @@ async def scenario(h, chk, pdf, label):
     chk(f'{label}: rám se zapnul', not s['vb'].startswith('0 0'), s['vb'])
     chk(f'{label}: canvas není širší než čtecí plocha', s['cw'] <= s['vw'],
         f"canvas {s['cw']} vs viewer {s['vw']}")
-    chk(f'{label}: canvas nezačíná nad lištou', s['ctop'] >= s['barBottom'] - 1,
-        f"top {s['ctop']} vs bar {s['barBottom']}")
+    # Horní lišta je OVERLAY — canvas pod ni zajet MŮŽE (nesmí jen pod okraj).
+    chk(f'{label}: canvas nezačíná nad horním okrajem', s['ctop'] >= 7,
+        f"top {s['ctop']}")
     chk(f'{label}: canvas se vejde na výšku', s['ctop'] + s['ch'] <= s['win']['h'] + 1,
         f"bottom {s['ctop'] + s['ch']} vs win {s['win']['h']}")
     chk(f'{label}: canvas se vejde na šířku (vlevo)', s['cleft'] >= -1, str(s['cleft']))

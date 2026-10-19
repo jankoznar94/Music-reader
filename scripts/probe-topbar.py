@@ -61,8 +61,10 @@ async def main():
         print('PO TAPU:', s)
         chk('tap na střed lištu ukázal', not s['hidden'], str(s))
         chk('lišta je vidět nahoře', s['barBottom'] > 0, f"bottom {s['barBottom']}")
-        chk('noty ustoupily níž pod lištu', s['canvasTop'] > hidden_canvas_top,
+        chk('lišta je OVERLAY: stránka se nepohnula (top)', s['canvasTop'] == hidden_canvas_top,
             f"canvasTop {hidden_canvas_top} -> {s['canvasTop']}")
+        chk('lišta je OVERLAY: stránka se nezměnila (výška)', s['canvasH'] == hidden_canvas_h,
+            f"{hidden_canvas_h} -> {s['canvasH']}")
         chk('horní okraj not je pod lištou', s['canvasTop'] >= s['barBottom'] - 1,
             f"canvas {s['canvasTop']} vs bar {s['barBottom']}")
 
@@ -71,7 +73,7 @@ async def main():
         await asyncio.sleep(1.0)
         s = await h.ev(STATE)
         chk('další tap lištu schoval', s['hidden'], str(s))
-        chk('se schovanou lištou jsou noty výš', s['canvasTop'] <= hidden_canvas_top,
+        chk('po schování se stránka taky nehnula', s['canvasTop'] == hidden_canvas_top,
             f"canvasTop {s['canvasTop']} vs {hidden_canvas_top}")
 
         # tap na okraj nesmí lištu přepnout (listuje)
