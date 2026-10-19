@@ -104,8 +104,7 @@ function findLinePeaks(proj, minLen) {
   return peaks;
 }
 
-function groupStaves(peaks, h) {
-  // Pětička linek se stejným rozestupem (tolerance 45 %).
+function groupStaves(peaks, h) {  // Pětička linek se stejným rozestupem (tolerance 45 %).
   const groups = [];
   const staffRows = new Uint8Array(h + 2);
   let spacingSum = 0, spacingN = 0;
@@ -123,6 +122,111 @@ function groupStaves(peaks, h) {
     i += 3; // další pětička začíná až za touhle
   }
   return { groups, staffRows, spacing: spacingN ? spacingSum / spacingN : 0 };
+}
+
+/**
+ * Smaže z masky tenké dlouhé komponenty (sken hrany stránky, čára pera)
+ * a osamocená smítka. Osnova s notami zůstane, protože její obal je „tlustý“.
+ */
+
+/**
+ * Smaže „plné“ pruhy při okraji stránky — typicky naskenovaná hrana, která
+ * je silná (5–15 px) a táhne se podél celé strany. Rozhoduje hustota v pásu
+ * u okraje: takový sloupec/řádek je z velké části černý (≥ 50 %), což se
+ * u not nikdy nestane (noty zabírají jen zlomek výšky sloupce).
+ */
+function suppressEdgeBands(ink, w, h) {
+  const eraseCols = new Uint8Array(w);
+  const eraseRows = new Uint8Array(h);
+  const fracCol = new Float32Array(w);
+  const fracRow = new Float32Array(h);
+  for (let x = 0; x < w; x++) {
+    let c = 0;
+    for (let y = 0; y < h; y++) if (ink[y * w + x]) c++;
+    fracCol[x] = c / h;
+  }
+  for (let y = 0; y < h; y++) {
+    let c = 0;
+    const base = y * w;
+    for (let x = 0; x < w; x++) if (ink[base + x]) c++;
+    fracRow[y] = c / w;
+  }
+  const markRuns = (frac, dim, edgeZone, out) => {
+    const maxRun = Math.round(dim * 0.10);
+    let start = -1;
+    for (let i = 0; i <= dim; i++) {
+      const on = i < dim && frac[i] >= 0.5;
+      if (on && start < 0) start = i;
+      if ((!on || i === dim) && start >= 0) {
+        const end = i; // exclusive
+        const inEdge = start <= edgeZone || end >= dim - edgeZone;
+        if (inEdge && end - start <= maxRun) {
+          for (let k = start; k < end; k++) out[k] = 1;
+        }
+        start = -1;
+      }
+    }
+  };
+  markRuns(fracCol, w, Math.round(w * 0.08), eraseCols);
+  markRuns(fracRow, h, Math.round(h * 0.08), eraseRows);
+  let any = false;
+  for (let i = 0; i < w; i++) if (eraseCols[i]) { any = true; break; }
+  if (!any) for (let i = 0; i < h; i++) if (eraseRows[i]) { any = true; break; }
+  if (!any) return;
+  for (let y = 0; y < h; y++) {
+    if (eraseRows[y]) {
+      const base = y * w;
+      for (let x = 0; x < w; x++) ink[base + x] = 0;
+      continue;
+    }
+    for (let x = 0; x < w; x++) if (ink[y * w + x] && eraseCols[x]) ink[y * w + x] = 0;
+  }
+}
+
+function suppressThinComponents(ink, w, h) {
+  const seen = new Uint8Array(w * h);
+  const stack = new Int32Array(w * h);
+  const pixels = [];
+  const maxThin = Math.max(3, Math.round(Math.min(w, h) * 0.025));
+  const minLong = Math.min(w, h) * 0.30;
+  const edgeX = w * 0.05, edgeY = h * 0.05;
+  for (let start = 0; start < ink.length; start++) {
+    if (!ink[start] || seen[start]) continue;
+    let sp = 0;
+    stack[sp++] = start;
+    seen[start] = 1;
+    pixels.length = 0;
+    let minX = w, maxX = -1, minY = h, maxY = -1;
+    while (sp) {
+      const i = stack[--sp];
+      pixels.push(i);
+      const x = i % w, y = (i / w) | 0;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          const j = yy * w + xx;
+          if (ink[j] && !seen[j]) { seen[j] = 1; stack[sp++] = j; }
+        }
+      }
+    }
+    const bw = maxX - minX + 1, bh = maxY - minY + 1;
+    const long = Math.max(bw, bh), short = Math.min(bw, bh);
+    // Tenká a dlouhá čára, která leží U OKRAJE stránky = sken hrana / pero.
+    // Osnova je sice taky tenká a dlouhá, ale leží uvnitř stránky, ne v pásu
+    // prvních/povních 5 % — proto se nesmaže.
+    const nearEdge = minX <= edgeX || maxX >= w - edgeX || minY <= edgeY || maxY >= h - edgeY;
+    const lineLike = nearEdge && short <= maxThin && long >= short * 20 && long >= minLong;
+    if (lineLike || pixels.length <= 3) {
+      for (const i of pixels) ink[i] = 0;
+    }
+  }
 }
 
 /**
@@ -195,6 +299,15 @@ export function analyzeContent(rgba, w, h) {
       }
     }
   }
+
+  // --- Komponenty: tenké dlouhé čáry (sken hrany, pero) ---------------------
+  // Bloková mapa níž je na TLUSTOU naskenovanou hranu krátká: pás 5–10 px
+  // široký podél celé strany projde jako „obsah“. Spojité komponenty to
+  // rozhodnou spolehlivě: hrana má poměr stran (délka / tloušťka) v desítkách,
+  // kdežto osnova s notami je mnohem „tlustší“ (pět linek + noty + taktové
+  // čáry tvoří jeden kompaktní celek).
+  suppressEdgeBands(ink, w, h);
+  suppressThinComponents(ink, w, h);
 
   // --- Bloková mapa obsahu ---
   const bw = Math.ceil(w / BLOCK), bh = Math.ceil(h / BLOCK);

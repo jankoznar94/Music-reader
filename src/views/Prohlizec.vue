@@ -2651,6 +2651,9 @@ let availW = 800, availH = 1100;
 // Šířka, do které se smí kreslit obsah: plocha mínus pruhy pro listování
 // (jinak by krajní noty zmizely pod klikací zónou) mínus malá rezerva.
 let safeW = 800;
+// Je pro aktuální stránku rám opravdu aktivní? (vypnutý rám = chovat se
+// přesně jako dřív, včetně plné šířky — jinak by se stránka zbytečně zmenšila)
+let frameActive = false;
 
 // Rozměry, jak stránka PO OTOČENÍ zabere na obrazovce (pro fit a centrování)
 function rotAvail(baseW, baseH, deg) {
@@ -2665,9 +2668,12 @@ function rotAvail(baseW, baseH, deg) {
 // `zoom` zůstává násobitel nad tímhle měřítkem (1 = přesně tohle).
 function fitScale(baseW, baseH, deg) {
   if (!baseW || !baseH) return 1;
-  if (!deg) return safeW / baseW;
+  // Bez rámu se obsah vejde do CELÉ šířky jako dřív; s rámem jen do zóny
+  // mezi pruhy pro listování.
+  const targetW = frameActive ? safeW : availW;
+  if (!deg) return targetW / baseW;
   const r = rotAvail(baseW, baseH, deg);
-  return Math.min(safeW / r.w, availH / r.h) * 0.985;
+  return Math.min(targetW / r.w, availH / r.h) * 0.985;
 }
 
 // Uložené výchozí zobrazení skladby (globální) — zoom, posun i rotace
@@ -2919,12 +2925,12 @@ function pageReference(dim) {
 }
 // Geometrie zobrazení stránky: výřez obsahu, jeho velikost na displeji
 // a tentýž výřez v PDF bodech pro render.
-function pageGeometry(dim, frac, ref) {
+function pageGeometry(dim, frac, ref, targetW) {
   const box = {
     x: frac.x * ref.w, y: frac.y * ref.h,
     w: frac.w * ref.w, h: frac.h * ref.h,
   };
-  const scale = safeW / box.w;
+  const scale = targetW / box.w;
   return {
     frac, box,
     w: Math.max(1, Math.round(box.w * scale)),
@@ -2952,12 +2958,18 @@ async function renderCurrent() {
   refH.value = ref.h;
   const frac = await getPageCrop(page);
   if (myToken !== renderToken) return;
-  const geo = pageGeometry(dim, frac, ref);
+  // Rám je aktivní jen když je zapnutý A detekce našla skutečný výřez.
+  const framed = autoFrame.value && !(frac.x <= 0.001 && frac.y <= 0.001 && frac.w >= 0.999 && frac.h >= 0.999);
+  frameActive = framed;
+  const geo = pageGeometry(dim, frac, ref, framed ? safeW : availW);
   cropBox.value = geo.box;
   // fitFor počítá měřítko bitmapy vůči těmhle rozměrům (referenční px).
   baseDims.value = { w: geo.box.w, h: geo.box.h };
   cssW.value = geo.w;
   cssH.value = geo.h;
+  // Měřítko po rotaci musí odpovídat právě zjištěnému rámu (fitScale se
+  // opírá o `frameActive`).
+  liveFit.value = fitTargetFor(rot.value);
   await nextTick();
   if (myToken !== renderToken) return;
   // Render vždy do offscreen canvasu, pak zkopírovat na viditelný.
@@ -3005,7 +3017,8 @@ async function prefetchSiblings(center) {
     const dim = await getPageWidthHeight(song, i + 1);
     const ref = pageReference(dim);
     const frac = await getPageCrop(i);
-    const geo = pageGeometry(dim, frac, ref);
+    const framed = autoFrame.value && !(frac.x <= 0.001 && frac.y <= 0.001 && frac.w >= 0.999 && frac.h >= 0.999);
+    const geo = pageGeometry(dim, frac, ref, framed ? safeW : availW);
     const off = getOrCreateCacheCanvas(key, geo.w, geo.h);
     const p = renderPageRegion(song, i + 1, off, geo.cropPt, geo.w, geo.h).then(() => {
       preRendered.add(key);
@@ -4988,7 +5001,20 @@ function zoomOutBig() { zoom.value = clampZoom(zoom.value - 0.10); }
 function zoomFit() { zoom.value = 1.0; panX.value = 0; panY.value = 0; }
 // Vycentrovat = vrátit se na uložené výchozí zobrazení; uložené nastavení
 // KONKRÉTNÍ stránky má přednost před globálním nastavením skladby.
-function resetView() { applyPageView(); }
+// Ruční vycentrování zároveň VYPNE automatický rám — jinak by tlačítko
+// „nešlo přemazat“ (stránka by zůstala oříznutá a zbytečně malá).
+function resetView() {
+  if (autoFrame.value) {
+    autoFrame.value = false;
+    localStorage.setItem('noty-auto-frame', '0');
+    clearCropCache();
+    cached.clear();
+    preRendered.clear();
+    renderPromises.clear();
+    renderCurrent();
+  }
+  applyPageView();
+}
 
 // save
 let saveTimer = null;
