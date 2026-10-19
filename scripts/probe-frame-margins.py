@@ -25,7 +25,7 @@ def make_pdf(path, y0=10, y1=832, pages=1):
     # horní a dolní obsah až u okraje stránky (krátké tahy, ne dlouhá linka —
     # dlouhá linka u okraje se správně považuje za sken hrany)
     lines.append("200 795 40 7 re f")     # nahoře (číslo stránky)
-    lines.append("200 3 40 7 re f")       # dole (nízké basové noty až u hrany)
+    lines.append("300 4 8 5 re f")        # dole: JEDINÁ osamocená hluboká nota
     stream = "\n".join(lines)
     objs = ["<< /Type /Catalog /Pages 2 0 R >>",
             f"<< /Type /Pages /Count {pages} /Kids [{' '.join(f'{3+i} 0 R' for i in range(pages))}] >>"]
@@ -99,6 +99,8 @@ async def main():
         chk('rám se zapnul', not s['vb'].startswith('0 0'), s['vb'])
         top, bottom = s['topPx'], s['bottomPx']
         chk('dole je aspoň 8 px místa', bottom >= 8, f"{bottom:.1f} px")
+        chk('osamocená hluboká nota není uříznutá (je v canvasu)',
+            bottom <= 45, f"bottom {bottom:.1f} px (kdyby chyběla, je tam >150)")
         chk('nahoře i dole stejně (rozdíl < 25 %)',
             top > 0 and abs(top - bottom) / max(top, bottom) < 0.25,
             f"top {top:.1f} bottom {bottom:.1f}")

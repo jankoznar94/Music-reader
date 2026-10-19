@@ -3837,7 +3837,8 @@ function onTouchEnd(e) {
   // POZOR: Jan swipe pro listování ZÁMĚRNĚ NECHCE — listuje se jen klepnutím
   // na okraj. Tenhle kus je tu historicky; nesmí ale dělat nic jiného než
   // přesun o stránku, aby se po dotyku na okraj nechovalo nic neočekávaně.
-  if (st.edge && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
+  // V ANOTACI se nelistuje vůbec — kraj patří psaní (listuje se tlačítky).
+  if (!wasAnnot && st.edge && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
     if (dx < 0) nextPage(); // swipe vlevo → další stránka/nota
     else prevPage();        // swipe vpravo → předchozí stránka/nota
   }
@@ -4076,13 +4077,10 @@ function onLayerDown(e) {
   // Listování prstem v anotaci řeší touch obsluha na .viewer (onTouchStart/End),
   // která pozná, že pero zrovna kreslí, přes _activePointerId.
   if (penOnly.value && e.pointerType !== 'pen') { _logEv('  down: penOnly blok'); return; }
-  // Klepnutí PRSTEM v okrajovém pruhu patří LISTOVÁNÍ, ne kreslení — i s
-  // vypnutým „jen pero“. Jinak se prst v pruhu chytí jako tah, zapíše
-  // `_lastTouchStrokeAt` a jeho 800ms guard okrajové klepnutí zahodí
-  // (Jan: „Navíc listování bez módu ‚jen pero‘ stejně nefunguje“).
-  // Listování samo řeší onTouchEnd (`annotEdgeTap`) — prst, který v pruhu
-  // ZAČAL i SKONČIL, otočí stránku.
-  if (e.pointerType === 'touch' && inEdgeZone(e.clientX)) { _logEv('  down: okraj = listování'); return; }
+  // V ANOTACI se přes okraje LISTUJE TLAČÍTKY, ne klepnutím — kraj tedy patří
+  // psaní poznámek i pro prst (Jan: „v anotačním režimu nejsou vidět klikací
+  // oblasti, ale poznámky tam psát nejdou“). Dřív se dotyk v okrajovém pruhu
+  // zahodil bez toho, aby cokoli udělal.
   // Zaseknutý pointer z tahu, který NIKDY nedostal pointerup (pero odjelo
   // z dosahu tabletu), se pouští UŽ TADY a KRÁTKÝM oknem. `blockedNav()` volá
   // _staleGuard() s dlouhým PEN_GUARD_MS, takže do prvního dotyku prstu byl

@@ -360,33 +360,26 @@ export function analyzeContent(rgba, w, h) {
   }
 
   // Okraje: nechat malý odstup, ať noty nejsou nalepené na hranu displeje.
-  // Bloková mřížka je hrubá (4 px), takže obalovou křivku doladíme přesnými
-  // extrémy inkoustu UVNITŘ blokového obalu — jen v místech, kde je inkoustu
-  // dost (řádek/sloupec ≥ 2 px), aby kraj nevychýlil osamocený smítko.
-  const wx0 = minBx * BLOCK, wx1 = Math.min(w, (maxBx + 1) * BLOCK);
-  const wy0 = minBy * BLOCK, wy1 = Math.min(h, (maxBy + 1) * BLOCK);
-  const rowMin = Math.max(2, Math.round(w * 0.0015));
-  const colMin = Math.max(2, Math.round(h * 0.0015));
-  let ex0 = wx0, ex1 = wx1 - 1, ey0 = wy0, ey1 = wy1 - 1;
-  for (let x = wx0; x < wx1; x++) {
-    let c = 0;
-    for (let y = wy0; y < wy1; y++) if (ink[y * w + x]) c++;
-    if (c >= colMin) { ex0 = x; break; }
+  // Obalová křivka se bere z CELÉ masky inkoustu (po odstranění sken hran
+  // a smítek), NE z blokové mřížky: ta zahazovala osamocené bloky, takže
+  // jediná hluboká basová nota daleko pod osnovou vypadla a rámeček ji
+  // uřízl (Jan: „žádné noty nesmí být oříznuté, nikdy“). Maska je po
+  // suppressEdgeBands/suppressThinComponents už očištěná, takže obsahuje
+  // jen skutečný obsah stránky.
+  let ex0 = w, ex1 = -1, ey0 = h, ey1 = -1;
+  for (let y = 0; y < h; y++) {
+    const base = y * w;
+    for (let x = 0; x < w; x++) {
+      if (!ink[base + x]) continue;
+      if (x < ex0) ex0 = x;
+      if (x > ex1) ex1 = x;
+      if (y < ey0) ey0 = y;
+      if (y > ey1) ey1 = y;
+    }
   }
-  for (let x = wx1 - 1; x >= wx0; x--) {
-    let c = 0;
-    for (let y = wy0; y < wy1; y++) if (ink[y * w + x]) c++;
-    if (c >= colMin) { ex1 = x; break; }
-  }
-  for (let y = wy0; y < wy1; y++) {
-    let c = 0;
-    for (let x = wx0; x < wx1; x++) if (ink[y * w + x]) c++;
-    if (c >= rowMin) { ey0 = y; break; }
-  }
-  for (let y = wy1 - 1; y >= wy0; y--) {
-    let c = 0;
-    for (let x = wx0; x < wx1; x++) if (ink[y * w + x]) c++;
-    if (c >= rowMin) { ey1 = y; break; }
+  if (ex1 < 0 || ey1 < 0) {
+    return { crop: { x: 0, y: 0, w: 1, h: 1 }, angle, staff: staffOut, ok: false,
+             ink: inkCount / (w * h) };
   }
 
   const padX = 0.012, padY = 0.02;
