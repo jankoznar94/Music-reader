@@ -418,12 +418,21 @@ export function analyzeContent(rgba, w, h) {
   const rawX0 = ex0 / w, rawX1 = (ex1 + 1) / w;
   let x0, x1;
   if (hx1 > hx0 && (hx1 - hx0) >= w * 0.25) {
-    // Okraj jen o kousek za kraj osnov (nožičky, posuvky, taktová čára).
-    // Levý okraj tak leží PŘED názvem hlasu → text zůstane mimo výřez celý,
-    // nikdy se neřeže uprostřed písmene.
+    // Okraj se posouvá do volného místa, NIKDY přes inkoust: od kraje osnov
+    // doleva/doprava jen dokud jsou sloupce prázdné. Když hned vedle stojí
+    // nápis hlasu („R. Organ“), rámeček se zastaví před ním — žádná půlka
+    // písmene u okraje.
     const padPx = Math.max(2, Math.round(w * 0.012));
-    x0 = (hx0 - padPx) / w;
-    x1 = (hx1 + 1 + padPx) / w;
+    const colClean = (x) => {
+      if (x < 0 || x >= w) return false;
+      for (let y = 0; y < h; y++) if (ink[y * w + x]) return false;
+      return true;
+    };
+    let lx = hx0, rx = hx1 + 1;
+    for (let k = 0; k < padPx && colClean(lx - 1); k++) lx--;
+    for (let k = 0; k < padPx && colClean(rx); k++) rx++;
+    x0 = lx / w;
+    x1 = rx / w;
   } else {
     // Pojistka: osnovy se nenašly → celý inkoust jako dřív.
     const cx = (rawX0 + rawX1) / 2;
@@ -468,6 +477,16 @@ export function analyzeContent(rgba, w, h) {
       if (rowHasInk(y)) { top = y; gap = 0; }
       else if (++gap > gapTol) break;
     }
+    // Antialiasovaný okraj tahu je světlejší než práh inkoustu — bez tohohle
+    // dorovnání zůstane na horní hraně uříznutá špička dříku noty nebo písmene.
+    const softThr = Math.min(250, Math.round(thr + (paper - thr) * 0.5));
+    const rowHasSoft = (yy) => {
+      const base = yy * w;
+      for (let x = cx0; x < cx1; x++) if (gray[base + x] < softThr) return true;
+      return false;
+    };
+    let soft = 0;
+    while (top > 0 && soft < 6 && rowHasSoft(top - 1)) { top--; soft++; }
     bandTop = top;
   } else {
     // Pojistka bez osnov: pás souvislého inkoustu.

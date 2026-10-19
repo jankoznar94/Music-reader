@@ -31,6 +31,15 @@ for (const f of files) {
   else if (topBlank > H * 0.03) flags.push('TOP_BLANK=' + topBlank);
   const sp = r.staff.spacing || 0;
   const sx0 = r.staff.x0 == null ? -1 : r.staff.x0;
+  // řez do tahu na okraji: první/poslední sloupec výřezu není prázdný
+  const colInk = (xc) => {
+    let n = 0;
+    for (let y = Math.max(0, y0); y < Math.min(H, y1); y++) if (gray[y * W + xc] < thr) n++;
+    return n;
+  };
+  const edgeL = colInk(Math.max(0, x0)), edgeR = colInk(Math.min(W - 1, x1 - 1));
+  if (edgeL > 2) flags.push('EDGE_INK_L=' + edgeL);
+  if (edgeR > 2) flags.push('EDGE_INK_R=' + edgeR);
   const line = `${f} crop x=${r.crop.x.toFixed(3)} y=${r.crop.y.toFixed(3)} w=${r.crop.w.toFixed(3)} h=${r.crop.h.toFixed(3)} `
     + `staff=${r.staff.groups} sp=${sp.toFixed(4)} x0=${sx0.toFixed(3)} topBlank=${topBlank} ${flags.join(' ')}`;
   console.log(line);
