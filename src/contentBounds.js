@@ -382,13 +382,62 @@ export function analyzeContent(rgba, w, h) {
              ink: inkCount / (w * h) };
   }
 
+  // --- HORIZONTÁLA PODLE OSNOV --------------------------------------------
+  // Šířku rámečku určují OSNOVY, ne veškerý inkoust: text v levém okraji
+  // („piano forte“) jinak rámeček roztáhl doleva a noty se posunuly doprava
+  // (Jan). Sloupec se počítá jako osnova, když na něm leží aspoň 2 linky
+  // (text zasáhne nanejvýš jednu) — sklon se řeší stejně jako v průmětech.
+  let hx0 = w, hx1 = -1;
+  if (hPeaks.length >= 2) {
+    // Linka je TENKÁ (1–3 px). Text, který leží ve výšce osnovy, je tlustý
+    // blok — kdyby se počítal jako linka, protáhl by rámeček doleva zase.
+    const maxThick = Math.max(3, Math.round((staves.spacing || 4) * 0.8));
+    const thinAt = (x, y) => {
+      if (y < 0 || y >= h || !ink[y * w + x]) return false;
+      let a = y, b = y;
+      while (a > 0 && ink[(a - 1) * w + x]) a--;
+      while (b < h - 1 && ink[(b + 1) * w + x]) b++;
+      return (b - a + 1) <= maxThick;
+    };
+    for (let x = 0; x < w; x++) {
+      let hits = 0;
+      for (let p = 0; p < hPeaks.length; p++) {
+        const yy = Math.round(hPeaks[p].y - slope * (x - w / 2));
+        if (thinAt(x, yy) || thinAt(x, yy - 1) || thinAt(x, yy + 1)) hits++;
+      }
+      if (hits >= 2) { if (x < hx0) hx0 = x; if (hx1 < x) hx1 = x; }
+    }
+  }
+  staffOut.x0 = hx0 / w; staffOut.x1 = (hx1 + 1) / w;   // diagnostika
+  let staffX = null;
+  if (hx1 > hx0 && (hx1 - hx0) >= w * 0.25) {
+    // Přesně rozsah osnov. Okraj kolem se přidá jen do volného místa: kdyby
+    // do něj zasahoval text („piano forte“), rámeček se zastaví kousek před
+    // ním — nikdy neprostřed písmene.
+    const padPx = Math.max(2, Math.round(w * 0.012));
+    const limit = Math.round(w * 0.06);
+    const gapTo = (fromX, dir) => {
+      for (let d = 1; d <= limit; d++) {
+        const x = fromX + dir * d;
+        if (x < 0 || x >= w) return d;
+        for (let y = 0; y < h; y++) if (ink[y * w + x]) return d - 1;
+      }
+      return padPx;
+    };
+    const lp = Math.min(padPx, Math.max(1, gapTo(hx0, -1)));
+    const rp = Math.min(padPx, Math.max(1, gapTo(hx1, +1)));
+    staffX = { x0: (hx0 - lp) / w, x1: (hx1 + 1 + rp) / w };
+  }
+
   const padX = 0.012, padY = 0.02;
   const rawX0 = ex0 / w, rawX1 = (ex1 + 1) / w;
   const rawY0 = ey0 / h, rawY1 = (ey1 + 1) / h;
   const cx = (rawX0 + rawX1) / 2, cy = (rawY0 + rawY1) / 2;
   const halfW = Math.max(0.06, (rawX1 - rawX0) / 2 + padX);
   const halfH = Math.max(0.05, (rawY1 - rawY0) / 2 + padY);
-  let x0 = cx - halfW, x1 = cx + halfW;
+  // Horizontálu drží osnovy (staffX), vertikálu obsah (noty).
+  let x0 = staffX ? staffX.x0 : cx - halfW;
+  let x1 = staffX ? staffX.x1 : cx + halfW;
   let y0 = cy - halfH, y1 = cy + halfH;
   // Rámeček smí přesáhnout okraj stránky jen o PADDING. Dřív se při přetečení
   // POSOUVAL, aby zůstal celý na papíře — jenže tím se na jedné straně okraj
