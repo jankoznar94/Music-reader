@@ -118,13 +118,14 @@ async def scenario(h, chk, pdf, label):
     d = await h.ev(DESIGN)
     print('DESIGN:', d)
     chk(f'{label}: menu se otevřelo', bool(d))
-    chk(f'{label}: jedna řada se čtyřmi ikonami', d and d['rows'] >= 1 and len(d['icons']) == 4,
+    chk(f'{label}: jedna řada s pěti ikonami', d and d['rows'] >= 1 and len(d['icons']) == 5,
         str(d and d['icons']))
     chk(f'{label}: ikony mají SVG a správné popisky',
         d and all(i['hasSvg'] for i in d['icons']) and
         [i['title'] for i in d['icons']] == [
             'Uložit zobrazení této stránky', 'Uložit zobrazení celé skladby',
-            'Oříznout okraje — celá skladba', 'Vycentrovat na uložené zobrazení'],
+            'Oříznout okraje — celá skladba', 'Vycentrovat na uložené zobrazení',
+            'Smazat všechny preference (tovární reset zobrazení)'],
         str(d and [i['title'] for i in d['icons']]))
     chk(f'{label}: žádné textové „Uložit“', d and not d['textUlozit'])
     chk(f'{label}: ikony jsou v jedné řadě zarovnané doleva',

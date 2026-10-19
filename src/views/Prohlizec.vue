@@ -154,6 +154,15 @@
                 title="Vycentrovat na uložené zobrazení">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
         </button>
+        <span class="zp-sep" />
+        <!-- TOVÁRNÍ RESET zobrazení: smaže všechny preference (všechny stránky,
+             celou skladbu i rám). Dvě klepnutí — první jen „nabije“ tlačítko
+             (bez dialogu, Jan dialogy nechce), druhé do 4 s opravdu smaže. -->
+        <button class="zp-btn prefs-icon prefs-reset" :class="{ armed: resetArmed }"
+                @click="factoryResetViews"
+                :title="resetArmed ? 'Klepni znovu — smaže všechny preference' : 'Smazat všechny preference (tovární reset zobrazení)'">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/><path d="M10 11v6M14 11v6"/></svg>
+        </button>
       </div>
     </div>
 
@@ -1187,7 +1196,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
-import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView } from '../db.js';
+import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount } from '../pdf.js';
 import { analyzeContent } from '../contentBounds.js';
 
@@ -1970,6 +1979,8 @@ function togglePrefsPanel() {
     annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false;
     sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
     pagesPanelOpen.value = false; pagesListOpen.value = false; endEdit();
+  } else {
+    disarmReset();   // zavření panelu ruší „nabité“ tovární tlačítko
   }
 }
 function toggleZoomPanel() {
@@ -2851,6 +2862,39 @@ async function deleteSongView() {
 }
 // Rám je GLOBÁLNÍ přepínač skladby — žádné mazání „rámu stránky“ tu není;
 // vypnutí dělá totéž tlačítko ořezu.
+
+// --- TOVÁRNÍ RESET ZOBRAZENÍ ------------------------------------------------
+// Smaže úplně všechny preference zobrazení této skladby: uložené pohledy
+// všech stránek, globální zobrazení skladby i globální rám. Anotace, záložky,
+// skoky ani odebrané stránky se NEMAŽOU — je to reset zobrazení, ne not.
+// Destruktivní akce bez dialogu (Jan dialogy nechce): první klepnutí tlačítko
+// jen „nabije“, druhé do 4 s teprve maže.
+const resetArmed = ref(false);
+let resetArmTimer = null;
+function disarmReset() {
+  resetArmed.value = false;
+  if (resetArmTimer) { clearTimeout(resetArmTimer); resetArmTimer = null; }
+}
+async function factoryResetViews() {
+  if (!resetArmed.value) {
+    resetArmed.value = true;
+    if (resetArmTimer) clearTimeout(resetArmTimer);
+    resetArmTimer = setTimeout(disarmReset, 4000);
+    showToast('Klepni znovu — smaže všechny preference zobrazení');
+    return;
+  }
+  disarmReset();
+  await dbDeleteAllPageViews(song.id);
+  pageViews.clear();
+  await dbDeleteSongView(song.id);
+  songView.value = null;
+  songZoom.value = 1.0;
+  hasSavedZoom.value = false;
+  songFrame.value = false;
+  const s = await dbGetSong(song.id);
+  if (s) { s.frame = 0; await dbSaveSong(s); }
+  await afterPrefsChange('Všechny preference zobrazení smazány');
+}
 // Otočení stránky o delta stupňů (kladné = vpravo) — z TLAČÍTEK.
 // Rotace je ČISTĚ CSS záležitost (bitmapa je vždy neotočená), takže velký skok
 // (90°) se dá plynule DOBĚHNOUT animací úhlu — nic se přitom nepočítá z pdf.js
@@ -5708,8 +5752,8 @@ async function deleteBookmark(b) {
    Zarovnaná DOLEVA (Jan: „taky bych to vše zarovnal doleva“), žádné
    roztahování na plnou šířku panelu. */
 .prefs-row { display: flex; align-items: center; gap: 7px; }
-.prefs-icon { width: 40px; height: 40px; }
-.prefs-icon svg { display: block; }
+.prefs-panel .prefs-icon { width: 40px; height: 40px; }
+.prefs-panel .prefs-icon svg { display: block; }
 /* Koš = malá ikona v ROHU té které ukládací ikony. Je to ikona (žádný text),
    ale je zřejmé, kterou preferenci maže (Jan). */
 .prefs-slot { position: relative; }
@@ -5718,6 +5762,19 @@ async function deleteBookmark(b) {
   padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center;
   background: var(--bg-elev); border: 1px solid rgba(224, 131, 111, 0.65);
   color: #e0836f; z-index: 1; touch-action: manipulation;
+}
+/* Tovární reset: „nabité“ tlačítko svítí výstražně, druhé klepnutí maže. */
+.prefs-reset.armed { background: #e0836f; border-color: #e0836f; color: #17130f; }
+/* Na úzkém telefonu se musí řada pěti ikon vejít bez přetečení — mírně menší
+   tlačítka i mezery (jinak panel zabírá 92 % šířky displeje). */
+@media (max-width: 430px) {
+  .prefs-panel { gap: 5px; padding: 7px 8px; }
+  .prefs-panel .prefs-icon { width: 36px; height: 36px; }
+  .prefs-panel .prefs-icon svg { width: 16px; height: 16px; }
+}
+@media (max-width: 340px) {
+  .prefs-panel .prefs-icon { width: 32px; height: 32px; }
+  .prefs-panel .prefs-icon svg { width: 14px; height: 14px; }
 }
 .zp-btn.danger { color: #e0836f; border-color: rgba(224, 131, 111, 0.45); }
 .zp-btn:disabled { opacity: 0.3; }

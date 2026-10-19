@@ -167,6 +167,37 @@ async def main():
 
         # 5) rám zůstává zapnutý i po smazání preference skladby
         chk('rám zůstal zapnutý', not s['vb'].startswith('0 0'), s['vb'])
+
+        # 6) TOVÁRNÍ RESET: dvě klepnutí smažou všechny preference
+        await click(h, '.prefs-panel .prefs-icon', 'Uložit zobrazení této stránky')
+        await asyncio.sleep(0.6)
+        await click(h, '.prefs-panel .prefs-icon', 'Uložit zobrazení celé skladby')
+        await asyncio.sleep(0.8)
+        s = await h.ev(STATE)
+        chk('před resetem: uložená stránka i skladba',
+            s['page'] and s['song'] and len(s['badges']) == 2, str(s['badges']))
+
+        # první klepnutí jen nabije
+        await click(h, '.prefs-panel .prefs-reset', 'Smazat všechny preference')
+        await asyncio.sleep(0.6)
+        armed = await h.ev("document.querySelector('.prefs-panel .prefs-reset').classList.contains('armed')")
+        s = await h.ev(STATE)
+        chk('reset: první klepnutí jen nabije', armed and s['page'] and s['song'],
+            f"armed={armed} page={s['page']} song={s['song']}")
+        chk('reset: tlačítko má nový popis', (await h.ev(
+            "document.querySelector('.prefs-panel .prefs-reset').title")
+        ).startswith('Klepni znovu'))
+
+        # druhé klepnutí maže vše
+        await click(h, '.prefs-panel .prefs-reset', 'Klepni znovu')
+        await asyncio.sleep(2.4)
+        s = await h.ev(STATE)
+        print('PO TOVÁRNÍM RESETU:', s)
+        chk('reset: stránka smazána', not s['page'], str(s['page']))
+        chk('reset: skladba smazána', not s['song'], str(s['song']))
+        chk('reset: žádné koše', s['badges'] == [], str(s['badges']))
+        chk('reset: rám vypnutý', s['vb'].startswith('0 0'), s['vb'])
+        chk('reset: ikona ořezu nesvítí', not s['frame'], str(s['frame']))
     return chk.report()
 
 

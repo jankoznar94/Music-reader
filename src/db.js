@@ -223,6 +223,24 @@ export async function dbDeletePageView(songId, page) {
   return tx('meta', 'readwrite', (s) => s.delete('pview:' + songId + ':' + page));
 }
 
+// Smaže VŠECHNY uložené pohledy stránek dané skladby (tovární reset zobrazení).
+export async function dbDeleteAllPageViews(songId) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction('meta', 'readwrite');
+    const store = t.objectStore('meta');
+    const req = store.getAllKeys();
+    let keys = [];
+    req.onsuccess = () => {
+      const prefix = 'pview:' + songId + ':';
+      keys = (req.result || []).filter(k => typeof k === 'string' && k.startsWith(prefix));
+      for (const k of keys) store.delete(k);
+      resolve(keys.length);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
 // Všechny uložené pohledy stránek dané skladby (pro hromadné načtení)
 export async function dbGetAllPageViews(songId) {
   const db = await openDb();
