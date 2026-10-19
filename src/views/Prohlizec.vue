@@ -2,7 +2,7 @@
   <div
     class="viewer"
     ref="viewerEl"
-    :style="{ '--topbar-h': barPad + 'px', '--page-pad': 'calc(8px + env(safe-area-inset-top, 0px))', '--page-pad-b': 'calc(8px + env(safe-area-inset-bottom, 0px))', '--edge-w': edgeW + 'px' }"
+    :style="{ '--topbar-h': barPad + 'px', '--page-pad': 'calc(8px + max(env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px)))', '--page-pad-b': 'calc(8px + max(env(safe-area-inset-top, 0px), env(safe-area-inset-bottom, 0px)))', '--edge-w': edgeW + 'px' }"
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
     @touchend.passive="onTouchEnd"
@@ -5952,9 +5952,11 @@ async function deleteBookmark(b) {
      posouval střed plochy dolů — stránka pak seděla níž, „jakoby pořád
      počítala s horní lištou“ (Jan). Se symetrickým odsazením je papír
      vycentrovaný na displeji a zároveň neleze pod notch ani pod gesture bar. */
-  /* 10 px z každé strany = rezerva, aby osnovy nebyly nalepené na hraně
-     displeje (Jan). Drží se v paddingu, takže platí i po otočení. */
-  padding: var(--page-pad, 8px) 10px var(--page-pad-b, 8px);
+  /* 20 px z každé strany = rezerva, aby osnovy nebyly nalepené na hraně
+     displeje (Jan: „od kraje vždy alespoň 20 px“). Drží se v paddingu, takže
+     platí i po otočení. Odsazení je symetrické (max z notch/home baru), aby
+     papír seděl přesně ve středu displeje a neuhýbal kvůli liště. */
+  padding: var(--page-pad, 8px) 20px var(--page-pad-b, 8px);
   display: flex; align-items: center; justify-content: center;
   /* overflow: hidden má DVA důvody:
      1) Stránka nesmí přetéct nad horní lištu ani pod displej. V krajině je

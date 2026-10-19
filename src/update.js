@@ -48,5 +48,14 @@ export async function applyUpdate() {
       await Promise.all(regs.map((r) => r.unregister()));
     }
   } catch (e) { /* i tak reload */ }
+  // Navigace s unikátním parametrem: jinak může prohlížeč vrátit ZASTARALÝ
+  // index.html z HTTP cache a uživatel zůstane na staré verzi, i když SW i
+  // cache smažeme (přesně to se stalo — „furt stejné chyby“).
+  try {
+    const u = new URL(window.location.href);
+    u.searchParams.set('v', String(Date.now()));
+    window.location.replace(u.toString());
+    return;
+  } catch (e) { /* fallback níž */ }
   window.location.reload();
 }
