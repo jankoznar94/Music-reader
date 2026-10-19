@@ -3083,8 +3083,10 @@ function computeFit() {
     const cs = getComputedStyle(el);
     const padT = parseFloat(cs.paddingTop) || 0;
     const padB = parseFloat(cs.paddingBottom) || 0;
+    const padL = parseFloat(cs.paddingLeft) || 0;
+    const padR = parseFloat(cs.paddingRight) || 0;
     availH = Math.max(200, el.clientHeight - padT - padB - 8);
-    availW = Math.max(200, el.clientWidth - 12);
+    availW = Math.max(200, el.clientWidth - padL - padR);
   }
 }
 
@@ -3103,6 +3105,21 @@ function pageReference(dim) {
 }
 // Geometrie zobrazení stránky: výřez obsahu, jeho velikost na displeji
 // a tentýž výřez v PDF bodech pro render.
+// Rezervy kolem oříznuté stránky (Jan: „10 px z každé strany a 15 px ze spodku“).
+// Drží se ve SCREEN px, ne v poměrech stránky — jde o vzduch na displeji.
+const FRAME_BOTTOM_RES = 15;
+function framedHeight() {
+  // Papír je v ploše vycentrovaný, takže se volné místo dělí napůl: aby byl
+  // DOLNÍ okraj přesně 15 px, musí být canvas o 2×(15 − padding) nižší.
+  const el = pageAreaEl.value;
+  if (!el) return Math.max(120, availH - 6);
+  const cs = getComputedStyle(el);
+  const padB = parseFloat(cs.paddingBottom) || 0;
+  const padT = parseFloat(cs.paddingTop) || 0;
+  const contentH = el.clientHeight - padT - padB;
+  return Math.max(120, contentH - 2 * Math.max(0, FRAME_BOTTOM_RES - padB));
+}
+
 function pageGeometry(dim, frac, ref, targetW, maxH = 0) {
   const box = {
     x: frac.x * ref.w, y: frac.y * ref.h,
@@ -3153,7 +3170,8 @@ async function renderCurrent() {
   const usedFrac = framed ? frac : { x: 0, y: 0, w: 1, h: 1 };
   // Oříznutá stránka nedostane plnou šířku: 15 px rezervy z každé strany,
   // aby osnovy nebyly nalepené na hraně displeje (Jan).
-  const geo = pageGeometry(dim, usedFrac, ref, availW - (framed ? 30 : 0), framed ? availH : 0);
+  const geo = pageGeometry(dim, usedFrac, ref, availW,
+                          framed ? framedHeight() : 0);
   cropBox.value = geo.box;
   // fitFor počítá měřítko bitmapy vůči těmhle rozměrům (referenční px).
   baseDims.value = { w: geo.box.w, h: geo.box.h };
@@ -3213,7 +3231,8 @@ async function prefetchSiblings(center) {
     const usedFrac = framed ? frac : { x: 0, y: 0, w: 1, h: 1 };
     // Oříznutá stránka nedostane plnou šířku: 15 px rezervy z každé strany,
   // aby osnovy nebyly nalepené na hraně displeje (Jan).
-  const geo = pageGeometry(dim, usedFrac, ref, availW - (framed ? 30 : 0), framed ? availH : 0);
+  const geo = pageGeometry(dim, usedFrac, ref, availW,
+                          framed ? framedHeight() : 0);
     const off = getOrCreateCacheCanvas(key, geo.w, geo.h);
     const p = renderPageRegion(song, i + 1, off, geo.cropPt, geo.w, geo.h).then(() => {
       preRendered.add(key);
@@ -5933,7 +5952,9 @@ async function deleteBookmark(b) {
      posouval střed plochy dolů — stránka pak seděla níž, „jakoby pořád
      počítala s horní lištou“ (Jan). Se symetrickým odsazením je papír
      vycentrovaný na displeji a zároveň neleze pod notch ani pod gesture bar. */
-  padding: var(--page-pad, 8px) 0 var(--page-pad-b, 8px);
+  /* 10 px z každé strany = rezerva, aby osnovy nebyly nalepené na hraně
+     displeje (Jan). Drží se v paddingu, takže platí i po otočení. */
+  padding: var(--page-pad, 8px) 10px var(--page-pad-b, 8px);
   display: flex; align-items: center; justify-content: center;
   /* overflow: hidden má DVA důvody:
      1) Stránka nesmí přetéct nad horní lištu ani pod displej. V krajině je
