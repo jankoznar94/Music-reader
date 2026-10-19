@@ -227,8 +227,18 @@
          Vizuální pomůcka, nedrží dotyk — ten dojde až na .viewer.
          Šířku drží --edge-w, aby vizuál odpovídal přesně tomu, kde listování
          opravdu funguje (edgeWidth() v JS). -->
-    <div v-if="!jumpPlaceMode" class="edge-hint left" />
-    <div v-if="!jumpPlaceMode" class="edge-hint right" />
+    <div v-if="!jumpPlaceMode && !annotMode" class="edge-hint left" />
+    <div v-if="!jumpPlaceMode && !annotMode" class="edge-hint right" />
+
+    <!-- Přepínání stránek v ANOTAČNÍM režimu. Okrajové tap zóny v anotaci
+         mizí (jinak by nešlo psát poznámky až do kraje), takže listování
+         obstarají dvě samostatná tlačítka — jen v anotaci. -->
+    <div v-if="annotMode" class="annot-nav">
+      <button class="annot-nav-btn" :disabled="!canPrevPage" @click.stop="prevPage"
+              title="Předchozí stránka">‹</button>
+      <button class="annot-nav-btn" :disabled="!canNextPage" @click.stop="nextPage"
+              title="Další stránka">›</button>
+    </div>
     <!-- .stage = vnější box, jehož rozměry odpovídají tomu, jak stránka zabírá
          na obrazovce PO OTOČENÍ (při 90°/270° prohozené). Nese zoom a posun.
          .rotor uvnitř je přesně velký jako neotočená stránka a otáčí se kolem
@@ -2674,11 +2684,7 @@ function releaseWakeLock() {
 }
 
 let availW = 800, availH = 1100;
-// Šířka, do které se smí kreslit obsah: plocha mínus pruhy pro listování
-// (jinak by krajní noty zmizely pod klikací zónou) mínus malá rezerva.
-let safeW = 800;
-// Je pro aktuální stránku rám opravdu aktivní? (vypnutý rám = chovat se
-// přesně jako dřív, včetně plné šířky — jinak by se stránka zbytečně zmenšila)
+// Je pro aktuální stránku rám opravdu aktivní? (řídí se uloženou preferencí)
 let frameActive = false;
 
 // Rozměry, jak stránka PO OTOČENÍ zabere na obrazovce (pro fit a centrování)
@@ -2694,12 +2700,11 @@ function rotAvail(baseW, baseH, deg) {
 // `zoom` zůstává násobitel nad tímhle měřítkem (1 = přesně tohle).
 function fitScale(baseW, baseH, deg) {
   if (!baseW || !baseH) return 1;
-  // Bez rámu se obsah vejde do CELÉ šířky jako dřív; s rámem jen do zóny
-  // mezi pruhy pro listování.
-  const targetW = frameActive ? safeW : availW;
-  if (!deg) return targetW / baseW;
+  // Obsah se vždy vejde do CELÉ šířky čtecí plochy (i s rámem — okrajové
+  // tap zóny se s rámem ignorují, Jan: „roztáhneme ten rám až do krajů“).
+  if (!deg) return availW / baseW;
   const r = rotAvail(baseW, baseH, deg);
-  return Math.min(targetW / r.w, availH / r.h) * 0.985;
+  return Math.min(availW / r.w, availH / r.h) * 0.985;
 }
 
 // Uložené výchozí zobrazení skladby (globální) — zoom, posun i rotace
@@ -2931,9 +2936,6 @@ function computeFit() {
     const barH = topBarH.value || 0;
     availH = Math.max(200, el.clientHeight - barH - 12);
     availW = Math.max(200, el.clientWidth - 12);
-    // Pruhy pro listování okrajovým klepnutím mají šířku edgeWidth(); obsah
-    // musí skončit UVNITŘ nich, aby krajní noty nebyly pod klikací zónou.
-    safeW = Math.max(120, availW - 2 * (edgeWidth() + 4));
   }
 }
 
@@ -2992,7 +2994,7 @@ async function renderCurrent() {
   frameActive = framed;
   pageFramed.value = framed;
   const usedFrac = framed ? frac : { x: 0, y: 0, w: 1, h: 1 };
-  const geo = pageGeometry(dim, usedFrac, ref, framed ? safeW : availW);
+  const geo = pageGeometry(dim, usedFrac, ref, availW);
   cropBox.value = geo.box;
   // fitFor počítá měřítko bitmapy vůči těmhle rozměrům (referenční px).
   baseDims.value = { w: geo.box.w, h: geo.box.h };
@@ -3050,7 +3052,7 @@ async function prefetchSiblings(center) {
     const frac = await getPageCrop(i);
     const framed = preferredFrame(i) && !(frac.x <= 0.001 && frac.y <= 0.001 && frac.w >= 0.999 && frac.h >= 0.999);
     const usedFrac = framed ? frac : { x: 0, y: 0, w: 1, h: 1 };
-    const geo = pageGeometry(dim, usedFrac, ref, framed ? safeW : availW);
+    const geo = pageGeometry(dim, usedFrac, ref, availW);
     const off = getOrCreateCacheCanvas(key, geo.w, geo.h);
     const p = renderPageRegion(song, i + 1, off, geo.cropPt, geo.w, geo.h).then(() => {
       preRendered.add(key);
@@ -3339,6 +3341,14 @@ async function nextPage() {
     await switchSong(groupIndex.value + 1);
   }
 }
+// Tlačítka listování v anotačním režimu: aktivní jen když existuje
+// předchozí/další stránka (nebo skladba ve skupině).
+const canPrevPage = computed(() =>
+  visibleIndex.value > 0 || !!(group.value && groupIndex.value > 0));
+const canNextPage = computed(() =>
+  visibleIndex.value < visiblePages.value.length - 1 ||
+  !!(group.value && groupIndex.value < groupSongs.value.length - 1));
+
 async function prevPage() {
   const vi = visibleIndex.value;
   if (vi > 0) {
@@ -3610,6 +3620,9 @@ function isPalmTouch(t) {
   return Math.max(rx, ry) > 50;
 }
 function annotEdgeTap(x, y, target) {
+  // V anotačním režimu se okrajovým klepnutím NElístuje — kraj patří psaní
+  // poznámek. Listuje se dvěma tlačítky (annot-nav).
+  if (annotMode.value) return;
   // Klepnutí na ovládací prvek (tlačítko nástroje, panel, lišta) NElístuje
   if (isControlTarget(target)) return;
   if (blockedNav()) return;
@@ -5785,6 +5798,25 @@ async function deleteBookmark(b) {
   border-right: none;
   border-left: 1px dashed rgba(201, 168, 124, 0.38);
 }
+/* Listování v ANOTAČNÍM režimu — dvě plovoucí tlačítka u spodních rohů.
+   Okrajové tap zóny jsou v anotaci vypnuté (kraj patří psaní poznámek),
+   takže listování obstarají tahle dvě tlačítka. Jen v anotaci. */
+.annot-nav {
+  position: absolute; left: 0; right: 0; bottom: 14px;
+  display: flex; justify-content: space-between;
+  padding: 0 14px; z-index: 31; pointer-events: none;
+}
+.annot-nav-btn {
+  pointer-events: auto; width: 54px; height: 54px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(24, 22, 20, 0.78); color: #f0ece4;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  font-size: 1.8rem; line-height: 1; padding-bottom: 4px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+  -webkit-tap-highlight-color: transparent;
+}
+.annot-nav-btn:disabled { opacity: 0.35; }
+.annot-nav-btn:active:not(:disabled) { background: rgba(60, 56, 50, 0.9); }
 .annot-layer .hl { mix-blend-mode: multiply; opacity: 0.9; }
 /* Náhled zvýrazňovače při sytých barvách: ať je vidět, že jde o zvýraznění,
    a ne o přebarvení not — náhled multiplikuje stejně jako hotový tvar. */
