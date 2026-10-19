@@ -467,15 +467,36 @@ export function analyzeContent(rgba, w, h) {
   if (sy0 >= 0 && sy1 > sy0) {
     vy0 = Math.max(0, sy0);
     vy1 = ey1;
-    // Nahoru od první osnovy: ber každý tah, který je od předchozího blíž než
-    // ~2 rozteče osnov (pomocné linky, vysoké noty). Větší mezera = jiný
-    // obsah (číslo stránky, nadpis) → konec.
+    // Nahoru od první osnovy se berou i SAMOSTATNÉ PÁSY TEXTU nad osnovou —
+    // název části skladby, název skladby, tempové označení (Jan: „často je nad
+    // notami název části skladby, to tam musí zůstat“). Číslo stránky nebo
+    // taktu je úzký pás (pár pixelů) → ten horní okraj neurčuje.
     const gapTol = Math.max(2, Math.round((staves.spacing || 4) * 1.2));
-    let top = sy0, gap = 0, y = sy0;
-    while (y > 0) {
-      y--;
-      if (rowHasInk(y)) { top = y; gap = 0; }
-      else if (++gap > gapTol) break;
+    const on = new Uint8Array(sy0 + 1);
+    for (let y = 0; y <= sy0; y++) on[y] = rowHasInk(y) ? 1 : 0;
+    const bands = [];
+    let s = -1, last = -1;
+    for (let y = 0; y <= sy0; y++) {
+      if (on[y]) { if (s < 0) s = y; last = y; }
+      else if (s >= 0 && y - last > gapTol) { bands.push([s, last]); s = -1; }
+    }
+    if (s >= 0) bands.push([s, last]);
+    const maxGap = Math.round(h * 0.08);   // nad tím už je jiná část stránky
+    let top = sy0;
+    for (let i = bands.length - 1; i >= 0; i--) {
+      const [a, b] = bands[i];
+      if (top - b > maxGap) break;
+      // Šířka pásu = nejširší řádek (linky osnov jsou v 560px podkladu
+      // přerušované, takže rozsah přes celý pás by je podhodnotil).
+      let widest = 0;
+      for (let y = a; y <= b; y++) {
+        const base = y * w;
+        let lo = w, hi = -1;
+        for (let x = cx0; x < cx1; x++) if (ink[base + x]) { if (x < lo) lo = x; if (x > hi) hi = x; }
+        if (hi >= 0 && hi - lo + 1 > widest) widest = hi - lo + 1;
+      }
+      // Široký pás = skutečný text (název, tempové označení). Úzký = číslo.
+      if (widest >= w * 0.04) top = a;
     }
     // Antialiasovaný okraj tahu je světlejší než práh inkoustu — bez tohohle
     // dorovnání zůstane na horní hraně uříznutá špička dříku noty nebo písmene.
@@ -496,7 +517,10 @@ export function analyzeContent(rgba, w, h) {
   let y0 = Math.max(0, bandTop - Math.min(edgePad, Math.max(2, Math.round((staves.spacing || 4) * 1.2)))) / h;
   let bandBot = vy1;
   while (bandBot < h - 1 && rowHasInk(bandBot + 1)) bandBot++;
-  let y1 = (Math.min(h - 1, bandBot + edgePad) + 1) / h;
+  // Dole je rezerva větší než nahoře: nejnižší basové noty s pomocnými linkami
+  // nesmí na displeji vypadat uříznuté (Jan: „basové noty jsou oříznuté“).
+  const bottomPad = Math.max(edgePad, Math.round(h * 0.022));
+  let y1 = (Math.min(h - 1, bandBot + bottomPad) + 1) / h;
   staffOut.vy0 = vy0 / h; staffOut.vy1 = (vy1 + 1) / h;
   staffOut.inkY = [ey0 / h, (ey1 + 1) / h];
   staffOut.sy = [sy0 / h, sy1 / h];
