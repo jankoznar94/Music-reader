@@ -106,6 +106,11 @@
       <button class="zp-btn" @click="zoomIn" title="Přiblížit">+</button>
       <button class="zp-btn num wide" @click="zoomFit" title="Zpět na 100 % (fit na šířku)">100 %</button>
       <span class="zp-sep" />
+      <!-- Automatický rám: ořízne prázdné okraje podle prvního černého obsahu
+           a vycentruje noty; obsah se vejde VNITŘ pruhů pro listování. -->
+      <button class="zp-btn num wide" :class="{ on: autoFrame }" @click="toggleAutoFrame"
+              title="Automaticky oříznout okraje a vycentrovat noty">Rám</button>
+      <span class="zp-sep" />
       <!-- Zoom dolů pod 100 % (Jan: „abych mohl oddálit stránku, když je
            originál moc velký") — meze jsou v ZOOM_MIN/ZOOM_MAX. -->
       <button class="zp-btn num" @click="zoomOutBig" title="Oddálit po 10 %">−10</button>
@@ -238,6 +243,7 @@
         :class="{ active: annotMode || jumpPlaceMode }"
         :width="cssW"
         :height="cssH"
+        :viewBox="viewBoxStr"
         @pointerdown.prevent="onLayerDown($event)"
         @pointermove.prevent="onLayerMove($event)"
         @pointerup.prevent="onLayerUp"
@@ -1145,7 +1151,8 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView } from '../db.js';
-import { renderPage, getPageWidthHeight, getPageCount } from '../pdf.js';
+import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount } from '../pdf.js';
+import { analyzeContent } from '../contentBounds.js';
 
 const props = defineProps({ id: { type: String, required: true } });
 const router = useRouter();
@@ -1966,6 +1973,67 @@ function autoOpenZoomMode() {
 
 const cssW = ref(800);
 const cssH = ref(1100);
+
+// --- AUTOMATICKÝ RÁM (ořez okrajů + vycentrování) -------------------------
+// `refW/refH` = CELÁ stránka v referenčních CSS px (fit na šířku jako dřív).
+// V téhle soustavě jsou uložené anotace, takže se kvůli ořezu nic nepřemapovává.
+// `cropBox` = výřez v téže soustavě; `cssW/cssH` = jak je výřez velký NA DISPLEJI.
+// Anotační SVG má viewBox = cropBox, takže anotace zůstanou přesně na notách.
+const refW = ref(800);
+const refH = ref(1100);
+const cropBox = ref({ x: 0, y: 0, w: 800, h: 1100 });
+const viewBoxStr = computed(() =>
+  `${cropBox.value.x} ${cropBox.value.y} ${cropBox.value.w} ${cropBox.value.h}`);
+// Výchozí stav je VYPNUTO (Jan: „nedávej to zatím defaultně, jen jako
+// tlačítko“) — uživatel si rám zapne vědomě a volba se pamatuje.
+const autoFrame = ref(localStorage.getItem('noty-auto-frame') === '1');
+const cropCache = new Map();   // `${songId}:${pageIdx}` -> {x,y,w,h} v poměrech 0..1
+function clearCropCache() { cropCache.clear(); }
+function toggleAutoFrame() {
+  autoFrame.value = !autoFrame.value;
+  localStorage.setItem('noty-auto-frame', autoFrame.value ? '1' : '0');
+  clearCropCache();
+  cached.clear();
+  preRendered.clear();
+  renderPromises.clear();
+  renderCurrent();
+}
+
+// Detekce obsahu běží nad malým náhledem stránky (rychlost ~30 ms) a výsledek
+// se drží v paměti pro každou stránku. Selhání = celá stránka (nic neořezat).
+const ANALYZE_W = 560;
+async function getPageCrop(pageIdx) {
+  if (!autoFrame.value) return { x: 0, y: 0, w: 1, h: 1 };
+  const key = `${song.id}:${pageIdx}`;
+  if (cropCache.has(key)) return cropCache.get(key);
+  const job = (async () => {
+    try {
+      const dim = await getPageWidthHeight(song, pageIdx + 1);
+      const w = ANALYZE_W;
+      const h = Math.max(40, Math.round((dim.height / dim.width) * w));
+      // Vlastní canvas pro každou analýzu — přednačítání sousedů běží
+      // souběžně s aktuální stránkou a sdílený canvas by se míchal.
+      const cv = document.createElement('canvas');
+      cv.width = w;
+      cv.height = h;
+      await renderPage(song, pageIdx + 1, cv, h);
+      // renderPage kreslí v dpr rozlišení → pro analýzu zmenšit na w×h
+      const small = document.createElement('canvas');
+      small.width = w;
+      small.height = h;
+      const sctx = small.getContext('2d', { willReadFrequently: true });
+      sctx.drawImage(cv, 0, 0, w, h);
+      const data = sctx.getImageData(0, 0, w, h).data;
+      const res = analyzeContent(data, w, h);
+      return res.ok ? res.crop : { x: 0, y: 0, w: 1, h: 1 };
+    } catch (e) {
+      console.warn('[auto-ram] detekce selhala', e);
+      return { x: 0, y: 0, w: 1, h: 1 };
+    }
+  })();
+  cropCache.set(key, job);
+  return job;
+}
 const annotations = ref({ items: [] });
 const pagesPanelOpen = ref(false); // nabídka odebírání stránek
 const pagesListOpen = ref(false);  // seznam odebraných stránek uvnitř té nabídky
@@ -2580,6 +2648,9 @@ function releaseWakeLock() {
 }
 
 let availW = 800, availH = 1100;
+// Šířka, do které se smí kreslit obsah: plocha mínus pruhy pro listování
+// (jinak by krajní noty zmizely pod klikací zónou) mínus malá rezerva.
+let safeW = 800;
 
 // Rozměry, jak stránka PO OTOČENÍ zabere na obrazovce (pro fit a centrování)
 function rotAvail(baseW, baseH, deg) {
@@ -2594,9 +2665,9 @@ function rotAvail(baseW, baseH, deg) {
 // `zoom` zůstává násobitel nad tímhle měřítkem (1 = přesně tohle).
 function fitScale(baseW, baseH, deg) {
   if (!baseW || !baseH) return 1;
-  if (!deg) return availW / baseW;
+  if (!deg) return safeW / baseW;
   const r = rotAvail(baseW, baseH, deg);
-  return Math.min(availW / r.w, availH / r.h) * 0.985;
+  return Math.min(safeW / r.w, availH / r.h) * 0.985;
 }
 
 // Uložené výchozí zobrazení skladby (globální) — zoom, posun i rotace
@@ -2827,6 +2898,9 @@ function computeFit() {
     const barH = topBarH.value || 0;
     availH = Math.max(200, el.clientHeight - barH - 12);
     availW = Math.max(200, el.clientWidth - 12);
+    // Pruhy pro listování okrajovým klepnutím mají šířku edgeWidth(); obsah
+    // musí skončit UVNITŘ nich, aby krajní noty nebyly pod klikací zónou.
+    safeW = Math.max(120, availW - 2 * (edgeWidth() + 4));
   }
 }
 
@@ -2838,6 +2912,30 @@ function computeFit() {
 // navždy v cache (naměřeno: během celého gesta se nezměnilo). Ref to drží.
 const baseDims = ref({ w: 0, h: 0 });
 
+// Referenční soustava = celá stránka při fit na šířku (šířka = availW).
+// V ní jsou uložené anotace; ořez se do ní promítá jen přes viewBox.
+function pageReference(dim) {
+  return { w: Math.round(availW), h: Math.round((dim.height / dim.width) * availW) };
+}
+// Geometrie zobrazení stránky: výřez obsahu, jeho velikost na displeji
+// a tentýž výřez v PDF bodech pro render.
+function pageGeometry(dim, frac, ref) {
+  const box = {
+    x: frac.x * ref.w, y: frac.y * ref.h,
+    w: frac.w * ref.w, h: frac.h * ref.h,
+  };
+  const scale = safeW / box.w;
+  return {
+    frac, box,
+    w: Math.max(1, Math.round(box.w * scale)),
+    h: Math.max(1, Math.round(box.h * scale)),
+    cropPt: {
+      x: frac.x * dim.width, y: frac.y * dim.height,
+      w: frac.w * dim.width, h: frac.h * dim.height,
+    },
+  };
+}
+
 async function renderCurrent() {
   const doc = song.data;
   if (!doc) return;
@@ -2846,32 +2944,33 @@ async function renderCurrent() {
   const page = currentPage.value;
   const dim = await getPageWidthHeight(song, page + 1);
   if (myToken !== renderToken) return; // mezitím se listovalo dál
-  baseDims.value = { w: dim.width, h: dim.height };
-  // Bitmapa se VŽDY kreslí v NEOTOČENÉM měřítku (fit-na-šířku) — rotaci nese
-  // jen CSS na `.rotor` a přeškálování na `.stage` (`liveFit`). Dvě výhody:
-  //   1) otočením se neinvaliduje cache ani se nic nerenderuje → rotace je
-  //      plynulá a okamžitá v tom stavu, v jakém stránka právě je;
-  //   2) otočená stránka se vždycky ZMENŠUJE, takže bitmapa má vždycky dost
-  //      pixelů a zůstane ostrá i bez překreslení.
-  // Anotace žijí v soustavě stránky, takže se s `.rotor` otočí společně.
-  const s = fitScale(dim.width, dim.height, 0);
-  const w = Math.round(dim.width * s);
-  const h = Math.round(dim.height * s);
-  cssW.value = w;
-  cssH.value = h;
+  // Bitmapa se VŽDY kreslí v NEOTOČENÉM měřítku — rotaci nese jen CSS na
+  // `.rotor` a přeškálování na `.stage` (`liveFit`). Otočením se tedy
+  // neinvaliduje cache ani nic nepřekresluje.
+  const ref = pageReference(dim);
+  refW.value = ref.w;
+  refH.value = ref.h;
+  const frac = await getPageCrop(page);
+  if (myToken !== renderToken) return;
+  const geo = pageGeometry(dim, frac, ref);
+  cropBox.value = geo.box;
+  // fitFor počítá měřítko bitmapy vůči těmhle rozměrům (referenční px).
+  baseDims.value = { w: geo.box.w, h: geo.box.h };
+  cssW.value = geo.w;
+  cssH.value = geo.h;
   await nextTick();
   if (myToken !== renderToken) return;
   // Render vždy do offscreen canvasu, pak zkopírovat na viditelný.
   // Dva souběžné rendery tak nikdy nepíšou do stejného canvasu.
   const cacheKey = keyFor(page);
-  const off = getOrCreateCacheCanvas(cacheKey, w, h);
+  const off = getOrCreateCacheCanvas(cacheKey, geo.w, geo.h);
   if (!preRendered.has(cacheKey)) {
     const pending = renderPromises.get(cacheKey);
     if (pending) {
       await pending;
       if (myToken !== renderToken) return;
     } else {
-      const p = renderPage(song, page + 1, off, h).then(() => {
+      const p = renderPageRegion(song, page + 1, off, geo.cropPt, geo.w, geo.h).then(() => {
         preRendered.add(cacheKey);
         renderPromises.delete(cacheKey);
       });
@@ -2883,10 +2982,10 @@ async function renderCurrent() {
   // Zkopírovat offscreen canvas na viditelný (scalovaně podle dpr)
   const ctx = canvasEl.value.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
-  canvasEl.value.width = Math.round(w * dpr);
-  canvasEl.value.height = Math.round(h * dpr);
-  canvasEl.value.style.width = w + 'px';
-  canvasEl.value.style.height = h + 'px';
+  canvasEl.value.width = Math.round(geo.w * dpr);
+  canvasEl.value.height = Math.round(geo.h * dpr);
+  canvasEl.value.style.width = geo.w + 'px';
+  canvasEl.value.style.height = geo.h + 'px';
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(off, 0, 0, canvasEl.value.width, canvasEl.value.height);
   evictCache(page);          // držet jen okno kolem aktuální stránky
@@ -2904,11 +3003,11 @@ async function prefetchSiblings(center) {
     if (renderPromises.has(key)) continue; // už probíhá
     // Cache canvas musí mít rozměry TÉ stránky (jiný poměr stran → při kopírování by se natáhlo/ořízlo)
     const dim = await getPageWidthHeight(song, i + 1);
-    const s = fitScale(dim.width, dim.height, 0);
-    const w = Math.round(dim.width * s);
-    const h = Math.round(dim.height * s);
-    const off = getOrCreateCacheCanvas(key, w, h);
-    const p = renderPage(song, i + 1, off, h).then(() => {
+    const ref = pageReference(dim);
+    const frac = await getPageCrop(i);
+    const geo = pageGeometry(dim, frac, ref);
+    const off = getOrCreateCacheCanvas(key, geo.w, geo.h);
+    const p = renderPageRegion(song, i + 1, off, geo.cropPt, geo.w, geo.h).then(() => {
       preRendered.add(key);
       renderPromises.delete(key);
     });
@@ -3687,9 +3786,10 @@ function toLayerCoords(e) {
     const p = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
     return { x: p.x, y: p.y };
   }
-  // Záložní cesta (kdyby matice nebyla k dispozici) — bez rotace jako dřív
+  // Záložní cesta (kdyby matice nebyla k dispozici) — bez rotace jako dřív.
+  // Souřadnice vrstvy jsou referenční px celé stránky, ne displayed px.
   const rect = svg.getBoundingClientRect();
-  const scale = cssW.value / rect.width;
+  const scale = cropBox.value.w / rect.width;
   return {
     x: (clientX - rect.left) * scale,
     y: (clientY - rect.top) * scale,
@@ -4589,9 +4689,13 @@ const edgeJumps = computed(() => jumpsOnPage.value.filter(j => !j.place));
 function jumpBoxStyle(j) {
   const b = j.place;
   if (!b) return {};
+  // Souřadnice skoku jsou v REFERENČNÍ soustavě celé stránky (jako anotace),
+  // zobrazení je ale jen výřez cropBox → převést do displejových px.
+  const s = cssW.value / (cropBox.value.w || 1);
   return {
-    left: b.x + 'px', top: b.y + 'px',
-    width: b.w + 'px', height: b.h + 'px',
+    left: (b.x - cropBox.value.x) * s + 'px',
+    top: (b.y - cropBox.value.y) * s + 'px',
+    width: b.w * s + 'px', height: b.h * s + 'px',
   };
 }
 function pageHits(p) {

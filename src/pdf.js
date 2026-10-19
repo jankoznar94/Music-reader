@@ -69,6 +69,39 @@ export async function renderPage(song, pageNum, canvas, renderScale = 900) {
   return { width: cssW, height: cssH };
 }
 
+/**
+ * Vykreslí VÝŘEZ stránky (ořez okrajů) do canvasu.
+ * @param {*} song skladba
+ * @param {number} pageNum 1-based
+ * @param {HTMLCanvasElement} canvas
+ * @param {{x:number,y:number,w:number,h:number}} crop výřez v PDF bodech (scale 1)
+ * @param {number} outW cílová šířka v CSS px
+ * @param {number} outH cílová výška v CSS px
+ */
+export async function renderPageRegion(song, pageNum, canvas, crop, outW, outH) {
+  const doc = await getDoc(song);
+  const page = await doc.getPage(pageNum);
+  const devicePixelRatio = window.devicePixelRatio || 1;
+  const s = outW / crop.w;                      // CSS px na PDF bod
+  const viewport = page.getViewport({ scale: s });
+
+  canvas.width = Math.max(1, Math.round(outW * devicePixelRatio));
+  canvas.height = Math.max(1, Math.round(outH * devicePixelRatio));
+  canvas.style.width = `${outW}px`;
+  canvas.style.height = `${outH}px`;
+
+  const context = canvas.getContext('2d');
+  context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  // pdf.js skládá `transform` až za viewport transformaci → posun je
+  // v CSS px výstupu (crop.x * s), ne v bodech.
+  await page.render({
+    canvasContext: context,
+    viewport,
+    transform: [1, 0, 0, 1, -crop.x * s, -crop.y * s],
+  }).promise;
+  return { width: outW, height: outH };
+}
+
 export function clearPdfCache() {
   _docs.clear();
 }
