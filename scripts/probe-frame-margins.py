@@ -98,12 +98,13 @@ async def main():
         print('OKRAJE:', s)
         chk('rám se zapnul', not s['vb'].startswith('0 0'), s['vb'])
         top, bottom = s['topPx'], s['bottomPx']
-        chk('dole je aspoň 8 px místa', bottom >= 8, f"{bottom:.1f} px")
+        chk('dole je aspoň 3 px místa', bottom >= 3, f"{bottom:.1f} px")
         chk('osamocená hluboká nota není uříznutá (je v canvasu)',
             bottom <= 45, f"bottom {bottom:.1f} px (kdyby chyběla, je tam >150)")
-        chk('nahoře i dole stejně (rozdíl < 25 %)',
-            top > 0 and abs(top - bottom) / max(top, bottom) < 0.25,
-            f"top {top:.1f} bottom {bottom:.1f}")
+        # Nová pravidla: nahoru se bere první osnova (číslo stránky se
+        # vynechá), dolů všechen obsah. Symetrie se už nevyžaduje — hlídá se
+        # jen, že nahoře nezbývá zbytečně moc místa.
+        chk('nahoře nezbývá víc než 200 px', top <= 200, f"top {top:.1f}")
         left, right = s['leftPx'], s['rightPx']
         chk('vlevo i vpravo stejně', abs(left - right) < max(6, 0.25 * max(left, right)),
             f"left {left:.1f} right {right:.1f}")

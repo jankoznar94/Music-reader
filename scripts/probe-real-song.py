@@ -67,13 +67,13 @@ async def main():
         await h.ev("(()=>{const b=[...document.querySelectorAll('.prefs-panel .prefs-icon')]"
                    ".find(x=>(x.title||'').startsWith('Oříznout'));b&&b.click()})()")
         await asyncio.sleep(3.0)
-        for page in (1, 2, 3, 10, 20, 30, 40, 50):
+        for page in (1, 2, 6, 10):
             if page > 1:
                 await h.goto(page)
                 await asyncio.sleep(2.2)
             s = await h.ev(MEASURE)
             print(f'strana {page}:', s, flush=True)
-            if page <= 3: await shot(h, f'/tmp/ejhle-p{page}.png')
+            if page <= 6: await shot(h, f'/tmp/ejhle-p{page}.png')
         print('screenshoty: /tmp/ejhle-p1..3.png')
 
 

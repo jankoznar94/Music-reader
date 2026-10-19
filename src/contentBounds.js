@@ -415,31 +415,96 @@ export function analyzeContent(rgba, w, h) {
     // do něj zasahoval text („piano forte“), rámeček se zastaví kousek před
     // ním — nikdy neprostřed písmene.
     const padPx = Math.max(2, Math.round(w * 0.012));
-    // Značky těsně u osnov (názvy hlasů „S.“, „Organ“, dynamika) patří do
-    // výřezu CELÉ — dřív se řezalo doprostřed slova (Jan: uříznuté „Organ“).
-    // Hledá se jen do 5 % šířky od konce osnov, aby text z okraje stránky
-    // (např. „piano forte“) noty zbytečně neposouval.
+    // Jan: „Ber v potaz jen krátké značky typu A, T atd. Delší texty ignoruj.“
+    // Krátká značka = komponenta do 2,5 % šířky („S.“, „A.“). Dlouhý text
+    // („piano forte“, „Organ“) šířku neurčuje — zůstane mimo výřez.
     const near = Math.round(w * 0.05);
-    const colHasInk = (x) => {
-      for (let y = 0; y < h; y++) if (ink[y * w + x]) return true;
-      return false;
+    const SHORT_MAX = Math.max(6, Math.round(w * 0.025));
+    // nejmenší/největší x krátkých komponent v okně vedle osnov
+    const shortEdges = (fromX, toX) => {
+      const seen = new Uint8Array(w * h);
+      let lo = null, hi = null;
+      const stack = [];
+      for (let y = 0; y < h; y++) {
+        for (let x = fromX; x !== toX; x += (toX > fromX ? 1 : -1)) {
+          const i = y * w + x;
+          if (!ink[i] || seen[i]) continue;
+          stack.length = 0; stack.push(i); seen[i] = 1;
+          let a = x, b = x;
+          while (stack.length) {
+            const j = stack.pop();
+            const jx = j % w, jy = (j / w) | 0;
+            if (jx < a) a = jx; if (jx > b) b = jx;
+            for (let dy = -1; dy <= 1; dy++) {
+              const ny = jy + dy;
+              if (ny < 0 || ny >= h) continue;
+              for (let dx = -1; dx <= 1; dx++) {
+                const nx2 = jx + dx;
+                if (nx2 < fromX || nx2 === toX) continue;
+                if (toX > fromX ? nx2 > toX : nx2 < toX) continue;
+                const k = ny * w + nx2;
+                if (ink[k] && !seen[k]) { seen[k] = 1; stack.push(k); }
+              }
+            }
+          }
+          if (b - a + 1 <= SHORT_MAX) {
+            if (lo === null || a < lo) lo = a;
+            if (hi === null || b > hi) hi = b;
+          }
+        }
+      }
+      return [lo, hi];
     };
     let nx0 = hx0, nx1 = hx1 + 1;
-    for (let x = Math.max(0, hx0 - near); x < hx0; x++) if (colHasInk(x)) { nx0 = x; break; }
-    for (let x = Math.min(w - 1, hx1 + near); x > hx1; x--) if (colHasInk(x)) { nx1 = x + 1; break; }
+    const [lLo] = shortEdges(Math.max(0, hx0 - near), hx0);
+    if (lLo !== null) nx0 = lLo;
+    const [, rHi] = shortEdges(Math.min(w - 1, hx1 + near), hx1);
+    if (rHi !== null) nx1 = rHi + 1;
     staffX = { x0: (nx0 - padPx) / w, x1: (nx1 + padPx) / w };
   }
 
   const padX = 0.012, padY = 0.025;
   const rawX0 = ex0 / w, rawX1 = (ex1 + 1) / w;
-  const rawY0 = ey0 / h, rawY1 = (ey1 + 1) / h;
-  const cx = (rawX0 + rawX1) / 2, cy = (rawY0 + rawY1) / 2;
+  const cx = (rawX0 + rawX1) / 2;
   const halfW = Math.max(0.06, (rawX1 - rawX0) / 2 + padX);
-  const halfH = Math.max(0.05, (rawY1 - rawY0) / 2 + padY);
-  // Horizontálu drží osnovy (staffX), vertikálu obsah (noty).
+  // Horizontálu drží osnovy (staffX).
   let x0 = staffX ? staffX.x0 : cx - halfW;
   let x1 = staffX ? staffX.x1 : cx + halfW;
-  let y0 = cy - halfH, y1 = cy + halfH;
+
+  // --- SVISLE SE ŘÍDÍ OSNOVAMI --------------------------------------------
+  // Číslo stránky ani patička nesmí nafouknout výřez (Jan: „nahoře je hrozně
+  // moc místa“). Nahoru se bere první osnova, DOLŮ poslední osnova + 10 %
+  // výšky — tolik místa mají i ty nejhlubší basové noty s pomocnými linkami,
+  // takže spodek zůstává celý.
+  let vy0 = ey0, vy1 = ey1;
+  let sy0 = -1, sy1 = -1;
+  for (let y = 0; y < h; y++) {
+    if (staves.staffRows[y]) { if (sy0 < 0) sy0 = y; sy1 = y; }
+  }
+  if (sy0 >= 0 && sy1 > sy0) {
+    vy0 = Math.max(0, sy0);
+    // DOLŮ se bere VŠECHEN obsah — žádná nota nesmí zůstat venku (Jan).
+    vy1 = ey1;
+  }
+  // Horní okraj: pás souvislého inkoustu, do kterého první osnova patří
+  // (pomocné linky, značky), se bere CELÝ. Hlavička oddělená mezerou
+  // (číslo stránky, nadpis) zůstává venku — a hlavně se nikdy neřeže
+  // doprostřed číslice.
+  const rowHasInk = (y) => {
+    const base = y * w;
+    for (let x = 0; x < w; x++) if (ink[base + x]) return true;
+    return false;
+  };
+  let bandTop = Math.max(0, Math.round(vy0 - padY * h));
+  while (bandTop > 0 && rowHasInk(bandTop - 1)) bandTop--;
+  const edgePad = Math.max(2, Math.round(h * 0.012));   // vzduch kolem obsahu
+  let y0 = Math.max(0, bandTop - edgePad) / h;
+  let bandBot = vy1;
+  while (bandBot < h - 1 && rowHasInk(bandBot + 1)) bandBot++;
+  let y1 = (Math.min(h - 1, bandBot + edgePad) + 1) / h;
+  staffOut.vy0 = vy0 / h; staffOut.vy1 = (vy1 + 1) / h;
+  staffOut.inkY = [ey0 / h, (ey1 + 1) / h];
+  staffOut.sy = [sy0 / h, sy1 / h];
   // Rámeček smí přesáhnout okraj stránky jen o PADDING. Dřív se při přetečení
   // POSOUVAL, aby zůstal celý na papíře — jenže tím se na jedné straně okraj
   // přidal a na druhé zmizel (dole pak nejnižší basové noty seděly na hraně,
