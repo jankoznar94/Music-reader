@@ -2149,6 +2149,11 @@ async function getPageCrop(pageIdx) {
   return job;
 }
 const annotations = ref({ items: [] });
+// Razítko soustavy, ve které byly anotace ULOŽENÉ (z DB při načtení). Viz
+// `rebaseAnnotationRef()` — bez něj se po změně šířky čtecí plochy rozejdou
+// poznámky a noty.
+let annotRefOnLoad = null;
+let jumpsRebased = false;
 const pagesPanelOpen = ref(false); // nabídka odebírání stránek
 const pagesListOpen = ref(false);  // seznam odebraných stránek uvnitř té nabídky
 // --- ODEBRANÉ STRÁNKY (vratné) ---------------------------------------------
@@ -2659,12 +2664,15 @@ onMounted(async () => {
 
   const saved = await dbGetAnnotations(props.id);
   if (saved && Array.isArray(saved.items)) annotations.value.items = saved.items;
+  // Razítko soustavy, ve které jsou anotace uložené (viz rebaseAnnotationRef).
+  annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
+  jumpsRebased = false;
   // Staré noty (směr nožičky v klíči) → nový zápis se `flipY` (viz normalizeNoteFlips)
   const norm1 = normalizeNoteFlips();
   // Staré jemné barvy → nová výrazná paleta (rovnou, bez zásahu uživatele)
   const upg1 = upgradeAnnotationColors();
   if (norm1 || upg1) {
-    await dbSaveAnnotations({ songId: song.id, items: annotations.value.items });
+    await dbSaveAnnotations(annotationsForDb(annotations.value.items));
   }
 
   // Načíst skoky (Da Capo / VIDE)
@@ -2692,6 +2700,8 @@ onMounted(async () => {
   // Aplikovat uložené výchozí zobrazení (stránka → skladba → fit), jinak fit 1.0
   await applySongView();
   await renderCurrent();
+  // Přepočet anotací do soustavy, ve které se právě kreslí (viz rebaseAnnotationRef)
+  await rebaseAnnotationRef();
   loading.value = false; // první stránka vykreslena → skrýt loading
   window.addEventListener('resize', onResize);
   // Udržet displej zapnutý, dokud je prohlížeč otevřený (jako jiné appky)
@@ -3283,7 +3293,17 @@ function evictCache(center) {
   }
 }
 
-function onResize() { syncViewerW(); computeFit(); renderCurrent(); }
+function onResize() {
+  syncViewerW(); computeFit(); renderCurrent();
+  // Změna rozměru plochy = jiná referenční soustava (refW). Bez přepočtu by
+  // se poznámky po otočení displeje / změně okna rozešly s notami.
+  // Debounce: rotace displeje posílá resize mnohokrát za sebou a každý
+  // přepočet by přeškáloval a uložil anotace (zaokrouhlovací drift).
+  if (!annotations.value.items.length) return;
+  clearTimeout(refRebaseTimer);
+  refRebaseTimer = setTimeout(() => { refRebaseTimer = null; rebaseAnnotationRef(); }, 300);
+}
+let refRebaseTimer = null;
 // Šířka okna pro výpočet okrajové zóny (--edge-w). Musí se aktualizovat při
 // každé změně rozměru, jinak by vizuál zůstal na staré hodnotě.
 function syncViewerW() {
@@ -3494,12 +3514,14 @@ async function switchSong(idx, toEnd) {
   loading.value = true; // loading overlay při přechodu mezi skladbami
   const saved = await dbGetAnnotations(s.id);
   annotations.value.items = (saved && Array.isArray(saved.items)) ? saved.items : [];
+  annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
+  jumpsRebased = false;
   // Staré noty (směr nožičky v klíči) → nový zápis se `flipY` (viz normalizeNoteFlips)
   const norm2 = normalizeNoteFlips();
   // Staré jemné barvy → nová výrazná paleta i při přechodu mezi skladbami
   const upg2 = upgradeAnnotationColors();
   if (norm2 || upg2) {
-    await dbSaveAnnotations({ songId: song.id, items: annotations.value.items });
+    await dbSaveAnnotations(annotationsForDb(annotations.value.items));
   }
   rawPageCount.value = await getPageCount(song);
   await loadHiddenPages();
@@ -3511,6 +3533,7 @@ async function switchSong(idx, toEnd) {
   await applyPageView();
   updatePageViewFlag();
   await renderCurrent();
+  await rebaseAnnotationRef();
   loading.value = false;
 }
 
@@ -4403,6 +4426,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     tool: tool.value,
     touchStart: _touchStart ? { edge: _touchStart.edge, age: Date.now() - _touchStart.t } : null,
     annotCount: annotations.value.items.length,
+    refW: refW.value, refH: refH.value,
     activeStroke: !!activeItem.value,
     page: currentPage.value,
     lastDown: _lastDownDbg,
@@ -5276,6 +5300,68 @@ function resetView() { applyPageView(); }
 
 // save
 let saveTimer = null;
+// --- SOUTAVA SOURADNIC ANOTACÍ (razítko `ref`) -----------------------------
+// Anotace jsou uložené v REFERENČNÍCH px celé stránky (šířka = šířka čtecí
+// plochy, `pageReference()`). Dokud se ta šířka nemění, sedí poznámky na noty
+// přesně. Když se ale mezi verzemi (nebo zařízeními) změní, uložené souřadnice
+// znamenají JINÉ místo na papíře: noty se posunou/změní měřítko a poznámky
+// zůstanou na svém — Jan (Oct 2026): „poznámky zůstaly na stejné pozici,
+// odsazení je uprostřed prázdna“.
+// Řešení: ke každému uložení se přidá razítko `ref = {w, h}` a při načtení se
+// souřadnice přepočítají do AKTUÁLNÍ soustavy. Tím je jakákoli budoucí změna
+// šířky plochy (layout, jiné zařízení, jiná verze) pro anotace neviditelná.
+function annotRefStamp() {
+  return { w: Math.round(refW.value), h: Math.round(refH.value) };
+}
+function annotationsForDb(items) {
+  return { songId: song.id, items, ref: annotRefStamp() };
+}
+// Přepočet všech druhů anotací jedním měřítkem (ref je vždy stejný poměr stran,
+// takže x i y se škálují stejně — jinak by se poznámky rozjely po ose).
+function scaleAnnotItems(items, k) {
+  if (!(k > 0) || Math.abs(k - 1) < 1e-9) return;
+  const sc = (v) => (typeof v === 'number' ? v * k : v);
+  for (const it of items) {
+    if (!it) continue;
+    if (typeof it.x === 'number') it.x = sc(it.x);
+    if (typeof it.y === 'number') it.y = sc(it.y);
+    if (Array.isArray(it.points)) it.points = it.points.map(p => ({ x: sc(p.x), y: sc(p.y) }));
+    if (Array.isArray(it.poly)) it.poly = it.poly.map(q => ({ x: sc(q.x), y: sc(q.y) }));
+    for (const key of ['x1', 'y1', 'x2', 'y2', 'x3', 'y3']) {
+      if (typeof it[key] === 'number') it[key] = sc(it[key]);
+    }
+    // Vizuální velikosti jsou taky v ref px, jinak by písmo/čára po přepočtu
+    // pozic měly jinou tloušťku než při vzniku.
+    for (const key of ['size', 'width', 'borderWidth']) {
+      if (typeof it[key] === 'number') it[key] = sc(it[key]);
+    }
+  }
+}
+// Po načtení skladby: přepočítat anotace (i umístění skoků) do aktuální soustavy.
+// Starý záznam bez razítka: historickou šířku plochy zpětně zjistit nelze, takže
+// se jen orazítkuje — od té chvíle je ale chráněný.
+async function rebaseAnnotationRef() {
+  const savedRef = annotRefOnLoad;
+  const curW = refW.value;
+  if (!(curW > 0)) return;
+  if (savedRef && savedRef.w > 0) {
+    const k = curW / savedRef.w;
+    if (Math.abs(k - 1) >= 0.005) {
+      scaleAnnotItems(annotations.value.items, k);
+      for (const j of jumps.value) {
+        const p = j && j.place;
+        if (!p) continue;
+        p.x *= k; p.y *= k; p.w *= k; p.h *= k;
+      }
+      jumpsRebased = true;
+      await flushAnnotations();
+      await dbSaveJumps({ songId: song.id, items: jumps.value });
+    }
+  } else {
+    await flushAnnotations();   // jen razítko, pozice se nemění
+  }
+  annotRefOnLoad = annotRefStamp();
+}
 function saveAnnotations() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => flushAnnotations(), 200);
@@ -5284,7 +5370,7 @@ function saveAnnotations() {
 async function flushAnnotations() {
   clearTimeout(saveTimer);
   saveTimer = null;
-  await dbSaveAnnotations({ songId: song.id, items: annotations.value.items });
+  await dbSaveAnnotations(annotationsForDb(annotations.value.items));
 }
 
 // --- PŘETAHOVÁNÍ PANELŮ (Jan, Oct 2026) -----------------------------------
