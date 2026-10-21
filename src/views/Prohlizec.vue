@@ -4153,7 +4153,22 @@ function onLayerDown(e) {
   // Pen-only mód: dotyk prstem/rukou NEKRESLÍ (palm-rejection) — kreslí jen pero.
   // Listování prstem v anotaci řeší touch obsluha na .viewer (onTouchStart/End),
   // která pozná, že pero zrovna kreslí, přes _activePointerId.
-  if (penOnly.value && e.pointerType !== 'pen') { _logEv('  down: penOnly blok'); return; }
+  // VÝJIMKA — režim Ruka (Upravit): tam se nic nekreslí, prstem se jen chytá
+  // a posouvá hotový objekt. Blokovat dotyk tady znamenalo, že na tabletu
+  // nešlo prstem uchopit zvýrazňovač (ani text) a posunout ho; dlaňová
+  // ochrana chrání jen psaní, ne přesun. Aby dlaň nemohla omylem odtáhnout
+  // objekt, pouští se dotyk jen když (a) není dlaňový (poloměr > 50 px jako
+  // v isPalmTouch) a (b) pero právě nepíše (PEN_GUARD_MS od posledního tahu
+  // perem). POZOR: nedívat se na `blockedNav()` — ten počítá i poslední
+  // DOTYK, takže „klepni na objekt a hned ho táhni" (dvě gesta půl sekundy
+  // po sobě) se zahodilo a objekt nešel posunout (naměřeno sondou
+  // probe-hl-finger.py).
+  if (penOnly.value && e.pointerType !== 'pen') {
+    const palm = Math.max(e.width || 0, e.height || 0) > 50;
+    const penWriting = Date.now() - _lastPenAt < PEN_GUARD_MS;
+    const grabInEdit = tool.value === 'edit' && !palm && !penWriting;
+    if (!grabInEdit) { _logEv('  down: penOnly blok'); return; }
+  }
   // V ANOTACI se přes okraje LISTUJE TLAČÍTKY, ne klepnutím — kraj tedy patří
   // psaní poznámek i pro prst (Jan: „v anotačním režimu nejsou vidět klikací
   // oblasti, ale poznámky tam psát nejdou“). Dřív se dotyk v okrajovém pruhu
