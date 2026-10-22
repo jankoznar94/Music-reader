@@ -68,7 +68,7 @@ async def main():
         # klepnutí doprostřed pásu → má se objevit výběrový rámeček
         await h.pen_tap(x, y)
         await asyncio.sleep(0.5)
-        sel = await h.ev("!!document.querySelector('.annot-selected rect')")
+        sel = await h.ev("!!document.querySelector('.annot-selected')")
         ok("klepnutí na pás zvýraznění ho vybere", sel is True, f"selected={sel}")
 
         # tažení

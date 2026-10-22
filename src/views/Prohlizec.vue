@@ -497,13 +497,33 @@
              Podmínka drží i tool === 'edit' a annotMode: rámeček smí existovat JEN
              v nástroji Ruka a jen když je anotační režim zapnutý. I kdyby někde
              zůstal viset editingId, rámeček se nevykreslí. -->
-        <g v-if="annotMode && tool === 'edit' && editingAnnot && selectedBox" class="annot-selected">
-          <rect
+        <g v-if="annotMode && tool === 'edit' && editingAnnot && (hlSelPath || selectedBox)" class="annot-selected">
+          <!-- Zvýrazňovač: rám jde po JEHO hranách (i když je pás pootočený) -->
+          <path v-if="hlSelPath" :d="hlSelPath"
+                fill="none" stroke="var(--accent,#d8a657)" stroke-width="1.5"
+                stroke-dasharray="6 4" />
+          <rect v-else
             :x="selectedBox.x" :y="selectedBox.y"
             :width="selectedBox.w" :height="selectedBox.h"
             fill="none" stroke="var(--accent,#d8a657)" stroke-width="1.5"
             stroke-dasharray="6 4" rx="5"
           />
+          <!-- Úchytky stran: tažením za kteroukoli z nich se hýbe JEN ta strana.
+               Jsou kousek VNĚ pásu se stopkou, aby úzký pás zůstal chytitelný
+               uprostřed (posun celého pásu) — viz hlEdgePoints. -->
+          <template v-if="hlHandles.length">
+            <g v-for="h in hlHandles" :key="'grip-' + h.key">
+              <line :x1="h.sx" :y1="h.sy" :x2="h.x" :y2="h.y" class="hl-grip-line" />
+              <rect :x="h.x - hlHandleSize / 2" :y="h.y - hlHandleSize / 2"
+                    :width="hlHandleSize" :height="hlHandleSize" class="hl-grip" />
+            </g>
+            <g v-if="hlRotHandle">
+              <line :x1="hlRotHandle.sx" :y1="hlRotHandle.sy"
+                    :x2="hlRotHandle.x" :y2="hlRotHandle.y" class="hl-grip-line" />
+              <circle :cx="hlRotHandle.x" :cy="hlRotHandle.y"
+                      :r="hlHandleSize * 0.72" class="hl-grip" />
+            </g>
+          </template>
         </g>
         <!-- Aktuální anotační prvky — pro SKUTEČNÉ měření textu v prohlížeči.
              Je to potřeba proto, že rámeček kolem textu se musí trefit přesně:
@@ -946,11 +966,19 @@
            s čipy se vejde pod něj. Koš tak zůstává uvnitř displeje. -->
       <div class="eb-row">
         <span class="eb-type">{{ editingTypeLabel }}</span>
-        <button class="eb-btn" @click="editText(editingAnnot)" title="Přepsat text">✏️</button>
-        <span class="eb-size">Velikost</span>
-        <button class="eb-btn" @click="resizeAnnot(editingAnnot, -1)" title="Zmenšit">−</button>
-        <span class="eb-val">{{ editingAnnot ? Math.round(editingAnnot.size) : 0 }}</span>
-        <button class="eb-btn" @click="resizeAnnot(editingAnnot, 1)" title="Zvětšit">+</button>
+        <!-- Zvýraznění nemá text ani „velikost" — mění se tažením za úchytky
+             přímo na notách. Tlačítka pro text by tu mátla (a přepsání textu
+             by čtyřúhelník rozbilo). -->
+        <template v-if="editingAnnot && editingAnnot.tool === 'highlighter'">
+          <span class="eb-hint">Táhni za čtverečky · kolečko otáčí</span>
+        </template>
+        <template v-else>
+          <button class="eb-btn" @click="editText(editingAnnot)" title="Přepsat text">✏️</button>
+          <span class="eb-size">Velikost</span>
+          <button class="eb-btn" @click="resizeAnnot(editingAnnot, -1)" title="Zmenšit">−</button>
+          <span class="eb-val">{{ editingAnnot ? Math.round(editingAnnot.size) : 0 }}</span>
+          <button class="eb-btn" @click="resizeAnnot(editingAnnot, 1)" title="Zvětšit">+</button>
+        </template>
         <!-- Rámeček se dá zapnout/vypnout i u UŽ VLOŽENÉHO textu — jinak by uživatel
              musel text smazat a vložit znovu, když si to rozmyslí. Volba se propíše
              i do „další text“ (stejně jako velikost zůstává nastavená).
@@ -1933,8 +1961,78 @@ const selectedBox = computed(() => {
   const pad = 8;
   return { x: x1 - pad, y: y1 - pad, w: (x2 - x1) + pad * 2, h: (y2 - y1) + pad * 2 };
 });
+// --- Úchytky zvýrazňovače (režim Upravit) --------------------------------
+// Vybraný zvýrazňovač se nekreslí jako obecný bounding box, ale jako SVŮJ
+// čtyřúhelník — po otočení stránky je totiž nakloněný a osový rám by lhal
+// o tom, kde pás skutečně je.
+const hlSelQuad = computed(() => {
+  const it = editingAnnot.value;
+  return it && it.tool === 'highlighter' ? hlQuad(it) : null;
+});
+const hlSelPath = computed(() => {
+  const q = hlSelQuad.value;
+  return q ? 'M' + q.map(p => `${p.x},${p.y}`).join('L') + 'Z' : '';
+});
+// Kolik obrazových px je jeden px vrstvy (zoom × fit × měřítko výřezu).
+// Úchytky se díky tomu drží stejně velké při každém přiblížení.
+const layerPx = computed(() => {
+  const s = (cssW.value / (cropBox.value.w || 1)) * (zoom.value * liveFit.value);
+  return s > 0 && isFinite(s) ? s : 1;
+});
+const hlHandleSize = computed(() => 13 / layerPx.value);   // hrana čtverce úchytky
+const hlMinSide = computed(() => 10 / layerPx.value);      // nejmenší šířka/výška pásu
+const HL_GRIP_OFFSET = 20;   // px NA OBRAZOVCE, jak daleko je úchytka vně pásu
+const HL_ROT_OFFSET = 46;    // px NA OBRAZOVCE, jak daleko je otočné kolečko
+const hlHandles = computed(() => {
+  const it = editingAnnot.value;
+  if (!it || it.tool !== 'highlighter') return [];
+  const off = HL_GRIP_OFFSET / layerPx.value;
+  return hlEdgePoints(it).map(h => ({
+    key: h.key, edge: h.key,
+    sx: h.x, sy: h.y,                        // odkud vede stopka (střed strany)
+    x: h.x + h.nx * off, y: h.y + h.ny * off,
+  }));
+});
+const hlRotHandle = computed(() => {
+  const it = editingAnnot.value;
+  if (!it || it.tool !== 'highlighter') return null;
+  const top = hlEdgePoints(it).find(h => h.key === 'top');
+  if (!top) return null;
+  const rotOff = HL_ROT_OFFSET / layerPx.value;
+  const gripOff = HL_GRIP_OFFSET / layerPx.value;
+  return {
+    sx: top.x + top.nx * gripOff, sy: top.y + top.ny * gripOff,
+    x: top.x + top.nx * rotOff, y: top.y + top.ny * rotOff,
+  };
+});
+// Střed pásu (pro otočení kolem vlastního středu)
+function hlQuadCenter(it) {
+  const q = hlQuad(it);
+  if (!q) return null;
+  return { x: q.reduce((s, p) => s + p.x, 0) / 4, y: q.reduce((s, p) => s + p.y, 0) / 4 };
+}
+// Chytil uživatel úchytku? (hledá se NEJBLIŽŠÍ, aby si úzký pás a kolečko
+// nekonkurovaly; rádius je 20 px obrazovky = pohodlné pro prst i pero)
+function hlHandleAt(p) {
+  const it = editingAnnot.value;
+  if (!it || it.tool !== 'highlighter') return null;
+  const r = 20 / layerPx.value;
+  let best = null, bestD = Infinity;
+  const rot = hlRotHandle.value;
+  if (rot) {
+    const d = Math.hypot(p.x - rot.x, p.y - rot.y);
+    if (d <= r) { best = { mode: 'rotate' }; bestD = d; }
+  }
+  for (const h of hlHandles.value) {
+    const d = Math.hypot(p.x - h.x, p.y - h.y);
+    if (d <= r && d < bestD) { best = { mode: 'edge', edge: h.edge }; bestD = d; }
+  }
+  return best;
+}
+
 const editingTypeLabel = computed(() => {
   const t = editingAnnot.value ? editingAnnot.value.tool : '';
+  if (t === 'highlighter') return 'Zvýraznění';
   if (t === 'dynamic') return 'Dynamika';
   if (t === 'mark') return 'Značka';
   if (t === 'note') return 'Nota';
@@ -4152,6 +4250,93 @@ function hlCenter(it) {
   return { x: (it.x1 + it.x2) / 2, y: (it.y1 + it.y2) / 2 };
 }
 
+// --- Zvýrazňovač jako UPRAVITELNÝ obdélník (Oct 2026) --------------------
+// poly = 4 rohy ve souřadnicích vrstvy, v pořadí TL, TR, BR, BL (cyklicky).
+// Starší zvýrazňovače měly jen x1..y2 → dopočítá se z nich obdélník, takže
+// ruka je chytí stejně a první úprava je převede na poly.
+function hlQuad(it) {
+  if (!it) return null;
+  if (it.poly && it.poly.length === 4 && it.poly.every(q => q && q.x != null && q.y != null)) {
+    return it.poly.map(q => ({ x: q.x, y: q.y }));
+  }
+  if (it.x1 == null || it.x2 == null || it.y1 == null || it.y2 == null) return null;
+  const x1 = Math.min(it.x1, it.x2), x2 = Math.max(it.x1, it.x2);
+  const y1 = Math.min(it.y1, it.y2), y2 = Math.max(it.y1, it.y2);
+  return [{ x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 }];
+}
+// Zapíše rohy ZPĚT do anotace. Zdroj pravdy je poly (drží se not); x1..y2
+// zůstává jen jako hrubý bounding box pro gumu a hit-test.
+function hlSetQuad(it, quad) {
+  it.poly = quad.map(q => ({ x: q.x, y: q.y }));
+  const xs = quad.map(q => q.x), ys = quad.map(q => q.y);
+  it.x1 = Math.min(...xs); it.y1 = Math.min(...ys);
+  it.x2 = Math.max(...xs); it.y2 = Math.max(...ys);
+}
+const HL_EDGES = [
+  { key: 'top', a: 0, b: 1 },
+  { key: 'right', a: 1, b: 2 },
+  { key: 'bottom', a: 2, b: 3 },
+  { key: 'left', a: 3, b: 0 },
+];
+// Středy stran + vnější normála — z toho se staví úchytky stran a otočné kolečko.
+// Úchytky jsou VNĚ pásu (ne na hraně): u tenkého zvýrazňovače by úchytky na
+// hraně pokryly celou plochu a pás by už nešel chytit a posunout.
+function hlEdgePoints(it) {
+  const q = hlQuad(it);
+  if (!q) return [];
+  const cx = q.reduce((s, p) => s + p.x, 0) / 4;
+  const cy = q.reduce((s, p) => s + p.y, 0) / 4;
+  return HL_EDGES.map(e => {
+    const a = q[e.a], b = q[e.b];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    let nx = mx - cx, ny = my - cy;
+    const n = Math.hypot(nx, ny) || 1;
+    return { key: e.key, x: mx, y: my, nx: nx / n, ny: ny / n, a: e.a, b: e.b };
+  });
+}
+// Otočení čtyřúhelníku kolem středu o úhel delta (radiány)
+function hlRotateQuad(quad, center, delta) {
+  const cos = Math.cos(delta), sin = Math.sin(delta);
+  return quad.map(p => {
+    const x = p.x - center.x, y = p.y - center.y;
+    return { x: center.x + x * cos - y * sin, y: center.y + x * sin + y * cos };
+  });
+}
+// Tažení za stranu: hýbe se JEN ta strana, protější zůstává na místě.
+// Počítá se v lokální soustavě čtyřúhelníku (osa šířky u, osa výšky v), takže
+// funguje i na otočené stránce a po otočení pásu kolečkem.
+// minSide = nejmenší přípustná šířka/výška (v jednotkách vrstvy) — strana se
+// nesmí protáhnout přes protější (obdélník by se převrátil).
+function hlResizeQuad(quad, edge, dx, dy, minSide) {
+  const c0 = quad[0], c1 = quad[1], c3 = quad[3];
+  let ux = c1.x - c0.x, uy = c1.y - c0.y;
+  const w = Math.hypot(ux, uy) || 1; ux /= w; uy /= w;
+  let vx = c3.x - c0.x, vy = c3.y - c0.y;
+  const h = Math.hypot(vx, vy) || 1; vx /= h; vy /= h;
+  const dU = dx * ux + dy * uy;
+  const dV = dx * vx + dy * vy;
+  const q = quad.map(p => ({ x: p.x, y: p.y }));
+  let t = 0;
+  if (edge === 'top') {
+    t = Math.min(dV, h - minSide);
+    q[0].x += vx * t; q[0].y += vy * t;
+    q[1].x += vx * t; q[1].y += vy * t;
+  } else if (edge === 'bottom') {
+    t = Math.max(dV, minSide - h);
+    q[2].x += vx * t; q[2].y += vy * t;
+    q[3].x += vx * t; q[3].y += vy * t;
+  } else if (edge === 'left') {
+    t = Math.min(dU, w - minSide);
+    q[0].x += ux * t; q[0].y += uy * t;
+    q[3].x += ux * t; q[3].y += uy * t;
+  } else if (edge === 'right') {
+    t = Math.max(dU, minSide - w);
+    q[1].x += ux * t; q[1].y += uy * t;
+    q[2].x += ux * t; q[2].y += uy * t;
+  }
+  return q;
+}
+
 function onLayerDown(e) {
   _logEv('down ' + e.pointerType + ' tool=' + tool.value + ' annot=' + annotMode.value);
   // Umisťování tlačítka skoku: tři klepnutí určují obdélník tlačítka.
@@ -4226,6 +4411,12 @@ function onLayerDown(e) {
 
   // Režim "Upravit": vybrat prvek na daném místě a připravit k přetažení
   if (tool.value === 'edit') {
+    // Explicitní pointer capture pro CELÝ režim Ruka. Bez něj prohlížeč při
+    // tažení přes plovoucí panel (nástroje, lišta) pošle na vrstvu
+    // `pointerleave` a tah se UTRHNE v půlce — naměřeno u tažení za úchytku
+    // zvýrazňovače: pás se posunul jen o 7,5 px a dál nic. S capture zůstávají
+    // pointermove u vrstvy až do zvednutí prstu/pera.
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* starší prohlížeč */ }
     // Tažení za tlačítko skoku (má uložené umístění) — přesun celého obdélníku
     const jHit = jumpAtPoint(p);
     if (jHit) {
@@ -4237,6 +4428,25 @@ function onLayerDown(e) {
       return;
     }
     _dragJump = null;
+    // Úchytky zvýrazňovače mají PŘEDNOST před tažením celého pásu — jinak by
+    // tažení za okraj posouvalo celý pás a rozměr by nešel změnit.
+    const hlHit = hlHandleAt(p);
+    if (hlHit && editingAnnot.value) {
+      const c = hlQuadCenter(editingAnnot.value) || p;
+      _hlEdit = {
+        it: editingAnnot.value,
+        mode: hlHit.mode,
+        edge: hlHit.edge,
+        quad: hlQuad(editingAnnot.value),
+        center: c,
+        from: { x: p.x, y: p.y },
+        angle0: Math.atan2(p.y - c.y, p.x - c.x),
+        pushed: false,
+      };
+      _dragAnnot = null; _dragFrom = null; _dragSnap = null;
+      _prev = p;
+      return;
+    }
     const hit = pageHits(p);
     if (hit) {
       editingId.value = hit.id;
@@ -4400,6 +4610,10 @@ let _dragAnnot = null;
 let _dragJump = null, _dragJumpFrom = null, _dragJumpSnap = null;   // prvek přetahovaný v režimu Upravit (ruka)
 let _dragFrom = null;    // výchozí bod přetažení (x,y)
 let _dragSnap = null;    // snapshot geometrie prvku na začátku přetažení
+// Rozpracovaná úprava zvýrazňovače (tažení za úchytku strany / otočným kolečkem).
+// Drží snapshot čtyřúhelníku — nové rohy se vždy počítají z něj, ne z minulého
+// snímku, aby se zaokrouhlovací chyba nekumulovala.
+let _hlEdit = null;
 // Diagnostický hook pro sondy (window.__navdbg) — JEN ve vývojovém režimu,
 // do produkčního bundle se nedostane (import.meta.env.DEV je při buildu false).
 // `lastDown`/`lastUp` = kterou větví se klepnutí na vrstvu rozhodlo. Bez toho
@@ -4467,6 +4681,7 @@ function resetGestureState() {
   _pinch = null;
   _rot3 = null;
   _dragAnnot = null; _dragFrom = null; _dragSnap = null;
+  _hlEdit = null;
   _dragJump = null; _dragJumpFrom = null; _dragJumpSnap = null;
   _prev = null;
   activeItem.value = null;
@@ -4508,6 +4723,24 @@ function onLayerMove(e) {
       w: s.w, h: s.h,
     };
     _prev = p2;
+    return;
+  }
+  // Režim "Upravit": tažení za úchytku zvýrazňovače = změna rozměru / otočení
+  if (tool.value === 'edit' && _hlEdit) {
+    if (_activePointerId !== e.pointerId) return;
+    const ed = _hlEdit;
+    const p = toLayerCoords(e);
+    // Historie se ukládá až při PRVNÍM pohybu — klepnutí na úchytku bez tažení
+    // tak nezanechá prázdný krok v "zpět".
+    if (!ed.pushed) { pushHistory(); ed.pushed = true; }
+    if (ed.mode === 'rotate') {
+      const a1 = Math.atan2(p.y - ed.center.y, p.x - ed.center.x);
+      hlSetQuad(ed.it, hlRotateQuad(ed.quad, ed.center, a1 - ed.angle0));
+    } else {
+      hlSetQuad(ed.it, hlResizeQuad(ed.quad, ed.edge,
+                                    p.x - ed.from.x, p.y - ed.from.y, hlMinSide.value));
+    }
+    _prev = p;
     return;
   }
   // Režim "Upravit": přetahování vybraného prvku (text, dynamika, tah, klín)
@@ -4610,6 +4843,10 @@ function onLayerMove(e) {
 }
 function onLayerUp(e) {
   _logEv('up ' + (e && e.pointerType) + ' activePtr=' + _activePointerId + ' item=' + !!activeItem.value);
+  // `pointerleave` NESMÍ ukončit rozpracované tažení v režimu Ruka — jinak se
+  // přesun/změna rozměru utrhne ve chvíli, kdy prst přejede přes plovoucí panel.
+  // (Pointer capture v onLayerDown dělá totéž; tohle je pojistka.)
+  if (e && e.type === 'pointerleave' && (_hlEdit || _dragAnnot || _dragJump)) return;
   // Pero ukončilo tah → drž krátký ochranný interval, po který dotyk
   // (opřená ruka se zpožděným touchendem) nesmí otočit stránku.
   if (e && e.pointerType === 'pen') markPen();
@@ -4621,6 +4858,15 @@ function onLayerUp(e) {
       _dragJump = null; _dragJumpFrom = null; _dragJumpSnap = null;
       _activePointerId = null;
       _prev = null;
+      return;
+    }
+    if (_hlEdit) {
+      if (_activePointerId === e.pointerId) {
+        if (_hlEdit.pushed) saveAnnotations();
+        _hlEdit = null;
+        _activePointerId = null;
+        _prev = null;
+      }
       return;
     }
     if (_dragAnnot && _activePointerId === e.pointerId) {
@@ -5090,6 +5336,7 @@ function setTextBorderStyle(it, key) {
   saveAnnotations();
 }
 function endEdit() {
+  _hlEdit = null;
   editingId.value = null;
 }
 function deleteEditing() {
@@ -6187,6 +6434,19 @@ async function deleteBookmark(b) {
 .annot-nav-btn:disabled { opacity: 0.35; }
 .annot-nav-btn:active:not(:disabled) { background: rgba(60, 56, 50, 0.9); }
 .annot-layer .hl { mix-blend-mode: multiply; opacity: 0.9; }
+/* Rám výběru a úchytky zvýrazňovače — ploché, bez efektů (mobilní PWA).
+   Nechytají se dotykem přímo: hit-test dělá JS podle vzdálenosti od úchytky,
+   takže čtvereček může být malý a přesto se dá trefit prstem. */
+.annot-selected { pointer-events: none; }
+.annot-layer .hl-grip {
+  fill: var(--accent, #d8a657);
+  stroke: #17130f; stroke-width: 1;
+  pointer-events: none;
+}
+.annot-layer .hl-grip-line {
+  stroke: var(--accent, #d8a657); stroke-width: 1.25;
+  stroke-dasharray: 3 3; pointer-events: none;
+}
 /* Náhled zvýrazňovače při sytých barvách: ať je vidět, že jde o zvýraznění,
    a ne o přebarvení not — náhled multiplikuje stejně jako hotový tvar. */
 .annot-layer .hl-preview { mix-blend-mode: multiply; opacity: 0.55; }
@@ -6634,6 +6894,8 @@ async function deleteBookmark(b) {
 }
 .eb-row-frame { row-gap: 6px; }
 .eb-type { font-weight: 600; font-size: 0.85rem; color: var(--accent); }
+/* Nápověda v liště úprav pro zvýraznění (nemá velikost ani text) */
+.eb-hint { font-size: 0.8rem; color: var(--text-dim, #a99f90); }
 .eb-size { font-size: 0.8rem; color: var(--text-dim); }
 .eb-val { font-size: 0.9rem; font-weight: 600; min-width: 20px; text-align: center; }
 .eb-btn {
