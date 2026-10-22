@@ -791,9 +791,11 @@
       <button class="jp-close" @click="closeBookmarkPanel">Zavřít</button>
     </div>
 
-    <!-- Záložky — vždy viditelná lišta u spodní hrany -->
+    <!-- Záložky — lišta u spodní hrany; chová se STEJNĚ jako horní lišta:
+         tap na střed not ji schová i ukáže (Jan: „jak se schová/zobrazí hlavní
+         lišta, tak stejně i spodní lišta se záložkami“). -->
     <!-- Lišta záložek — skrytá, když se upravuje vybraný prvek (edit-bar by s ní splýval) -->
-    <div v-if="bookmarks.length && !editingId" class="bookmark-strip">
+    <div v-if="bookmarks.length && !editingId && !barHidden" class="bookmark-strip">
       <button
         v-for="b in bookmarks"
         :key="b.id"
