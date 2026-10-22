@@ -78,6 +78,15 @@
              Zobrazují se VŽDY (i při hledání jako cíl tažení); při hledání jsou
              ztlumené, aby neodváděly pozornost od výsledků. -->
         <ul class="folderlist">
+          <!-- Založení složky PŘÍMO TADY (Jan: „vytváření složky by mělo být možné
+               přímo v rootu") — nemusí se nikam přepínat. Od Oct 2026 je řádek
+               NAVRCHU, nad všemi složkami (Jan: „dáme tlačítko Nová složka
+               nahoru, nad všechny ostatní složky"). -->
+          <li class="folder-row newfolder" @click="createFolder(null)">
+            <span class="folder-ico">＋</span>
+            <span class="folder-name">Nová složka</span>
+          </li>
+
           <li
             v-for="f in childFolders"
             :key="f.id"
@@ -95,13 +104,6 @@
               <button class="icon-btn" @click="renameFolder(f)" title="Přejmenovat">✏️</button>
               <button class="icon-btn danger" @click="confirmDeleteFolder(f)" title="Smazat složku">🗑</button>
             </div>
-          </li>
-
-          <!-- Založení složky PŘÍMO TADY (Jan: „vytváření složky by mělo být možné
-               přímo v rootu") — nemusí se nikam přepínat. -->
-          <li class="folder-row newfolder" @click="createFolder(null)">
-            <span class="folder-ico">＋</span>
-            <span class="folder-name">Nová složka</span>
           </li>
         </ul>
 
