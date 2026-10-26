@@ -89,7 +89,8 @@ async def main():
         await h.set_tablet()
         await h.open()
         await asyncio.sleep(2)
-        expr = f"({JS})({json.dumps(base64.b64encode(fixture).decode())}, '/src/share.js')"
+        mod = os.environ.get('MOD', '/src/share.js')
+        expr = f"({JS})({json.dumps(base64.b64encode(fixture).decode())}, {json.dumps(mod)})"
         data = base64.b64decode(await h.ev(expr, await_promise=True))
 
     out = '/tmp/hl-burn.pdf'
