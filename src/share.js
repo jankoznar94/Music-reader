@@ -13,7 +13,7 @@
 // příjemce nevidí jen čáry, ale má stejné noty „jak je autor slyší“.
 
 import {
-  PDFDocument, PDFName, decodePDFRawStream,
+  PDFDocument, PDFName, PDFOperator, PDFOperatorNames, decodePDFRawStream,
   pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject,
 } from 'pdf-lib';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
@@ -158,6 +158,22 @@ function nextFrame() {
   });
 }
 
+// Blend mode = „gs" operátor + /ExtGState v prostředcích stránky. Name se
+// registruje na každé stránce zvlášť (prostředky jsou per-stránka).
+const BLEND_GS = 'AnnotMultiply';
+
+function setBlendMode(doc, page) {
+  const res = page.node.Resources();
+  let egs = res.lookup(PDFName.of('ExtGState'));
+  if (!egs || typeof egs.set !== 'function') {
+    egs = doc.context.obj({});
+    res.set(PDFName.of('ExtGState'), egs);
+  }
+  const dict = doc.context.obj({ Type: 'ExtGState', BM: 'Multiply', ca: 1, CA: 1 });
+  egs.set(PDFName.of(BLEND_GS), doc.context.register(dict));
+  return PDFOperator.of(PDFOperatorNames.SetGraphicsStateParams, [PDFName.of(BLEND_GS)]);
+}
+
 /**
  * Vypálí anotace do PDF a (volitelně) přibalí overlay jako přílohu.
  * @param {Uint8Array} pdfBytes původní PDF
@@ -184,27 +200,45 @@ export async function burnOverlayIntoPdf(pdfBytes, opts) {
       const { index, pageItems } = jobs[k];
       const page = pages[index];
       const scale = pageRasterScale(page, ref);
-      renderAnnotationLayer(canvas, pageItems, {
-        w: ref && ref.w, h: ref && ref.h, scale,
-        displayText: helpers.displayText,
-        borderRects: helpers.borderRects,
-        noteStroke: helpers.noteStroke,
-        noteFlipY: helpers.noteFlipY,
-      });
-      const png = await canvasToPngBytes(canvas);
-      // Paměť se uvolní DŘÍV, než se začne kreslit další stránka — na mobilu
-      // jinak součet canvasů shodí renderer.
-      canvas.width = 0;
-      canvas.height = 0;
-      const img = await doc.embedPng(png);
-      const key = page.node.newXObject('AnnotOverlay', img.ref);
       const m = rotationMatrix(page);
-      page.pushOperators(
-        pushGraphicsState(),
-        concatTransformationMatrix(m[0], m[1], m[2], m[3], m[4], m[5]),
-        drawObject(key),
-        popGraphicsState(),
-      );
+
+      // Zvýrazňovač jde do PDF jako SAMOSTATNÁ vrstva s multiply — přesně jako
+      // na obrazovce (`.annot-layer .hl { mix-blend-mode: multiply }`). Kdyby
+      // se vypálil spolu s ostatními anotacemi jako neprůhledná vrstva, jeho
+      // krytí by noty pod ním ztmavilo (a při 90 % je nepřečteš).
+      const hlItems = pageItems.filter((x) => x.tool === 'highlighter');
+      const restItems = pageItems.filter((x) => x.tool !== 'highlighter');
+      const layers = [
+        { items: hlItems, multiply: true },   // první = pod ostatními tahy
+        { items: restItems, multiply: false },
+      ];
+
+      for (const layer of layers) {
+        if (!layer.items.length) continue;
+        renderAnnotationLayer(canvas, layer.items, {
+          w: ref && ref.w, h: ref && ref.h, scale,
+          displayText: helpers.displayText,
+          borderRects: helpers.borderRects,
+          noteStroke: helpers.noteStroke,
+          noteFlipY: helpers.noteFlipY,
+        });
+        const png = await canvasToPngBytes(canvas);
+        // Paměť se uvolní DŘÍV, než se začne kreslit další vrstva — na mobilu
+        // jinak součet canvasů shodí renderer.
+        canvas.width = 0;
+        canvas.height = 0;
+        const img = await doc.embedPng(png);
+        const key = page.node.newXObject('AnnotOverlay', img.ref);
+        const ops = [pushGraphicsState()];
+        if (layer.multiply) ops.push(setBlendMode(doc, page));
+        ops.push(
+          concatTransformationMatrix(m[0], m[1], m[2], m[3], m[4], m[5]),
+          drawObject(key),
+          popGraphicsState(),
+        );
+        page.pushOperators(...ops);
+      }
+
       if (onProgress) {
         try { onProgress(k + 1, jobs.length, { page: index + 1, scale }); } catch { /* UI nesmí shodit export */ }
       }
