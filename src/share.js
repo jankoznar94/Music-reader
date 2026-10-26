@@ -17,7 +17,7 @@ import {
   pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject,
 } from 'pdf-lib';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
-import { renderAnnotationLayer, ensureNotationFont, ANNOT_SCALE } from './annotRaster.js';
+import { renderAnnotationLayer, ensureNotationFont } from './annotRaster.js';
 
 export const OVERLAY_FORMAT = 'harlequin-music-reader/overlay';
 export const OVERLAY_VERSION = 1;
@@ -57,6 +57,20 @@ export function buildOverlayPayload({ song, annotations, jumps, bookmarks, bmMan
 }
 
 // --- vypálení do PDF ---
+
+// Kolik pixelů smí mít jedna vypalovaná stránka. Anotace se kreslí do canvasu
+// v "ref px" (souřadnice, které má stránka na displeji) — na telefonu je to
+// klidně 1200×1900 ref px, takže 3× zoom udělal canvas 3600×5700 = 20 M px.
+// Android Chrome takový canvas buď vyplní, nebo `toBlob` NIKDY nezavolá —
+// a protože se čeká na callback, tlačítko zůstalo šedé a nestalo se nic.
+// Proto: 1) rastr se počítá z rozměru STRÁNKY v bodech (~300 dpi), ne z ref px;
+//        2) plocha stránky má tvrdý strop;
+//        3) canvas se po každé stránce uvolní.
+const TARGET_DPI = 300;
+const MAX_PAGE_PX = 8_000_000;      // ~8 M px na stránku = bezpečné i na mobilu
+const MAX_PAGE_SIDE = 4200;         // px na delší stranu
+const PNG_TIMEOUT_MS = 12000;       // když toBlob mlčí, jde se na synchronní cestu
+
 function rotationMatrix(page) {
   const angle = ((page.getRotation().angle % 360) + 360) % 360;
   const W = page.getWidth();
@@ -72,31 +86,104 @@ function rotationMatrix(page) {
 
 function canvasToPngBytes(canvas) {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(async (blob) => {
-      if (!blob) { reject(new Error('Canvas se nepodařilo převést na PNG')); return; }
-      resolve(new Uint8Array(await blob.arrayBuffer()));
-    }, 'image/png');
+    let done = false;
+    const finish = (bytes) => { if (done) return; done = true; resolve(bytes); };
+    const fail = (msg) => { if (done) return; done = true; reject(new Error(msg)); };
+
+    const syncFallback = () => {
+      // Android Chrome občas `toBlob` vůbec nezavolá (velký canvas / málo
+      // paměti). Synchronní převod sice chvíli blokuje, ale vždy vrátí data.
+      try {
+        finish(dataUrlToBytes(canvas.toDataURL('image/png')));
+      } catch (e) {
+        fail('Canvas se nepodařilo převést na PNG');
+      }
+    };
+
+    let timer = null;
+    try {
+      canvas.toBlob(async (blob) => {
+        if (done) return;
+        if (timer) clearTimeout(timer);
+        if (!blob) { syncFallback(); return; }
+        try {
+          finish(new Uint8Array(await blob.arrayBuffer()));
+        } catch (e) {
+          fail('Canvas se nepodařilo převést na PNG');
+        }
+      }, 'image/png');
+    } catch (e) {
+      syncFallback();
+      return;
+    }
+    timer = setTimeout(() => { if (!done) syncFallback(); }, PNG_TIMEOUT_MS);
+  });
+}
+
+function dataUrlToBytes(dataUrl) {
+  const comma = dataUrl.indexOf(',');
+  if (comma < 0) throw new Error('Neplatná data URL');
+  const b64 = dataUrl.slice(comma + 1);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/**
+ * Jak velký rastr pro tuhle stránku? Vychází z rozměru stránky v bodech
+ * (~300 dpi), ne z "ref px" — ty jsou na mobilu mnohem větší a canvas pak
+ * přeteče limity prohlížeče. Výsledek se navíc vejde do MAX_PAGE_PX.
+ */
+function pageRasterScale(page, ref) {
+  const angle = ((page.getRotation().angle % 360) + 360) % 360;
+  const visW = (angle === 90 || angle === 270) ? page.getHeight() : page.getWidth();
+  const visH = (angle === 90 || angle === 270) ? page.getWidth() : page.getHeight();
+  const refW = (ref && ref.w > 0) ? ref.w : visW;
+  const refH = (ref && ref.h > 0) ? ref.h : visH;
+  let scale = (TARGET_DPI / 72) * (visW / refW);
+  // strop na plochu i na delší stranu (prohlížeče mají limity na canvas)
+  const area = refW * scale * refH * scale;
+  if (area > MAX_PAGE_PX) scale *= Math.sqrt(MAX_PAGE_PX / area);
+  const longSide = Math.max(refW * scale, refH * scale);
+  if (longSide > MAX_PAGE_SIDE) scale *= MAX_PAGE_SIDE / longSide;
+  return Math.max(0.5, scale);
+}
+
+/** Nechá prohlížeč překreslit hlášku o průběhu (jinak mobil zamrzne na místě). */
+function nextFrame() {
+  return new Promise((r) => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => r());
+    else setTimeout(r, 0);
   });
 }
 
 /**
  * Vypálí anotace do PDF a (volitelně) přibalí overlay jako přílohu.
  * @param {Uint8Array} pdfBytes původní PDF
- * @param {Object} opts { items, ref:{w,h}, helpers, scale, payload }
+ * @param {Object} opts { items, ref:{w,h}, helpers, dpi, payload, onProgress }
  * @returns {Promise<Uint8Array>}
  */
 export async function burnOverlayIntoPdf(pdfBytes, opts) {
-  const { items = [], ref, helpers = {}, payload = null } = opts || {};
-  const scale = opts.scale || ANNOT_SCALE;
+  const { items = [], ref, helpers = {}, payload = null, onProgress = null } = opts || {};
   const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
   const pages = doc.getPages();
 
+  const jobs = [];
   if (items.length) {
-    await ensureNotationFont();
     for (let i = 0; i < pages.length; i++) {
       const pageItems = items.filter((x) => x && x.page === i);
-      if (!pageItems.length) continue;
-      const canvas = document.createElement('canvas');
+      if (pageItems.length) jobs.push({ index: i, pageItems });
+    }
+  }
+
+  if (jobs.length) {
+    await ensureNotationFont();
+    const canvas = document.createElement('canvas');
+    for (let k = 0; k < jobs.length; k++) {
+      const { index, pageItems } = jobs[k];
+      const page = pages[index];
+      const scale = pageRasterScale(page, ref);
       renderAnnotationLayer(canvas, pageItems, {
         w: ref && ref.w, h: ref && ref.h, scale,
         displayText: helpers.displayText,
@@ -105,8 +192,11 @@ export async function burnOverlayIntoPdf(pdfBytes, opts) {
         noteFlipY: helpers.noteFlipY,
       });
       const png = await canvasToPngBytes(canvas);
+      // Paměť se uvolní DŘÍV, než se začne kreslit další stránka — na mobilu
+      // jinak součet canvasů shodí renderer.
+      canvas.width = 0;
+      canvas.height = 0;
       const img = await doc.embedPng(png);
-      const page = pages[i];
       const key = page.node.newXObject('AnnotOverlay', img.ref);
       const m = rotationMatrix(page);
       page.pushOperators(
@@ -115,6 +205,10 @@ export async function burnOverlayIntoPdf(pdfBytes, opts) {
         drawObject(key),
         popGraphicsState(),
       );
+      if (onProgress) {
+        try { onProgress(k + 1, jobs.length, { page: index + 1, scale }); } catch { /* UI nesmí shodit export */ }
+      }
+      await nextFrame();
     }
   }
 

@@ -5649,6 +5649,14 @@ async function flushAnnotations() {
 //   • „PDF + JSON" — čisté (nepopsané) PDF a k tomu overlay.json v jednom
 //     .zip. Pro tisk, nebo pro kolegu, který si noty chce popsat sám.
 const exporting = ref(null);          // null | 'burn' | 'bundle'
+// Pojistka: ať se nikdy nestane, že tlačítka zůstanou šedá bez konce (dřív se
+// zasekl `canvas.toBlob` na Androidu a uživatel nedostal ani hlášku).
+function withTimeout(promise, ms, msg) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms)),
+  ]);
+}
 const shareHelpers = {
   displayText: annotDisplayText,
   borderRects: textBorderRects,
@@ -5674,12 +5682,16 @@ async function exportPdf(kind) {
       bmManualOrder: bmManualOrder.value,
     });
     if (kind === 'burn') {
-      const out = await share.exportBurnedPdf(bytes, {
+      // Vypalování je na mobilu dlouhé (canvas + PNG + přepis PDF). Bez hlášky
+      // o průběhu to vypadá, že se nic neděje — a když se dřív zasekl `toBlob`,
+      // tlačítko zůstalo šedé bez jakékoli zprávy.
+      const out = await withTimeout(share.exportBurnedPdf(bytes, {
         items: annotations.value.items,
         ref: annotRefStamp(),
         helpers: shareHelpers,
         payload,
-      });
+        onProgress: (done, total) => showToast(`Vypaluji poznámky… ${done}/${total}`),
+      }), 300000, 'Vypalování trvalo příliš dlouho — zkus to na menší části not');
       share.downloadBytes(out, `${base} (s poznámkami).pdf`, 'application/pdf');
       showToast('Vypálené PDF staženo');
     } else {
