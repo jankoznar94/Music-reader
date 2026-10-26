@@ -948,6 +948,23 @@
           <span class="ap-pen-label" @click="penOnly = !penOnly">Jen pero</span>
         </div>
       </div>
+
+      <!-- Kategorie: Sdílet — dvě cesty podle příjemce (Jan, Oct 2026) -->
+      <div class="ap-cat">
+        <div class="ap-cat-label">Sdílet</div>
+        <div class="ap-row">
+          <button class="ap-share-btn" :disabled="!!exporting" @click="exportPdf('burn')"
+                  title="Vypálit poznámky do PDF — otevře kdokoli, i bez aplikace">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M9 15l4-4 4 4"/><path d="M13 11v7"/></svg>
+            <span>Vypálit PDF</span>
+          </button>
+          <button class="ap-share-btn" :disabled="!!exporting" @click="exportPdf('bundle')"
+                  title="Čisté PDF + overlay.json v .zip — pro naši aplikaci">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4"/><path d="M12 11v10"/></svg>
+            <span>PDF + JSON</span>
+          </button>
+        </div>
+      </div>
       </template>
     </div>
 
@@ -1228,11 +1245,13 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, toRaw } from 'vue';
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount } from '../pdf.js';
 import { analyzeContent } from '../contentBounds.js';
+// share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
+// leželo v hlavním bundlu a zpomalovalo start čtečky.
 
 const props = defineProps({ id: { type: String, required: true } });
 const router = useRouter();
@@ -5622,6 +5641,59 @@ async function flushAnnotations() {
   await dbSaveAnnotations(annotationsForDb(annotations.value.items));
 }
 
+// --- SDÍLENÍ NOT S POZNÁMKAMI (export) --------------------------------
+// Dvě cesty, protože je to pokaždé jiný příjemce (Jan, Oct 2026):
+//   • „Vypálit do PDF" — poznámky se nakreslí do stránek, takže to otevře
+//     kdokoli. Overlay se navíc přibalí dovnitř PDF jako skrytá příloha, aby
+//     si uživatel naší aplikace mohl poznámky načíst zpět a dál je upravovat.
+//   • „PDF + JSON" — čisté (nepopsané) PDF a k tomu overlay.json v jednom
+//     .zip. Pro tisk, nebo pro kolegu, který si noty chce popsat sám.
+const exporting = ref(null);          // null | 'burn' | 'bundle'
+const shareHelpers = {
+  displayText: annotDisplayText,
+  borderRects: textBorderRects,
+  noteStroke,
+  noteFlipY: noteMirrorY,
+};
+async function exportPdf(kind) {
+  if (exporting.value) return;
+  exporting.value = kind;
+  try {
+    await flushAnnotations();                       // exportuj přesně to, co je uložené
+    const share = await import('../share.js');
+    const bytes = new Uint8Array(await toRaw(song.data).arrayBuffer());
+    const base = share.safeBaseName(song.name);
+    const payload = share.buildOverlayPayload({
+      song: {
+        name: song.name, composer: song.composer,
+        pages: song.pages, hiddenPages: hiddenPages.value, frame: songFrame.value,
+      },
+      annotations: { ref: annotRefStamp(), items: annotations.value.items },
+      jumps: jumps.value,
+      bookmarks: bookmarks.value,
+      bmManualOrder: bmManualOrder.value,
+    });
+    if (kind === 'burn') {
+      const out = await share.exportBurnedPdf(bytes, {
+        items: annotations.value.items,
+        ref: annotRefStamp(),
+        helpers: shareHelpers,
+        payload,
+      });
+      share.downloadBytes(out, `${base} (s poznámkami).pdf`, 'application/pdf');
+      showToast('Vypálené PDF staženo');
+    } else {
+      share.downloadBytes(share.buildShareZip(bytes, payload, base), `${base}.zip`, 'application/zip');
+      showToast('PDF + poznámky (JSON) staženo');
+    }
+  } catch (e) {
+    console.error('Export se nepovedl', e);
+    showToast('Export se nepovedl: ' + (e && e.message ? e.message : e));
+  } finally {
+    exporting.value = null;
+  }
+}
+
 // --- PŘETAHOVÁNÍ PANELŮ (Jan, Oct 2026) -----------------------------------
 // „Přidáme možnost Drag And drop ke všem dropdown oknům v menu." Panely se
 // kotví pod horní lištu a na malém displeji zakrývají noty, proto si je
@@ -6665,6 +6737,16 @@ async function deleteBookmark(b) {
 .jp-icon:disabled { opacity: 0.3; pointer-events: none; }
 
 .ap-pen-label { color: var(--text-dim); font-size: 0.85rem; cursor: pointer; }
+/* Sdílení: plochá tlačítka s textem (ikona + popis), žádný hover — jen stisk. */
+.ap-share-btn {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 36px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-elev2); color: var(--text);
+  font-size: 0.85rem; cursor: pointer; touch-action: manipulation;
+}
+.ap-share-btn:active { background: var(--accent); color: #17130f; border-color: var(--accent); }
+.ap-share-btn:disabled { opacity: 0.4; pointer-events: none; }
 .ap-tool.pen-only.on { border-color: var(--accent); }
 
 /* Přehled stránek (miniatury + slider) — přes celou šířku, POD horní lištou

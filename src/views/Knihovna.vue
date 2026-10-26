@@ -4,12 +4,14 @@
       <h1>Noty</h1>
       <div class="top-actions">
         <button class="add" @click="openFile">Nahrát PDF</button>
+        <button class="btn" @click="importInput.click()" title="Importovat noty s poznámkami (.zip nebo .pdf z aplikace)">Import</button>
         <button class="btn" @click="toggleSelectAll">{{ allSelected ? 'Zrušit výběr' : 'Vybrat vše' }}</button>
         <button class="btn update-btn" @click="checkAndApply" title="Zkontrolovat novou verzi aplikace">
           <span v-if="checking" class="update-spinner" />
           <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
         </button>
         <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFiles" />
+        <input ref="importInput" type="file" accept=".zip,.pdf,application/zip,application/pdf" multiple hidden @change="onImport" />
       </div>
     </header>
 
@@ -346,6 +348,7 @@ import {
   dbGetAllSongs, dbSaveSong, dbDeleteSong,
   dbGetAllGroups, dbSaveGroup, dbDeleteGroup,
   dbGetAllFolders, dbSaveFolder, dbDeleteFolder,
+  dbSaveAnnotations, dbSaveJumps, dbSaveBookmarks,
 } from '../db.js';
 import { getPageCount, clearPdfCache } from '../pdf.js';
 import { getLibraryState, saveLibraryState } from '../libraryState.js';
@@ -358,6 +361,7 @@ const groups = ref([]);
 const folders = ref([]);
 const loading = ref(true);
 const fileInput = ref(null);
+const importInput = ref(null);
 const contentEl = ref(null);
 // Výchozí stav přehledu pochází z libraryState (přežije přechod do prohlížeče,
 // po reloadu resetován v main.js)
@@ -417,6 +421,18 @@ const uploadTotal = ref(0);
 
 function openFile() { fileInput.value.click(); }
 
+// Pojistka proti DVOJÍMU `change` na témže souboru (Chrome umí událost poslat
+// dvakrát — ať už z file pickeru, nebo při automatizaci), který by z jedné
+// skladby udělal dvě. Stejný soubor (jméno + velikost + čas) do 2 s ignorujeme.
+let _lastFile = { sig: null, at: 0 };
+function isRepeatedFile(file) {
+  const sig = `${file.name}|${file.size}|${file.lastModified}`;
+  const now = Date.now();
+  const dup = _lastFile.sig === sig && now - _lastFile.at < 2000;
+  _lastFile = { sig, at: now };
+  return dup;
+}
+
 async function loadAll() {
   loading.value = true;
   const [s, g, f] = await Promise.all([dbGetAllSongs(), dbGetAllGroups(), dbGetAllFolders()]);
@@ -441,6 +457,7 @@ async function onFiles(e) {
   // Dočasně vyčistit PDF cache, aby se u každého souboru počítal počet stránek zvlášť
   clearPdfCache();
   for (const file of files) {
+    if (isRepeatedFile(file)) continue;
     let pageCount = 1;
     try {
       const dummy = { id: 'tmp-' + crypto.randomUUID(), data: file };
@@ -461,6 +478,84 @@ async function onFiles(e) {
     };
     await dbSaveSong(song);
     uploadDone.value++;
+  }
+  uploading.value = false;
+  await loadAll();
+}
+
+// --- Import not s poznámkami (.zip = PDF + overlay.json, nebo vypálené PDF
+// s přiloženým overlayem). Na rozdíl od „Nahrát PDF" přináší i anotace,
+// skoky, záložky a odebrané stránky — tedy noty tak, jak je slyší autor.
+async function onImport(e) {
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  if (!files.length) return;
+  uploading.value = true;
+  uploadDone.value = 0;
+  uploadTotal.value = files.length;
+  clearPdfCache();
+  for (const file of files) {
+    if (isRepeatedFile(file)) continue;
+    try {
+      // pdf-lib + zip se načtou až při importu, ne při startu knihovny.
+      const { readOverlayFromPdf, readShareZip, isOverlayPayload } = await import('../share.js');
+      let pdfBytes = null;
+      let payload = null;
+      if (/\.zip$/i.test(file.name)) {
+        const res = readShareZip(new Uint8Array(await file.arrayBuffer()));
+        pdfBytes = res.pdf;
+        payload = res.payload;
+      } else {
+        const buf = new Uint8Array(await file.arrayBuffer());
+        pdfBytes = buf;
+        payload = await readOverlayFromPdf(buf);
+      }
+      if (!pdfBytes) {
+        showToast(`${file.name}: uvnitř není PDF`);
+        uploadDone.value++;
+        continue;
+      }
+      const baseName = file.name.replace(/\.(zip|pdf)$/i, '');
+      const fileName = baseName + '.pdf';
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const meta = (payload && payload.song) || {};
+      const song = {
+        id: crypto.randomUUID(),
+        name: meta.name || baseName,
+        composer: meta.composer || '',
+        fileName,
+        data: blob,
+        pages: await getPageCount({ id: 'tmp-' + crypto.randomUUID(), data: blob }),
+        groups: [],
+        folderId: null,
+        createdAt: Date.now(),
+      };
+      if (Array.isArray(meta.hiddenPages) && meta.hiddenPages.length) song.hiddenPages = meta.hiddenPages;
+      if (meta.frame) song.frame = true;
+      if (isOverlayPayload(payload)) {
+        await dbSaveAnnotations({
+          songId: song.id,
+          items: payload.annotations.items,
+          ref: payload.annotations.ref || null,
+        });
+        if (Array.isArray(payload.jumps) && payload.jumps.length) {
+          await dbSaveJumps({ songId: song.id, items: payload.jumps });
+        }
+        if (Array.isArray(payload.bookmarks) && payload.bookmarks.length) {
+          await dbSaveBookmarks({
+            songId: song.id, items: payload.bookmarks,
+            manualOrder: !!payload.bookmarksManualOrder,
+          });
+        }
+      }
+      await dbSaveSong(song);
+      uploadDone.value++;
+      if (!isOverlayPayload(payload)) showToast(`${file.name}: importováno jen PDF (bez poznámek)`);
+    } catch (err) {
+      console.warn('Import selhal', file.name, err);
+      showToast(`${file.name}: import se nepovedl`);
+      uploadDone.value++;
+    }
   }
   uploading.value = false;
   await loadAll();
