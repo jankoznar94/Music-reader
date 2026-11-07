@@ -799,12 +799,13 @@
          tap na střed not ji schová i ukáže (Jan: „jak se schová/zobrazí hlavní
          lišta, tak stejně i spodní lišta se záložkami“). -->
     <!-- Lišta záložek — skrytá, když se upravuje vybraný prvek (edit-bar by s ní splýval) -->
-    <div v-if="bookmarks.length && !editingId && !barHidden" class="bookmark-strip">
+    <div v-if="bookmarks.length && !editingId && !barHidden" class="bookmark-strip" ref="bmStripEl">
       <button
         v-for="b in bookmarks"
         :key="b.id"
         class="bookmark-btn"
-        :class="{ on: b.page === currentPage, circle: !b.label }"
+        :class="{ on: b.id === bmActiveId, circle: !b.label }"
+        :aria-current="b.id === bmActiveId ? 'true' : undefined"
         @click="goBookmark(b)"
         :title="'Záložka na str. ' + bookmarkPageNo(b)"
       >
@@ -6153,6 +6154,38 @@ function bmSaveNow() {
   _bmSaveTimer = null;
   return dbSaveBookmarks({ songId: song.id, items: bookmarks.value, manualOrder: bmManualOrder.value });
 }
+
+// Aktivní záložka v dolní liště (Jan, Nov 2026): svítí po CELOU dobu, co se
+// uživatel pohybuje v její části — od stránky záložky až do stránky té
+// následující. Dřív se zvýrazňovala jen přesná stránka záložky (`b.page ===
+// currentPage`), takže při listování nebylo vidět, ve které části skladby jsme.
+// Počítá se podle stránek (nejvyšší záložka, jejíž stránka <= aktuální), ne
+// podle pořadí v seznamu — ruční přerovnání lišty se tak nerozbije.
+const bmStripEl = ref(null);
+const bmActiveId = computed(() => {
+  const cp = currentPage.value;
+  let best = null;
+  for (const b of bookmarks.value || []) {
+    if (!b || b.page == null || b.page > cp) continue;
+    if (!best || b.page >= best.page) best = b;
+  }
+  return best ? best.id : null;
+});
+
+// Když je aktivní záložka mimo viditelnou část lišty, doklouže k ní.
+watch(bmActiveId, async (id) => {
+  if (!id) return;
+  await nextTick();
+  const strip = bmStripEl.value;
+  if (!strip) return;
+  const el = strip.querySelector('.bookmark-btn.on');
+  if (!el) return;
+  const s = strip.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  if (r.left < s.left + 4 || r.right > s.right - 4) {
+    strip.scrollTo({ left: strip.scrollLeft + (r.left - s.left) - 8, behavior: 'smooth' });
+  }
+});
 async function goBookmark(b) {
   await gotoPage(b.page);
 }
@@ -6767,8 +6800,15 @@ async function deleteBookmark(b) {
   width: 30px; height: 30px; padding: 0;
   justify-content: center;
 }
-.bookmark-btn.on { border-color: var(--accent); background: rgba(51,46,43,0.75); }
+.bookmark-btn.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #17130f;
+}
+/* Číslo u aktivní záložky se obrací — na zlatém podkladu by zlatý odznak zmizel. */
+.bookmark-btn.on .bk-num { background: #17130f; color: var(--accent); }
 .bookmark-btn:active { background: rgba(51,46,43,0.8); }
+.bookmark-btn.on:active { background: var(--accent); }
 .bk-num {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 3px;
