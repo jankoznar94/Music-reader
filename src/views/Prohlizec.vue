@@ -799,7 +799,8 @@
          tap na střed not ji schová i ukáže (Jan: „jak se schová/zobrazí hlavní
          lišta, tak stejně i spodní lišta se záložkami“). -->
     <!-- Lišta záložek — skrytá, když se upravuje vybraný prvek (edit-bar by s ní splýval) -->
-    <div v-if="bookmarks.length && !editingId && !barHidden" class="bookmark-strip" ref="bmStripEl">
+    <div v-if="bookmarks.length && !editingId && !barHidden" class="bookmark-strip" ref="bmStripEl"
+         @scroll.passive="bmStripOnScroll">
       <button
         v-for="b in bookmarks"
         :key="b.id"
@@ -6195,6 +6196,32 @@ const bmActiveId = computed(() => {
     if (!best || b.page >= best.page) best = b;
   }
   return best ? best.id : null;
+});
+
+// Lišta se při skrytí (tap na střed not) z DOM vyhodí a znovu vytvoří —
+// scroll pozice by se tím ztratila (Jan, Nov 2026: „když se spodní bar schová
+// tapnutím na střed, resetuje se scroll pozice“). Držíme si proto poslední
+// scrollLeft a po znovuobjevení lišty ho vrátíme.
+let _bmStripScroll = 0;
+function bmStripOnScroll() {
+  const el = bmStripEl.value;
+  // Odpojený element hlásí scrollLeft 0 — z takového čtení by se pozice
+  // „resetovala“ přesně ve chvíli, kdy lištu schováváme.
+  if (el && el.isConnected) _bmStripScroll = el.scrollLeft;
+}
+watch(bmStripEl, (el) => {
+  if (!el) return;                          // mizí → pozice už je uložená
+  let tries = 0;
+  const restore = () => {
+    if (!el.isConnected) return;
+    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+    // První frame po vložení do DOM ještě nemusí mít layout (max = 0) —
+    // bez pár pokusů by se pozice „vrátila“ na 0.
+    if (max === 0 && _bmStripScroll > 0 && tries < 12) { tries++; requestAnimationFrame(restore); return; }
+    el.scrollLeft = Math.max(0, Math.min(max, _bmStripScroll));
+    if (Math.abs(el.scrollLeft - _bmStripScroll) > 1 && tries < 12) { tries++; requestAnimationFrame(restore); }
+  };
+  nextTick(() => requestAnimationFrame(restore));
 });
 
 // Když se záložky nevejdou, lišta aktivní záložku podrží na STŘEDU (ne jen

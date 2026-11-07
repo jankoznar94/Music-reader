@@ -134,6 +134,24 @@ async def main():
         c(g["chipCenter"] is not None and abs(g["chipCenter"] - g["center"]) <= 8,
           f"po návratu doprostřed zase na středu (odchylka {None if g['chipCenter'] is None else round(g['chipCenter'] - g['center'], 1)} px)")
 
+        # --- skrytí lišty tapem na střed NESMÍ resetovat scroll pozici ------
+        await h.ev("(() => { document.querySelector('.bookmark-strip').scrollLeft = 150; })()")
+        await asyncio.sleep(0.4)
+        g = await h.ev(GEO)
+        before = g["scrollLeft"]
+        c(before > 100, f"lišta odscrollovaná na {before}")
+        gv = await h.geo()
+        cx = gv["left"] + gv["w"] / 2
+        cy = gv["top"] + gv["h"] / 2
+        await h.finger_tap(cx, cy)          # skryj lištu
+        await asyncio.sleep(0.8)
+        c(not await h.ev("!!document.querySelector('.bookmark-strip')"), "lišta se skryla tapem na střed")
+        await h.finger_tap(cx, cy)          # ukaž lištu
+        await asyncio.sleep(1.0)
+        g = await h.ev(GEO)
+        c(g is not None and abs(g["scrollLeft"] - before) <= 2,
+          f"po znovuobjevení drží scroll pozici ({None if g is None else g['scrollLeft']} vs {before})")
+
         raise SystemExit(c.report())
 
 
