@@ -6197,7 +6197,9 @@ const bmActiveId = computed(() => {
   return best ? best.id : null;
 });
 
-// Když je aktivní záložka mimo viditelnou část lišty, doklouže k ní.
+// Když se záložky nevejdou, lišta aktivní záložku podrží na STŘEDU (ne jen
+// „nějak viditelnou“) — Jan, Nov 2026. Na krajích se to přirozeně zastaví
+// o doraz scrollu, víc to vycentrovat nejde.
 watch(bmActiveId, async (id) => {
   if (!id) return;
   await nextTick();
@@ -6207,9 +6209,13 @@ watch(bmActiveId, async (id) => {
   if (!el) return;
   const s = strip.getBoundingClientRect();
   const r = el.getBoundingClientRect();
-  if (r.left < s.left + 4 || r.right > s.right - 4) {
-    strip.scrollTo({ left: strip.scrollLeft + (r.left - s.left) - 8, behavior: 'smooth' });
-  }
+  const delta = (r.left + r.width / 2) - (s.left + s.width / 2);
+  if (Math.abs(delta) < 4) return;                 // už je na středu
+  const max = strip.scrollWidth - strip.clientWidth;
+  if (max <= 0) return;                            // vše se vejde
+  const target = Math.min(max, Math.max(0, strip.scrollLeft + delta));
+  if (Math.abs(target - strip.scrollLeft) < 2) return;
+  strip.scrollTo({ left: target, behavior: 'smooth' });
 });
 
 // --- Listování podle záložek (koncertní pořadí) ---
