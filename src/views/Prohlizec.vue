@@ -3661,27 +3661,52 @@ async function switchSong(idx, toEnd) {
   loading.value = false;
 }
 
-// Plynulý přechod: na poslední ZOBRAZENÉ stránce dopředu → další skladba, na první dozadu → předchozí
+// Plynulý přechod: na poslední ZOBRAZENÉ stránce dopředu → další skladba, na první dozadu → předchozí.
+// Když mají noty záložky, jde se mezi ČÁSTMI v pořadí záložek (viz bmNextSection) —
+// velký sešit složený z více skladeb se tak dá na koncertě projít v jiném pořadí,
+// než v jakém jdou stránky za sebou.
 async function nextPage() {
   const vi = visibleIndex.value;
-  if (vi < visiblePages.value.length - 1) {
-    await gotoPage(visiblePages.value[vi + 1]);
+  const jump = bmNextSectionTarget(vi);
+  if (jump === BM_NAV_STOP) return;          // konec programu → dál se nechodí
+  if (jump != null) {
+    await gotoPage(jump);
+    return;
+  }
+  const vi2 = visibleIndex.value;
+  if (vi2 < visiblePages.value.length - 1) {
+    await gotoPage(visiblePages.value[vi2 + 1]);
   } else if (group.value && groupIndex.value < groupSongs.value.length - 1) {
     await switchSong(groupIndex.value + 1);
   }
 }
 // Tlačítka listování v anotačním režimu: aktivní jen když existuje
 // předchozí/další stránka (nebo skladba ve skupině).
-const canPrevPage = computed(() =>
-  visibleIndex.value > 0 || !!(group.value && groupIndex.value > 0));
-const canNextPage = computed(() =>
-  visibleIndex.value < visiblePages.value.length - 1 ||
-  !!(group.value && groupIndex.value < groupSongs.value.length - 1));
+const canPrevPage = computed(() => {
+  const t = bmPrevSectionTarget(visibleIndex.value);
+  if (t === BM_NAV_STOP) return false;
+  if (t != null) return true;
+  return visibleIndex.value > 0 || !!(group.value && groupIndex.value > 0);
+});
+const canNextPage = computed(() => {
+  const t = bmNextSectionTarget(visibleIndex.value);
+  if (t === BM_NAV_STOP) return false;
+  if (t != null) return true;
+  return visibleIndex.value < visiblePages.value.length - 1 ||
+    !!(group.value && groupIndex.value < groupSongs.value.length - 1);
+});
 
 async function prevPage() {
   const vi = visibleIndex.value;
-  if (vi > 0) {
-    await gotoPage(visiblePages.value[vi - 1]);
+  const jump = bmPrevSectionTarget(vi);
+  if (jump === BM_NAV_STOP) return;          // začátek programu → dál se nechodí
+  if (jump != null) {
+    await gotoPage(jump);
+    return;
+  }
+  const vi2 = visibleIndex.value;
+  if (vi2 > 0) {
+    await gotoPage(visiblePages.value[vi2 - 1]);
   } else if (group.value && groupIndex.value > 0) {
     await switchSong(groupIndex.value - 1, true); // zpět → konec předchozí skladby
   }
@@ -6186,6 +6211,67 @@ watch(bmActiveId, async (id) => {
     strip.scrollTo({ left: strip.scrollLeft + (r.left - s.left) - 8, behavior: 'smooth' });
   }
 });
+
+// --- Listování podle záložek (koncertní pořadí) ---
+// Jan (Nov 2026): jeden velký sešit = mnoho skladeb, které na koncertě nejdou
+// v předepsaném pořadí. Záložky dělí sešit na ČÁSTI (část = od stránky záložky
+// do stránky před další záložkou, v pořadí stránek); kterou částí se pokračuje,
+// určuje POŘADÍ ZÁLOŽEK V LIŠTĚ. Po přetažení záložek se tak sešit prolistuje
+// v koncertním pořadí. Když je pořadí záložek stejné jako pořadí stránek,
+// chování je totožné s běžným listováním (žádná změna pro staré noty).
+const BM_NAV_STOP = 'stop';   // na konci/začátku programu se dál nechodí
+const bmSections = computed(() => {
+  const vis = visiblePages.value;
+  const items = (bookmarks.value || []).filter(b => b && b.page != null);
+  if (!items.length || !vis.length) return [];
+  const startsAsc = [...new Set(items.map(b => b.page))].sort((a, b) => a - b);
+  const byPage = new Map();
+  startsAsc.forEach((p, k) => {
+    const next = k + 1 < startsAsc.length ? startsAsc[k + 1] : Infinity;
+    let start = -1;
+    let end = -1;
+    for (let i = 0; i < vis.length; i++) {
+      if (vis[i] < p || vis[i] >= next) continue;
+      if (start < 0) start = i;
+      end = i;
+    }
+    if (start >= 0) byPage.set(p, { page: p, start, end });
+  });
+  const out = [];
+  const seen = new Set();
+  for (const b of items) {          // pořadí = pořadí v liště (i po přetažení)
+    if (seen.has(b.page)) continue;
+    seen.add(b.page);
+    const s = byPage.get(b.page);
+    if (s) out.push(s);
+  }
+  return out;
+});
+function bmSectionAt(vi) {
+  for (const s of bmSections.value) if (vi >= s.start && vi <= s.end) return s;
+  return null;
+}
+// undefined -> listuj normálně po stránkách, BM_NAV_STOP -> nic, číslo -> skoč na stránku
+function bmNextSectionTarget(vi) {
+  const sec = bmSectionAt(vi);
+  if (!sec || vi !== sec.end) return undefined;      // uvnitř části → další stránka
+  const secs = bmSections.value;
+  const pos = secs.indexOf(sec);
+  if (pos >= 0 && pos < secs.length - 1) return visiblePages.value[secs[pos + 1].start];
+  const nv = vi + 1;                                  // konec poslední části programu
+  if (nv < visiblePages.value.length) return bmSectionAt(nv) ? BM_NAV_STOP : undefined;
+  return undefined;                                   // konec sešitu → další skladba ve skupině
+}
+function bmPrevSectionTarget(vi) {
+  const sec = bmSectionAt(vi);
+  if (!sec || vi !== sec.start) return undefined;      // uvnitř části → předchozí stránka
+  const secs = bmSections.value;
+  const pos = secs.indexOf(sec);
+  if (pos > 0) return visiblePages.value[secs[pos - 1].end];
+  const pv = vi - 1;                                   // začátek první části programu
+  if (pv >= 0) return bmSectionAt(pv) ? BM_NAV_STOP : undefined;
+  return undefined;
+}
 async function goBookmark(b) {
   await gotoPage(b.page);
 }
