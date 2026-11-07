@@ -730,62 +730,66 @@
       <!-- Seznam existujících záložek (editace + řazení + smazání) -->
       <div v-if="bookmarks.length" class="jp-list">
         <div class="jp-subtitle">Záložky</div>
-        <div v-for="b in bookmarks" :key="b.id" class="jp-item" :class="{ dragging: bmDragId === b.id }">
-          <button
-            class="jp-drag"
-            title="Přetáhnout pro změnu pořadí"
-            @pointerdown="bmDragStart($event, b)"
-            @pointermove="bmDragMove"
-            @pointerup="bmDragEnd"
-            @pointercancel="bmDragEnd"
-            @touchstart.stop.prevent="bmNoop"
-            @touchmove.stop.prevent="bmNoop"
-            @touchend.stop="bmNoop"
-            @touchcancel.stop="bmNoop"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/></svg>
-          </button>
+        <!-- Řazení tažením (Jan, Nov 2026): seznam se během tažení NEPŘEROVNÁVÁ
+             v datech — tažený řádek se z něj vyjme a na cílové místo se vloží
+             jen prázdný „slot“ (dashed). Skutečné pořadí se zapíše jednou při
+             puštění, takže položka nikdy „nedojede jinam“, než kde stál duch. -->
+        <template v-for="row in bmRowsView" :key="row.k">
+          <div v-if="row.gap" class="jp-gap" :style="{ height: bmRowH + 'px' }" />
+          <div v-else class="jp-item" :class="{ dragging: bmDragId === row.b.id }">
+            <button
+              class="jp-drag"
+              title="Přetáhnout pro změnu pořadí"
+              @pointerdown="bmDragStart($event, row.b)"
+              @touchstart.stop.prevent="bmNoop"
+              @touchmove.stop.prevent="bmNoop"
+              @touchend.stop="bmNoop"
+              @touchcancel.stop="bmNoop"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/></svg>
+            </button>
 
-          <!-- Režim úpravy: název se mění PŘÍMO tady na řádku (Jan, Oct 2026).
-               Enter/Blur uloží, Escape zavře bez uložení. -->
-          <template v-if="bookmarkEditingId === b.id">
-            <span class="jp-item-label dim">str. {{ withOffset(dispPage(b.page)) }}</span>
-            <input
-              :ref="setBmEditInput"
-              v-model="bmEditLabel"
-              class="jp-input jp-input-edit"
-              placeholder="Text záložky"
-              @keyup.enter="commitBookmarkEdit"
-              @keyup.esc="cancelBookmarkEdit"
-              @blur="commitBookmarkEdit"
-              @touchstart.stop
-              @touchmove.stop
-              @touchend.stop
-            />
-            <span class="jp-actions">
-              <!-- mousedown.prevent: tlačítko si nesmí vzít fokus, jinak by
-                   input vyhodil blur a uložil rozepsaný text dřív, než se
-                   stihne vyhodnotit klik (✓ uloží, ✕ zahodí). -->
-              <button class="jp-icon" @mousedown.prevent @click="commitBookmarkEdit" title="Uložit">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-              </button>
-              <button class="jp-icon del" @mousedown.prevent @click="cancelBookmarkEdit" title="Zrušit">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
-              </button>
-            </span>
-          </template>
-          <template v-else>
-            <span class="jp-item-label" :class="{ dim: !b.label }">str. {{ withOffset(dispPage(b.page)) }}<template v-if="b.label"> · {{ b.label }}</template></span>
-            <span class="jp-actions">
-              <button class="jp-icon" @click="startBookmarkEdit(b)" title="Přejmenovat">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
-              </button>
-              <button class="jp-icon del" @click="deleteBookmark(b)" title="Smazat">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-              </button>
-            </span>
-          </template>
-        </div>
+            <!-- Režim úpravy: název se mění PŘÍMO tady na řádku (Jan, Oct 2026).
+                 Enter/Blur uloží, Escape zavře bez uložení. -->
+            <template v-if="bookmarkEditingId === row.b.id">
+              <span class="jp-item-label dim">str. {{ withOffset(dispPage(row.b.page)) }}</span>
+              <input
+                :ref="setBmEditInput"
+                v-model="bmEditLabel"
+                class="jp-input jp-input-edit"
+                placeholder="Text záložky"
+                @keyup.enter="commitBookmarkEdit"
+                @keyup.esc="cancelBookmarkEdit"
+                @blur="commitBookmarkEdit"
+                @touchstart.stop
+                @touchmove.stop
+                @touchend.stop
+              />
+              <span class="jp-actions">
+                <!-- mousedown.prevent: tlačítko si nesmí vzít fokus, jinak by
+                     input vyhodil blur a uložil rozepsaný text dřív, než se
+                     stihne vyhodnotit klik (✓ uloží, ✕ zahodí). -->
+                <button class="jp-icon" @mousedown.prevent @click="commitBookmarkEdit" title="Uložit">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                </button>
+                <button class="jp-icon del" @mousedown.prevent @click="cancelBookmarkEdit" title="Zrušit">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+                </button>
+              </span>
+            </template>
+            <template v-else>
+              <span class="jp-item-label" :class="{ dim: !row.b.label }">str. {{ withOffset(dispPage(row.b.page)) }}<template v-if="row.b.label"> · {{ row.b.label }}</template></span>
+              <span class="jp-actions">
+                <button class="jp-icon" @click="startBookmarkEdit(row.b)" title="Přejmenovat">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+                </button>
+                <button class="jp-icon del" @click="deleteBookmark(row.b)" title="Smazat">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                </button>
+              </span>
+            </template>
+          </div>
+        </template>
       </div>
 
       <button class="jp-close" @click="closeBookmarkPanel">Zavřít</button>
@@ -6002,68 +6006,147 @@ async function commitBookmarkEdit() {
 }
 // --- Řazení záložek tažením za táhlo (drag & drop) ---
 // Jan: v úpravě záložek chce měnit pořadí tažením, ne šipkami.
-// Řádek se přesouvá živě podle polohy prstu; do IndexedDB se ukládá až po puštění (jeden zápis).
+// Jan (Nov 2026): „při pohybu ducha musí být přesně vidět, kde se pohybuje“
+// a „po přemístění občas zůstane označená a pak se přemístí jinam“.
+// Proto se seznam během tažení NIKDY nemutuje: tažený řádek se z výpisu vyjme,
+// na jeho cílové místo se kreslí prázdný slot (bmGapIndex) a pod prstem plave
+// klon řádku („duch“). Pořadí se přepíše jediným splice až při puštění a do
+// IndexedDB jde jeden zápis. Posluchače visí na window (capture), takže i když
+// prohlížeč při dotyku ztratí pointer capture, stav se vždy uklidí.
 const bmDragId = ref(null);       // id záložky, která se právě táhne (jen vizuální stav)
+const bmGapIndex = ref(-1);       // index slotu, kam položka spadne
+const bmRowH = ref(0);            // výška řádku pro prázdný slot
 const bmManualOrder = ref(false); // uživatel si pořadí přerovnal ručně → už needit podle stránky
-let _bmDrag = null;               // { id, lastY, moved }
+let _bmDrag = null;
 let _bmSaveTimer = null;
 
-function bmRows(el) {
-  const list = el.closest('.jp-list');
-  return list ? Array.from(list.querySelectorAll('.jp-item')) : [];
-}
+const bmRowsView = computed(() => {
+  const arr = bookmarks.value || [];
+  const dragId = bmDragId.value;
+  const plain = () => arr.map(b => ({ k: b.id, b, gap: false }));
+  if (!dragId || bmGapIndex.value < 0) return plain();
+  const di = arr.findIndex(x => x.id === dragId);
+  if (di < 0) return plain();
+  const rest = arr.filter((_, i) => i !== di).map(b => ({ k: b.id, b, gap: false }));
+  const gi = Math.max(0, Math.min(rest.length, bmGapIndex.value));
+  rest.splice(gi, 0, { k: '__bm_gap__', b: null, gap: true });
+  return rest;
+});
+
 function bmNoop() {}   // dlaždicové touch eventy jen pohlcujeme, ať je .viewer nebere jako swipe
+
+function bmDetach() {
+  window.removeEventListener('pointermove', bmDragMove, true);
+  window.removeEventListener('pointerup', bmDragEnd, true);
+  window.removeEventListener('pointercancel', bmDragCancel, true);
+}
+
+// Jediné místo, kde se tažení uklízí — proto nemůže zůstat viset „označený“ řádek.
+function bmCleanup() {
+  const d = _bmDrag;
+  _bmDrag = null;
+  bmDetach();
+  if (d) {
+    if (d.ghost && d.ghost.parentNode) d.ghost.parentNode.removeChild(d.ghost);
+    if (d.handle && d.pointerId != null) {
+      try { d.handle.releasePointerCapture(d.pointerId); } catch (err) { /* ignorovat */ }
+    }
+  }
+  bmDragId.value = null;
+  bmGapIndex.value = -1;
+}
+
+function bmMakeGhost(d) {
+  const g = d.row.cloneNode(true);
+  g.classList.add('bm-ghost');
+  g.style.position = 'fixed';
+  g.style.left = d.rect.left + 'px';
+  g.style.top = d.rect.top + 'px';
+  g.style.width = d.rect.width + 'px';
+  g.style.height = d.rect.height + 'px';
+  g.style.margin = '0';
+  g.style.pointerEvents = 'none';
+  g.style.zIndex = '9999';
+  g.style.transform = 'translate3d(0, 0, 0)';
+  document.body.appendChild(g);
+  return g;
+}
+
 function bmDragStart(e, b) {
   if (_bmDrag) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  const handle = e.currentTarget;
+  const row = handle.closest('.jp-item');
+  const list = handle.closest('.jp-list');
+  if (!row || !list) return;
+  const els = Array.from(list.querySelectorAll('.jp-item'));
+  const rect = row.getBoundingClientRect();
+  _bmDrag = {
+    id: b.id, handle, row, list, pointerId: e.pointerId,
+    startY: e.clientY, rect, grab: e.clientY - rect.top,
+    from: els.indexOf(row),
+    // geometrie se zamrazí při startu — během tažení se mění jen slot, ne řádky
+    rows: els.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, h: r.height }; }),
+    moved: false, ghost: null,
+  };
+  try { handle.setPointerCapture(e.pointerId); } catch (err) { /* ignorovat */ }
+  window.addEventListener('pointermove', bmDragMove, { capture: true, passive: false });
+  window.addEventListener('pointerup', bmDragEnd, true);
+  window.addEventListener('pointercancel', bmDragCancel, true);
   e.stopPropagation();
-  _bmDrag = { id: b.id, lastY: e.clientY, moved: false };
-  try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* ignorovat */ }
   e.preventDefault();
 }
+
 function bmDragMove(e) {
   const d = _bmDrag;
   if (!d) return;
+  if (d.pointerId != null && e.pointerId != null && e.pointerId !== d.pointerId) return;
+  if (e.cancelable) e.preventDefault();
   if (!d.moved) {
-    if (Math.abs(e.clientY - d.lastY) < 6) return;  // tolerance: tap na táhlo nic neposouvá
+    if (Math.abs(e.clientY - d.startY) < 6) return;  // tolerance: tap na táhlo nic neposouvá
     d.moved = true;
+    bmRowH.value = d.rect.height;
+    d.ghost = bmMakeGhost(d);
     bmDragId.value = d.id;
+    bmGapIndex.value = d.from;
   }
-  d.lastY = e.clientY;
-  const arr = bookmarks.value;
-  const rows = bmRows(e.currentTarget);
-  if (rows.length !== arr.length) return;
-  let i = arr.findIndex(x => x.id === d.id);
-  if (i < 0) return;
-  let moved = false;
-  while (i > 0) {                                   // nahoru přes střed předchozího řádku
-    const r = rows[i - 1].getBoundingClientRect();
-    if (e.clientY >= r.top + r.height / 2) break;
-    [arr[i - 1], arr[i]] = [arr[i], arr[i - 1]];
-    rows.splice(i - 1, 0, rows.splice(i, 1)[0]);
-    i--; moved = true;
+  if (d.ghost) {
+    d.ghost.style.transform = `translate3d(0, ${e.clientY - d.startY}px, 0)`;
   }
-  while (i < arr.length - 1) {                      // dolů přes střed následujícího řádku
-    const r = rows[i + 1].getBoundingClientRect();
-    if (e.clientY <= r.top + r.height / 2) break;
-    [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
-    rows.splice(i + 1, 0, rows.splice(i, 1)[0]);
-    i++; moved = true;
+  // Střed ducha proti středům řádků ze startu → slot, který uživatel vidí, je
+  // přesně ten, kam položka spadne (žádné půlřádkové překvapení).
+  const center = e.clientY - d.grab + d.rect.height / 2;
+  let target = 0;
+  for (let k = 0; k < d.rows.length; k++) {
+    if (k === d.from) continue;
+    if (d.rows[k].top + d.rows[k].h / 2 < center) target++;
   }
-  if (moved) bmScheduleSave();
+  if (target !== bmGapIndex.value) bmGapIndex.value = target;
 }
-function bmDragEnd() {
+
+function bmDragEnd(e) {
   const d = _bmDrag;
   if (!d) return;
-  _bmDrag = null;
-  bmDragId.value = null;
-  if (d.moved) {
-    bmManualOrder.value = true;                      // ruční přerovnání → držet toto pořadí
+  if (e && d.pointerId != null && e.pointerId != null && e.pointerId !== d.pointerId) return;
+  const moved = d.moved;
+  const id = d.id;
+  const target = bmGapIndex.value;
+  bmCleanup();
+  if (!moved) return;
+  const arr = (bookmarks.value || []).slice();
+  const from = arr.findIndex(x => x.id === id);
+  if (from < 0) return;
+  const [item] = arr.splice(from, 1);
+  const to = Math.max(0, Math.min(arr.length, target));
+  arr.splice(to, 0, item);
+  bookmarks.value = arr;
+  if (to !== from) {
+    bmManualOrder.value = true;                       // ruční přerovnání → držet toto pořadí
     bmSaveNow();                                      // jeden zápis po dokončení tažení
   }
 }
-function bmScheduleSave() {
-  clearTimeout(_bmSaveTimer);
-  _bmSaveTimer = setTimeout(() => { _bmSaveTimer = null; bmSaveNow(); }, 400);
+function bmDragCancel() {
+  bmCleanup();   // systémové gesto/přerušení: pořadí necháme, jen uklidit stav
 }
 function bmSaveNow() {
   clearTimeout(_bmSaveTimer);
@@ -6847,6 +6930,19 @@ async function deleteBookmark(b) {
 .jp-item {
   display: flex; align-items: center; gap: 8px;
   background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px;
+}
+/* Prázdný slot, kam tažená záložka spadne — přesně na místě, kde je duch. */
+.jp-gap {
+  flex: 0 0 auto; box-sizing: border-box;
+  border: 1px dashed var(--accent); border-radius: 10px;
+  background: transparent;
+}
+/* Duch taženého řádku: plave pod prstem, nesahá na události. */
+.jp-item.bm-ghost {
+  border-color: var(--accent);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  will-change: transform;
+  user-select: none;
 }
 .jp-item-label { font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jp-item-pages { color: var(--text-dim); font-size: 0.8rem; white-space: nowrap; }
