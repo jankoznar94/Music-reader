@@ -99,15 +99,47 @@ ANN_JS = """(async () => {
 })()"""
 
 
+ALL_JS = """(async () => {
+  const q = indexedDB.open('noty-app');
+  const db = await new Promise(res => { q.onsuccess = () => res(q.result); q.onerror = () => res(null); });
+  if (!db) return '{}';
+  const rows = await new Promise(res => {
+    const r = db.transaction('annotations', 'readonly').objectStore('annotations').getAll();
+    r.onsuccess = () => res(r.result || []); r.onerror = () => res([]);
+  });
+  db.close();
+  let bar = 0, other = 0;
+  for (const row of rows) for (const it of (row.items || [])) (it.barNum ? bar++ : other++);
+  return JSON.stringify({ bar, other });
+})()"""
+
+
+async def free_point_retry(h, lo=0.3, hi=0.7, tries=8):
+    """Volný bod na vrstvě — po přechodu na jinou stránku se viewer ještě chvíli
+    překresluje, takže první pokus může trefit loading overlay."""
+    for _ in range(tries):
+        p = await h.free_point(lo, hi)
+        if p:
+            return p
+        await asyncio.sleep(0.6)
+    return None
+
+
+async def counts(h):
+    return json.loads(await h.ev(ALL_JS, await_promise=True) or "{}")
+
+
 async def bar_nums(h):
     return json.loads(await h.ev(ANN_JS, await_promise=True) or "[]")
 
 
 async def pick_tool(h, title_part):
-    # Rozbalit velký panel, kdyby byl sbalený, pak vybrat nástroj.
-    await h.ev("""(() => { const b = [...document.querySelectorAll('.ap-collapse, .ap-collapse-label')]
-        .find(x => /Rozbalit/.test(x.textContent || '')); if (b) b.click(); return !!b; })()""")
-    await asyncio.sleep(0.4)
+    # Velký panel se sbalením schová i tlačítka nástrojů — v tom případě ho
+    # rozbal (tlačítko je jen ikona se šipkou, text „Rozbalit“ nemá).
+    if not await h.ev("document.querySelectorAll('.ap-tool').length"):
+        await h.ev("(() => { const b = document.querySelector('.ap-collapse');"
+                   " if (b) b.click(); return !!b; })()")
+        await asyncio.sleep(0.5)
     ok = await h.ev("""(() => { const b = [...document.querySelectorAll('.ap-tool')]
         .find(x => (x.title || '').startsWith(%s)); if (!b) return false; b.click(); return true; })()"""
                     % json.dumps(title_part))
@@ -151,7 +183,7 @@ async def main():
 
         # --- 2. malý a celý na displeji ---------------------------------------
         r = st["r"]
-        ok("panel je malý (<= 250 x 200 px)", r["w"] <= 250 and r["h"] <= 200,
+        ok("panel je malý (<= 250 x 250 px)", r["w"] <= 250 and r["h"] <= 250,
            f"{r['w']:.0f} x {r['h']:.0f}")
         ok("panel je celý na displeji",
            r["left"] >= 0 and r["top"] >= 0 and r["right"] <= st["vw"] and r["bottom"] <= st["vh"],
@@ -222,6 +254,66 @@ async def main():
         moved = json.loads(await h.ev(PANEL_JS))["r"]
         ok("panel se dá odtáhnout", abs(moved["left"] - r["left"]) > 40,
            f"x {r['left']:.0f} -> {moved['left']:.0f}, y {r['top']:.0f} -> {moved['top']:.0f}")
+
+        # --- 8. ZMĚNA KROKU PLATÍ UŽ U PRVNÍHO VLOŽENÍ -----------------------
+        # Krok se „napíše“ do pole (input event); `change` přijde až s blurem,
+        # tedy PO vložení — přesně ta situace, kterou Jan hlásil.
+        prev_next = int(json.loads(await h.ev(PANEL_JS))["vals"]["next"])
+        typed = await h.ev("""(() => { const p = document.querySelector('.barnum-panel');
+            const el = p.querySelectorAll('.bn-input')[1];
+            el.focus(); el.value = '6';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            return el.value; })()""")
+        ok("krok jde do pole napsat", typed == '6', str(typed))
+        fp2 = await free_point_retry(h, 0.28, 0.62)
+        await h.finger_tap(fp2["x"], fp2["y"], r=11)
+        await asyncio.sleep(0.8)
+        it2 = (await bar_nums(h))[-1]
+        nxt_after = int(json.loads(await h.ev(PANEL_JS))["vals"]["next"])
+        ok("vložené číslo = číslo před vložením", int(it2["text"]) == prev_next,
+           f"vloženo {it2['text']}, mělo být {prev_next}")
+        ok("NOVÝ krok (6) platí už u prvního vložení", nxt_after == prev_next + 6,
+           f"další {prev_next} -> {nxt_after}")
+
+        # --- 9. smazání číslování v CELÉM souboru ---------------------------
+        # další číslo na JINÉ stránce → mazání musí projít všechny stránky
+        # Listuj tlačítkem v anotaci, NE dialogem Přejít na stránku — ten
+        # anotační režim VYPNE (jiný panel → vypnout anotaci), takže by panel
+        # čísel zmizel a nebylo by co měřit.
+        await h.ev("(() => { const b = [...document.querySelectorAll('.annot-nav-btn')]"
+                   ".find(x => (x.title || '') === 'Další stránka'); if (b) b.click(); return !!b; })()")
+        await h.wait_for("document.querySelector('.tb-page').textContent.trim().startsWith('2')",
+                         timeout=15, label="page 2")
+        fp3 = await free_point_retry(h, 0.3, 0.6)
+        await h.finger_tap(fp3["x"], fp3["y"], r=11)
+        await asyncio.sleep(0.9)
+        # jedna NEčíselná anotace, aby „ostatní zůstaly“ nebylo prázdné tvrzení
+        assert await pick_tool(h, "Tužka"), "nástroj Tužka nenalezen"
+        await h.pen_stroke(300, 620, 420, 660)
+        await asyncio.sleep(0.5)
+        assert await pick_tool(h, "Čísla taktů"), "nástroj Čísla taktů nenalezen"
+        await h.wait_for("!!document.querySelector('.barnum-panel')", timeout=8, label="barnum panel")
+        c0 = await counts(h)
+        ok("čísla jsou na víc stránkách", c0["bar"] >= 3, str(c0))
+        ok("v datech je i nečíselná anotace", c0["other"] >= 1, str(c0))
+        clear_pt = json.loads(await h.ev("""(() => { const b = document.querySelector('.bn-clear');
+            const r = b.getBoundingClientRect();
+            return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); })()"""))
+        await h.finger_tap(clear_pt["x"], clear_pt["y"], r=10)
+        await asyncio.sleep(0.7)
+        c1 = await counts(h)
+        armed = await h.ev("!!document.querySelector('.bn-clear.armed')")
+        ok("první klepnutí jen nabije (nic nemaže)", armed and c1["bar"] == c0["bar"],
+           f"armed={armed} bar {c0['bar']} -> {c1['bar']}")
+        await h.finger_tap(clear_pt["x"], clear_pt["y"], r=10)
+        await asyncio.sleep(1.2)
+        c2 = await counts(h)
+        ok("druhé klepnutí smaže VŠECHNA čísla taktů", c2["bar"] == 0,
+           f"bar {c1['bar']} -> {c2['bar']}")
+        ok("ostatní anotace zůstaly", c2["other"] == c0["other"],
+           f"jiné {c0['other']} -> {c2['other']}")
+        ok("tlačítko se po smazání odjistilo",
+           not await h.ev("!!document.querySelector('.bn-clear.armed')"))
 
         # --- 8. úzký telefon: panel se musí vejít a zůstat chytatelný -------
         await h.set_tablet(390, 844)

@@ -959,6 +959,23 @@
           {{ barNumsHidden ? 'skrytá' : 'viditelná' }}
         </button>
       </div>
+      <div class="bn-row">
+        <!-- Smazání číslování v CELÉM souboru (všechny stránky skladby).
+             Destruktivní akce bez dialogu (Jan dialogy nechce): první klepnutí
+             tlačítko jen „nabije“, druhé do 4 s teprve maže — stejný vzor jako
+             tovární reset zobrazení v panelu preferencí. -->
+        <button class="bn-clear" :class="{ armed: barClearArmed }" @click="clearAllBarNums"
+                :title="barClearArmed
+                  ? 'Klepni znovu — smaže všechna čísla taktů v celé skladbě'
+                  : 'Smazat všechna čísla taktů v celé skladbě (všechny stránky)'">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 7h16"/><path d="M9.5 7V4.5h5V7"/><path d="M6.5 7l1 13h9l1-13"/>
+            <path d="M10 11v6M14 11v6"/>
+          </svg>
+          <span>{{ barClearArmed ? 'Opravdu smazat?' : 'Smazat všechny' }}</span>
+        </button>
+      </div>
       <div class="bn-hint">Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do rohu označení.</div>
     </div>
 
@@ -1774,6 +1791,49 @@ function setBarNext(v) {
   const n = Math.round(Number(v) || 0);
   barNext.value = Math.max(1, n || 1);
   saveBarNext();
+}
+// ⚠️ POLE SE APLIKUJÍ AŽ NA `change` (= blur) A TEN U ŤUKNUTÍ NA PLÁTNO DORAZÍ
+// POZDĚJI NEŽ VLOŽENÍ. Jan (Nov 2026): „Když změním krok číslování, tak se změny
+// projeví vždy až na druhé vložení. Když změním z 6 na 8, tak číslo po změně se
+// posune stále jen o 6, a až to další o 8.“ Přesně toto: pointerdown na plátně
+// vloží číslo dřív, než prohlížeč stihne vyhodit `change` z opuštěného pole, takže
+// se použil STARÝ krok. Řešení není další vazba na událost, ale přečtení polí
+// z DOM PŘED vložením — funguje pro ťuknutí i pro tažení obdélníku.
+function syncBarFieldsFromDom() {
+  const p = document.querySelector('.barnum-panel');
+  if (!p) return;
+  const ins = p.querySelectorAll('.bn-input');
+  if (ins[0] && ins[0].value !== '') setBarNext(ins[0].value);
+  if (ins[1] && ins[1].value !== '') setBarStep(ins[1].value);
+}
+// SMAZÁNÍ ČÍSLOVÁNÍ V CELÉM SOUBLU (Jan, Nov 2026). Maže jen anotace s `barNum`
+// na VŠECH stránkách skladby — ostatní poznámky zůstávají. Dvě klepnutí (první
+// „nabije“, druhé do 4 s maže), stejný vzor jako tovární reset zobrazení;
+// nativní confirm() v PWA nechceme. Počítadlo „Další“ se NEMĚNÍ — uživatel může
+// chtít přečíslovat od jiného taktu, než od jedničky.
+const barClearArmed = ref(false);
+let barClearTimer = null;
+function disarmBarClear() {
+  barClearArmed.value = false;
+  if (barClearTimer) { clearTimeout(barClearTimer); barClearTimer = null; }
+}
+function clearAllBarNums() {
+  if (!barClearArmed.value) {
+    barClearArmed.value = true;
+    if (barClearTimer) clearTimeout(barClearTimer);
+    barClearTimer = setTimeout(disarmBarClear, 4000);
+    const n = annotations.value.items.filter(it => it.barNum).length;
+    showToast(n ? `Klepni znovu — smaže ${n} čísel taktů` : 'V této skladbě nejsou vložená čísla taktů');
+    return;
+  }
+  disarmBarClear();
+  const before = annotations.value.items.length;
+  pushHistory();
+  annotations.value.items = annotations.value.items.filter(it => !it.barNum);
+  const removed = before - annotations.value.items.length;
+  saveAnnotations();
+  nextTick(() => measureTexts());
+  showToast(removed ? `Smazáno ${removed} čísel taktů v celé skladbě` : 'Nebylo co smazat');
 }
 // Obdélník ze dvou bodů (v souřadnicích vrstvy) — používají ho tažení i náhled.
 function barDragBox(a, b) {
@@ -5336,6 +5396,10 @@ function onLayerUp(e) {
     _barDrag = null;
     barDragRect.value = null;
     if (_activePointerId === e.pointerId) { _activePointerId = null; _prev = null; }
+    // Ručně přepsaná čísla polí aplikuj TEĎ — `change` z opuštěného pole dorazí
+    // až po vložení, takže by se první číslo posunulo STARÝM krokem (Jan: „změny
+    // se projeví vždy až na druhé vložení“).
+    syncBarFieldsFromDom();
     const p2 = toLayerCoords(e);
     const r = barDragBox(d.from, p2);
     const dragged = r.width >= BAR_DRAG_MIN && r.height >= BAR_DRAG_MIN;
@@ -7827,6 +7891,18 @@ async function deleteBookmark(b) {
   touch-action: manipulation;
 }
 .bn-toggle.on { border-color: var(--accent); color: var(--accent); }
+/* Smazání číslování v celém souboru — ploché tlačítko s košem (ikona říká AKCI,
+   ne „zavřít“). První klepnutí jen „nabije“ (výstražná barva), druhé maže. */
+.bn-clear {
+  flex: 1; min-width: 0; height: 30px; padding: 0 8px; border-radius: 9px;
+  border: 1px solid rgba(224, 131, 111, 0.45); background: var(--bg-elev2);
+  color: #e0836f; font-size: 0.76rem; font-family: inherit; line-height: 1;
+  cursor: pointer; touch-action: manipulation;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+}
+.bn-clear svg { display: block; flex: 0 0 auto; }
+.bn-clear span { white-space: nowrap; }
+.bn-clear.armed { background: #e0836f; border-color: #e0836f; color: #17130f; }
 .bn-hint { font-size: 0.66rem; color: var(--text-dim); line-height: 1.3; }
 
 /* Pásmo úprav vybrané textové/dynamické anotace — POD horní lištou.
