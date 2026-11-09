@@ -482,6 +482,15 @@
           />
         </g>
 
+        <!-- Náhled označení taktu/systému při číslování taktů (tažení myší/perem) -->
+        <g v-if="barDragRect" class="wedge-preview">
+          <rect
+            :x="barDragRect.x" :y="barDragRect.y"
+            :width="barDragRect.width" :height="barDragRect.height"
+            fill="none" :stroke="annotColor" stroke-width="1.5" stroke-dasharray="6 4"
+          />
+        </g>
+
         <!-- Live preview bodů zvýrazňovače — kam uživatel klikl + náhled boxu -->
         <g v-if="tool === 'highlighter' && hlPoints.length" class="wedge-preview">
           <path
@@ -651,6 +660,30 @@
           </div>
         </div>
         <div v-if="hiddenPages.length" class="pg-hint">Stránky {{ hiddenLabel }} jsou odebrané — čísluje se {{ withOffset(totalPages) }} zobrazenými z {{ withOffset(rawPageCount) }} původních.</div>
+
+        <!-- SKOK NA TAKT — čísla taktů z nástroje „Čísla taktů“ (anotace barNum).
+             Hledá se nejdřív v části skladby, kde stojíme (mezi záložkami), aby
+             se na koncertě neskákalo do jiné skladby se stejným číslem taktu.
+             Když přesné číslo na stránkách není, jde se na NEJBLIŽŠÍ známý. -->
+        <div class="pg-offset">
+          <span class="pg-offset-label">Skoč na takt</span>
+          <input
+            v-model="barGoValue"
+            class="pg-offset-input pg-bar-go"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            placeholder="např. 45"
+            @keydown.enter="goToTypedBar"
+          />
+          <button class="pg-btn" @click="goToTypedBar">Takt</button>
+        </div>
+        <div class="pg-hint" v-if="barIndex.length">
+          Známých taktů: {{ barIndex.length }} ({{ barIndex[0].n }}–{{ barIndex[barIndex.length - 1].n }}).
+        </div>
+        <div class="pg-hint" v-else>
+          Zatím žádná čísla taktů — očísluj je nástrojem <b>1</b> v anotacích.
+        </div>
       </div>
     </div>
 
@@ -926,7 +959,9 @@
         </div>
       </div>
 
-      <!-- Kategorie: Čísla taktů (jen když je nástroj zapnutý) -->
+      <!-- Kategorie: Čísla taktů (jen když je nástroj zapnutý)
+           „Další“ a „Krok“ jsou v JEDNOM řádku (na tabletu se vejdou, na užším
+           se zalomí) — panel jinak zakryje půl stránky not. -->
       <div v-if="tool === 'barnumber'" class="ap-cat">
         <div class="ap-cat-label">Čísla taktů</div>
         <div class="ap-row">
@@ -941,6 +976,17 @@
             title="Číslo, které vloží příští klepnutí (skladba může začínat taktem 37)"
           />
           <button class="ap-size" @click="bumpBarNext(1)" title="Další číslo">+</button>
+          <span class="ap-op-label">Krok</span>
+          <button class="ap-size" @click="bumpBarStep(-1)" title="Menší krok">−</button>
+          <input
+            class="ap-bar-next ap-bar-step"
+            type="number" min="1" max="64" step="1"
+            :value="barStep"
+            @change="setBarStep($event.target.value)"
+            @keydown.enter="$event.target.blur()"
+            title="O kolik se další číslo zvýší = počet taktů v systému (např. 4)"
+          />
+          <button class="ap-size" @click="bumpBarStep(1)" title="Větší krok">+</button>
         </div>
         <div class="ap-row">
           <span class="ap-op-label">Velikost</span>
@@ -948,7 +994,7 @@
           <span class="ap-bar-val">{{ barSize }}</span>
           <button class="ap-size" @click="bumpBarSize(1)" title="Větší číslo">+</button>
         </div>
-        <div class="ap-hint">Klepni nad začátek taktu — číslo se vloží a zvýší.</div>
+        <div class="ap-hint">Tažením označ takt nebo celý systém — číslo se doplní do levého horního rohu. Klepnutí položí číslo pod prst.</div>
       </div>
 
       <!-- Kategorie: Styl -->
@@ -1580,6 +1626,22 @@ function bumpTextSize(dir) {
 const BAR_SIZE_MIN = 8, BAR_SIZE_MAX = 72, BAR_SIZE_STEP = 2;
 const barNext = ref(1);      // číslo, které vloží příští klepnutí
 const barSize = ref(16);     // velikost čísla (menší než běžný text — čísla taktů jsou drobná)
+// KROK (Jan, Nov 2026): každý systém má jiný počet taktů, a číslovat každý takt
+// ručně je otrava. Krok = o kolik se „Další“ zvýší po vložení jednoho čísla,
+// takže se číslo dává jen na začátek každého systému (krok 4 → 1, 5, 9, 13…).
+const BAR_STEP_MIN = 1, BAR_STEP_MAX = 64;
+const barStep = ref(1);
+// Náhled obdélníku při označování taktu/systému (ref px vrstvy).
+const barDragRect = ref(null);
+// Meze tahu, od kterých se počítá „tažení“ (menší = klepnutí s chvěním prstu).
+const BAR_DRAG_MIN = 8;
+// Číslo se kreslí účařím na horní hranu obdélníku → sedí NAD označeným taktem.
+const BAR_TOP_GAP = 2;
+let _barDrag = null;
+function clampBarStep(v) {
+  const n = Math.round(Number(v) || 0);
+  return Math.min(BAR_STEP_MAX, Math.max(BAR_STEP_MIN, n || 1));
+}
 function clampBarSize(v) {
   const n = Math.round(Number(v) || 0);
   return Math.min(BAR_SIZE_MAX, Math.max(BAR_SIZE_MIN, n || 16));
@@ -1590,12 +1652,15 @@ function loadBarStyle() {
     if (s) barSize.value = clampBarSize(s);
     const n = Number(localStorage.getItem('noty.barNext'));
     if (n > 0) barNext.value = Math.round(n);
+    const st = Number(localStorage.getItem('noty.barStep'));
+    if (st > 0) barStep.value = clampBarStep(st);
   } catch (e) { /* soukromý režim — jede se s výchozími hodnotami */ }
 }
 function saveBarStyle() {
   try {
     localStorage.setItem('noty.barSize', String(barSize.value));
     localStorage.setItem('noty.barNext', String(barNext.value));
+    localStorage.setItem('noty.barStep', String(barStep.value));
   } catch (e) { /* viz výše */ }
 }
 function bumpBarSize(dir) {
@@ -1603,7 +1668,17 @@ function bumpBarSize(dir) {
   saveBarStyle();
 }
 function bumpBarNext(dir) {
-  barNext.value = Math.max(1, barNext.value + dir);
+  // Krokem se hýbe i „+“/„−“ u dalšího čísla — jinak by u systému po 4 taktech
+  // tlačítko skočilo jen o 1 a muselo by se to doťukávat.
+  barNext.value = Math.max(1, barNext.value + dir * barStep.value);
+  saveBarStyle();
+}
+function bumpBarStep(dir) {
+  barStep.value = clampBarStep(barStep.value + dir);
+  saveBarStyle();
+}
+function setBarStep(v) {
+  barStep.value = clampBarStep(v);
   saveBarStyle();
 }
 // „Další číslo“ jde i přepsat ručně (skladba začíná na stránce taktem 37).
@@ -1611,6 +1686,32 @@ function setBarNext(v) {
   const n = Math.round(Number(v) || 0);
   barNext.value = Math.max(1, n || 1);
   saveBarStyle();
+}
+// Obdélník ze dvou bodů (v souřadnicích vrstvy) — používají ho tažení i náhled.
+function barDragBox(a, b) {
+  return {
+    x: Math.min(a.x, b.x), y: Math.min(a.y, b.y),
+    width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y),
+  };
+}
+// Vloží číslo taktu na dané místo (účaří = y, začátek textu = x) a posune počítadlo.
+function placeBarNumber(x, y) {
+  pushHistory();
+  annotations.value.items.push({
+    id: crypto.randomUUID(), page: currentPage.value,
+    tool: 'text', barNum: true,
+    text: String(barNext.value),
+    size: clampBarSize(barSize.value),
+    color: textColor.value,
+    opacity: annotOpacity.value / 100,
+    border: false,
+    x, y,
+  });
+  barNext.value = Math.max(1, barNext.value + barStep.value);
+  saveBarStyle();
+  saveAnnotations();
+  // Skutečná šířka čísla pro rámeček výběru (stejné měření jako u textu).
+  nextTick(() => measureTexts());
 }
 loadBarStyle();
 
@@ -4383,6 +4484,9 @@ function setTool(t) {
   }
   tool.value = t;
   wedgePoints.value = []; hlPoints.value = []; annotMode.value = true;
+  // Nedokončené označení taktu/systému nesmí zůstat viset po přepnutí nástroje
+  // (jinak by obdélník zůstal nakreslený a další tah by se choval jako drag).
+  _barDrag = null; barDragRect.value = null;
   jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
 }
 
@@ -4576,6 +4680,8 @@ function onLayerDown(e) {
   // pero, které právě kreslí, se tím neuvolní (píše průběžné pointermove).
   _staleGuard(STALE_POINTER_MS);
   if (!annotMode.value) { _logEv('  down: bez anotace'); return; }
+  // Nedokončené označení taktu z předchozího nástroje nesmí ovlivnit další tah.
+  if (tool.value !== 'barnumber') { _barDrag = null; barDragRect.value = null; }
   // Pero = kreslení (Jan: „anotace se dělají perem“). Zaznamenáme čas, aby
   // opřená ruka, jejíž touchend dorazí až po tahu perem, neotočila stránku.
   if (e.pointerType === 'pen') markPen();
@@ -4596,7 +4702,12 @@ function onLayerDown(e) {
     const palm = Math.max(e.width || 0, e.height || 0) > 50;
     const penWriting = Date.now() - _lastPenAt < PEN_GUARD_MS;
     const grabInEdit = tool.value === 'edit' && !palm && !penWriting;
-    if (!grabInEdit) { _logEv('  down: penOnly blok'); return; }
+    // DRUHÁ VÝJIMKA — Čísla taktů: tahem se nic nekreslí, jen se označí takt
+    // nebo systém a vloží se hotové číslo. Jan (Nov 2026): „Obdélník pro
+    // označení by bylo dobré zpřístupnit i pro prst.“ Dlaň (poloměr > 50 px)
+    // zůstává zablokovaná, ať se obdélník neudělá omylem opřenou rukou.
+    const barBoxByFinger = tool.value === 'barnumber' && !palm && !penWriting;
+    if (!grabInEdit && !barBoxByFinger) { _logEv('  down: penOnly blok'); return; }
   }
   // V ANOTACI se přes okraje LISTUJE TLAČÍTKY, ne klepnutím — kraj tedy patří
   // psaní poznámek i pro prst (Jan: „v anotačním režimu nejsou vidět klikací
@@ -4762,26 +4873,14 @@ function onLayerDown(e) {
 
   // Text / dynamika / značka / nota: umístění na stránku (vytvoří se po uvolnění)
   if (isTextAnnot(tool.value)) {
-    // ČÍSLA TAKTŮ: nevkládá se přes dialog — klepnutí rovnou položí další číslo
-    // a počítadlo se zvýší. Číslo je textová anotace, takže s ním jde hýbat
-    // i přepsat rukou (a vypálí se do PDF jako text).
+    // ČÍSLA TAKTŮ: neklade se hned při doteku. Tažením se označí takt/systém
+    // a číslo se doplní do jeho levého horního rohu — díky tomu sedí číslo vůči
+    // osnově pokaždé stejně (dřív přistálo přesně pod prstem, takže bylo
+    // pokaždé jinde). Klepnutí bez tažení položí číslo tam, kam se kleplo.
     if (tool.value === 'barnumber') {
-      pushHistory();
-      annotations.value.items.push({
-        id: crypto.randomUUID(), page: currentPage.value,
-        tool: 'text', barNum: true,
-        text: String(barNext.value),
-        size: clampBarSize(barSize.value),
-        color: textColor.value,
-        opacity: annotOpacity.value / 100,
-        border: false,
-        x: p.x, y: p.y,
-      });
-      barNext.value += 1;
-      saveBarStyle();
-      saveAnnotations();
-      // Skutečná šířka čísla pro rámeček výběru (stejné měření jako u textu).
-      nextTick(() => measureTexts());
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* starší prohlížeč */ }
+      _barDrag = { from: p, pointerId: e.pointerId };
+      barDragRect.value = null;
       _prev = p;
       return;
     }
@@ -5013,6 +5112,14 @@ function onLayerMove(e) {
     _prev = p;
     return;
   }
+  if (tool.value === 'barnumber' && _barDrag) {
+    if (_barDrag.pointerId !== e.pointerId) return;
+    const p2 = toLayerCoords(e);
+    _barDrag.to = p2;
+    barDragRect.value = barDragBox(_barDrag.from, p2);
+    _prev = p2;
+    return;
+  }
   if (!activeItem.value) return;
   if (_activePointerId !== e.pointerId) return; // jiný prvek (druhá ruka) — nekreslit
   const p = toLayerCoords(e);
@@ -5120,6 +5227,20 @@ function onLayerUp(e) {
     _dragAnnot = null; _dragFrom = null; _dragSnap = null;
     _activePointerId = null;
     _prev = null;
+    return;
+  }
+  // ČÍSLA TAKTŮ: dokončení označení. Obdélník (tažení) → číslo do levého
+  // horního rohu NAD oznažený takt/systém; pouhé klepnutí → číslo pod prst.
+  if (tool.value === 'barnumber' && _barDrag) {
+    const d = _barDrag;
+    _barDrag = null;
+    barDragRect.value = null;
+    if (_activePointerId === e.pointerId) { _activePointerId = null; _prev = null; }
+    const p2 = toLayerCoords(e);
+    const r = barDragBox(d.from, p2);
+    const dragged = r.width >= BAR_DRAG_MIN && r.height >= BAR_DRAG_MIN;
+    _lastUpDbg = dragged ? 'číslo taktu do obdélníku' : 'číslo taktu na klepnutí';
+    placeBarNumber(dragged ? r.x : p2.x, dragged ? r.y - BAR_TOP_GAP : p2.y);
     return;
   }
   // Pozor: `activeItem` může být mezitím prázdný (dialog textu/značky už tah
@@ -6156,6 +6277,78 @@ function goToTypedPage() {
   // gotoPage je synchronní fire-and-forget (token v renderCurrent vykreslí jen poslední stránku)
   if (target === currentPage.value && _pageGoPrevPage === target) return;
   gotoPage(target);
+}
+
+// --- SKOK NA TAKT (Nov 2026) -----------------------------------------------
+// Jan: „Šlo by udělat, že by uživatel mohl skákat na libovolný takt? … v rámci
+// dané části skladby, ve které se nachází, by se přemístil na stránku, kde se
+// hledaný takt nachází. Pokud tam tento konkrétní takt není, tak to skočí na
+// ten nejbližší známý.“
+// Zdroj pravdy jsou ČÍSLA TAKTŮ VLOŽENÁ NÁSTROJEM (anotace s `barNum`) — ta
+// jsou přesná a uživatel je vidí na papíře. Automatická detekce z osnov se
+// záměrně nepoužívá (u skenů nefunguje, u vektorových PDF dělá chyby; špatný
+// skok při koncertě je horší než žádný), viz references/pdf-score-geometry.md.
+const barGoValue = ref('');
+// Index známých taktů: číslo → stránka. Řazeno podle stránky a svislé polohy,
+// takže stejné číslo na dvou místech (repetice) drží pořadí, v jakém jde hudba.
+const barIndex = computed(() => {
+  const out = [];
+  for (const it of annotations.value.items) {
+    if (!it || !it.barNum) continue;
+    const n = parseInt(String(it.text == null ? '' : it.text).trim(), 10);
+    if (!Number.isFinite(n)) continue;
+    out.push({ n, page: it.page, y: Number(it.y) || 0, x: Number(it.x) || 0 });
+  }
+  out.sort((a, b) => (a.page - b.page) || (a.y - b.y) || (a.x - b.x));
+  return out;
+});
+// Známé takty jen v části, kde právě stojíme (část = od záložky k záložce).
+// Bez záložek nebo mimo ně = celá skladba.
+function barScope() {
+  const all = barIndex.value;
+  const vi = visibleIndex.value;
+  const sec = bmSections.value.length ? bmSectionAt(vi) : null;
+  if (!sec) return all;
+  const pages = new Set(visiblePages.value.slice(sec.start, sec.end + 1));
+  return all.filter(e => pages.has(e.page));
+}
+// Najdi cíl: přesné číslo, jinak NEJBLIŽŠÍ známý (při stejné vzdálenosti ten
+// nižší — noty jdou dopředu, dozadu se vrací jen výjimečně).
+function findBarTarget(n) {
+  const list = barScope();
+  if (!list.length) return null;
+  const exact = list.filter(e => e.n === n);
+  if (exact.length) {
+    // Víc výskytů (repetice): ber první, který není před aktuální stránkou.
+    const ahead = exact.find(e => e.page >= currentPage.value);
+    return { ...(ahead || exact[0]), exact: true };
+  }
+  let best = null;
+  for (const e of list) {
+    const d = Math.abs(e.n - n);
+    if (!best || d < best.d || (d === best.d && e.n < best.n)) best = { ...e, d };
+  }
+  return best ? { ...best, exact: false } : null;
+}
+function goToTypedBar() {
+  const raw = String(barGoValue.value).trim();
+  const n = parseInt(raw, 10);
+  if (!raw || !Number.isFinite(n)) return;
+  const t = findBarTarget(n);
+  if (!t) {
+    showToast('Žádná čísla taktů — očísluj je nástrojem 1');
+    return;
+  }
+  pageGoOpen.value = false;
+  // Stejné číslo taktu na víc stránkách: vždy ber stránku, kde hudba pokračuje.
+  if (t.page === currentPage.value) {
+    showToast(t.exact ? 'Už jsi na taktu ' + n : 'Nejbližší známý takt ' + t.n);
+    return;
+  }
+  gotoPage(t.page);
+  showToast(t.exact
+    ? 'Takt ' + n + ' — stránka ' + withOffset(dispPage(t.page))
+    : 'Takt ' + n + ' tu není — nejbližší známý ' + t.n + ' (stránka ' + withOffset(dispPage(t.page)) + ')');
 }
 
 // --- Záložky (konkrétní stránky) ---
