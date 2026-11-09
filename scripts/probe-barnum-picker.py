@@ -162,6 +162,13 @@ TO_SCREEN_JS = """(() => {
   return JSON.stringify({ x: p.x, y: p.y });
 })()"""
 
+def layer_scale(vb, page_w_pt=595.0):
+    """viewBox vrstvy je v REFERENČNÍCH px, ne v bodech PDF (u reálných not
+    naměřeno 1,277×). Klepnutí v sondě proto musí být PDF × tohle měřítko."""
+    parts = str(vb).split()
+    return float(parts[2]) / page_w_pt if len(parts) >= 3 else 1.0
+
+
 PANEL_JS = """(() => { const p = document.querySelector('.barnum-panel');
   if (!p) return null;
   return JSON.stringify({
@@ -234,8 +241,12 @@ async def main():
 
         # --- 2. klepnutí na vytištěné číslo „42“ ------------------------------
         # PDF: text na 450/300 (body odspodu), MediaBox 842 vysoký → účaří
-        # 842-300 = 542 od shora; střed otisku ~ (455, 538).
-        await tap_layer(h, 455, 538)
+        # 842-300 = 542 od shora; střed otisku ~ (455, 538) v BODECH PDF.
+        # Vrstva je ale v referenčních px → přenásobit měřítkem.
+        vb = await h.ev("document.querySelector('.annot-layer').getAttribute('viewBox')")
+        S = layer_scale(vb)
+        print("   viewBox:", vb, "scale:", round(S, 4))
+        await tap_layer(h, 455 * S, 538 * S)
         items = await bars(h)
         ok("klepnutí na vytištěné číslo vložilo index", len(items) == 1, f"{len(items)} položek")
         if items:
@@ -244,7 +255,7 @@ async def main():
             ok("uloženo jako SKRYTÝ index", it.get("hidden") is True and it.get("barNum") is True,
                f"hidden={it.get('hidden')}")
             ok("index sedí na vytištěném čísle (±6 px)",
-               abs(float(it.get("x") or 0) - 450) <= 6 and abs(float(it.get("y") or 0) - 542) <= 6,
+               abs(float(it.get("x") or 0) - 450 * S) <= 8 and abs(float(it.get("y") or 0) - 542 * S) <= 8,
                f"x={it.get('x')} y={it.get('y')}")
 
         # --- 3. skrytost: v notách nic nepřibylo ------------------------------
@@ -287,7 +298,9 @@ async def main():
         await h.ev("document.querySelector('.bn-pick').click()")
         await asyncio.sleep(0.5)
         # obrázek je 60x30 bodů na (440..500, 552..582) od shora → střed (470, 567)
-        pt = json.loads(await h.ev(TO_SCREEN_JS % (470, 567)))
+        vb2 = await h.ev("document.querySelector('.annot-layer').getAttribute('viewBox')")
+        S2 = layer_scale(vb2)
+        pt = json.loads(await h.ev(TO_SCREEN_JS % (470 * S2, 567 * S2)))
         await h.finger_tap(pt["x"], pt["y"], r=11)
         # první OCR běh načítá model (~6 MB) → čekej trpělivě
         got = []

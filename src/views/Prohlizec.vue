@@ -1417,7 +1417,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, toRaw
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers, readPageTextNumbers } from '../pdf.js';
-import { ocrDigitsFromCanvas } from '../ocrDigits.js';
+import { ocrDigitsFromCanvas, binarizeCanvas } from '../ocrDigits.js';
 import { analyzeContent } from '../contentBounds.js';
 // share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
 // leželo v hlavním bundlu a zpomalovalo start čtečky.
@@ -1858,6 +1858,23 @@ function clearAllBarNums() {
 // běžném zoomu ~ odpovídá 50 bodům, proto konstanta 50.
 const BAR_PICK_RADIUS = 50;
 const _pageNumsCache = new Map();       // 'songId:page' → čísla z textové vrstvy
+// ⚠️ SOUSTAVA VRSTVY NENÍ PDF BODY. `cropBox` (a tedy viewBox anotační vrstvy)
+// je v referenčních px, které jsou u reálných not VĚTŠÍ než body PDF (naměřeno
+// u Mozarta: stránka 595 bodů → viewBox 760, měřítko 1,277). `toLayerCoords()`
+// i anotace proto mluví v referenčních px, kdežto textová vrstva PDF a
+// `renderPageRegion()` v bodech PDF. Bez převodu hledá lupa číslo o pár mm
+// vedle a u skenu vyřízne úplně jiné místo — přesně to hlásil Jan
+// („u žádného čísla se nepodařilo přečíst“).
+const _layerScaleCache = new Map();
+async function layerScale(page) {
+  const key = song.id + ':s:' + page;
+  if (_layerScaleCache.has(key)) return _layerScaleCache.get(key);
+  let w = 0;
+  try { w = (await getPageWidthHeight(song, page + 1)).width; } catch (e) { w = 0; }
+  const s = w > 0 ? (cropBox.value.w || w) / w : 1;
+  _layerScaleCache.set(key, s);
+  return s;
+}
 async function pageTextNumbers(pageNo) {
   const key = song.id + ':' + pageNo;
   if (_pageNumsCache.has(key)) return _pageNumsCache.get(key);
@@ -1913,28 +1930,36 @@ function addBarIndex(page, n, x, y, src) {
 // OCR ze SKENU: vyřízne okolí klepnutí z PDF plátna ve vysokém rozlišení a nechá
 // ho přečíst lokálním tesseractem (jen číslice). Vrací číslo taktu nebo null.
 async function ocrBarNumberAt(page, p) {
-  // DVĚ KOLA: širší okolí (92x34 bodů), a když z něj vyleze nesmysl (víc než
-  // 4 číslice = OCR slil číslo taktu s prstokladem nebo tempem), zkusí se
-  // ÚZKÝ výřez přesně pod prstem. Číslo, na které uživatel klepl, je v obou.
-  const tries = [
-    { x: p.x - 46, y: p.y - 19, w: 92, h: 34 },
-    { x: p.x - 24, y: p.y - 12, w: 48, h: 22 },
-  ];
-  let last = null;
-  for (const crop of tries) {
-    const outW = Math.round(crop.w * 8), outH = Math.round(crop.h * 8);   // 8× pro OCR
+  // Čísla taktů ve skenech jsou DROBNÁ (u Mozarta ~7 bodů vysoká) a tesseract
+  // je na surovém výřezu nejistý. Proto: úzký výřez 48x22 bodů, 8× zvětšit,
+  // ZBINARIZOVAT (Otsu) s bílým okrajem a zkusit MŘÍŽKU posunů kolem klepnutí —
+  // bere se nejlepší výsledek podle jistoty (včasný konec při >= 80).
+  const s = await layerScale(page);      // referenční px vrstvy / bod PDF
+  const px = p.x / s, py = p.y / s;      // klepnutí v bodech PDF
+  const W = 48, H = 22, SCALE = 8;       // v bodech PDF
+  const offsets = [[0, 0], [-18, 0], [18, 0], [0, -12], [0, 12],
+                   [-18, -12], [18, -12], [-18, 12], [18, 12]];
+  let best = null;
+  for (const [dx, dy] of offsets) {
+    const crop = {
+      x: px + dx - W / 2,
+      y: Math.max(0, py + dy - H / 2),
+      w: W, h: H,
+    };
     const cv = document.createElement('canvas');
-    await renderPageRegion(song, page + 1, cv, crop, outW, outH);
-    const res = await ocrDigitsFromCanvas(cv);
+    await renderPageRegion(song, page + 1, cv, crop, W * SCALE, H * SCALE);
+    const res = await ocrDigitsFromCanvas(binarizeCanvas(cv));
     const digits = String(res.digits || '');
-    last = { digits, confidence: Math.round(res.confidence), crop };
-    _barPickDbg({ ocr: last });
-    if (/^\d{1,4}$/.test(digits) && !(res.confidence && res.confidence < 40)) {
-      return parseInt(digits, 10);
+    _barPickDbg({ ocr: { digits, confidence: Math.round(res.confidence), dx, dy } });
+    if (/^\d{1,4}$/.test(digits) && res.confidence >= 40) {
+      if (!best || res.confidence > best.confidence) {
+        best = { n: parseInt(digits, 10), confidence: res.confidence };
+      }
+      if (res.confidence >= 80) break;
     }
   }
-  _barPickDbg({ ocrFail: last });
-  return null;
+  if (!best) _barPickDbg({ ocrFail: true, px: Math.round(p.x), py: Math.round(p.y) });
+  return best ? best.n : null;
 }
 const barPickBusy = ref(false);
 async function pickPrintedBarNumber(p) {
@@ -1944,14 +1969,15 @@ async function pickPrintedBarNumber(p) {
   try { nums = await pageTextNumbers(page); } catch (e) { nums = []; _barPickDbg({ err: String(e && e.message || e) }); }
   _barPickDbg({ page, px: Math.round(p.x), py: Math.round(p.y), count: nums.length,
     sample: nums.slice(0, 6).map(c => ({ n: c.n, x: Math.round(c.x), y: Math.round(c.yTop) })) });
+  const s = await layerScale(page);      // referenční px vrstvy / bod PDF
   let best = null;
   for (const c of nums) {
-    const cx = c.x + c.w / 2;
-    const cy = c.yTop - c.h * 0.35;
+    const cx = (c.x + c.w / 2) * s;
+    const cy = (c.yTop - c.h * 0.35) * s;
     const d = Math.hypot(cx - p.x, cy - p.y);
     if (d <= BAR_PICK_RADIUS && (!best || d < best.d)) best = { ...c, d };
   }
-  if (best) { addBarIndex(page, best.n, best.x, best.yTop, 'text'); return; }
+  if (best) { addBarIndex(page, best.n, best.x * s, best.yTop * s, 'text'); return; }
 
   // 2) SKEN: žádná textová vrstva → čti číslo z OBRÁZKU stránky.
   if (barPickBusy.value) return;
@@ -6645,6 +6671,7 @@ function resetBarScan() {
   pdfBars.value = [];
   barScanning.value = false;
   _pageNumsCache.clear();     // čísla z textové vrstvy staré skladby neplatí
+  _layerScaleCache.clear();
 }
 // Index známých taktů: číslo → stránka. Řazeno podle stránky a svislé polohy,
 // takže stejné číslo na dvou místech (repetice) drží pořadí, v jakém jde hudba.
