@@ -1652,8 +1652,30 @@ function toggleBarNumsHidden() {
 const barDragRect = ref(null);
 // Meze tahu, od kterých se počítá „tažení“ (menší = klepnutí s chvěním prstu).
 const BAR_DRAG_MIN = 8;
-// Číslo se kreslí účařím na horní hranu obdélníku → sedí NAD označeným taktem.
-const BAR_TOP_GAP = 2;
+// Kde číslo v obdélníku sedí (Jan, Nov 2026: „umisťují se příliš vysoko nad
+// osnovu, dal bych je blíž“). Dřív se kreslilo účařím NA horní hranu obdélníku,
+// takže když obdélník začínal kus nad systémem, číslo viselo vysoko. Teď platí:
+// HORNÍ OKRaj čísla (kapitálková výška) = horní hrana obdélníku, číslo tedy
+// sedí v levém horním rohu označené plochy — přesně tam, kam uživatel táhl.
+// 0,72 = kapitálková výška číslic u system-ui (naměřeno canvasem).
+const BAR_INK_TOP = 0.72;
+// Číslo se nesmí dostat mimo VIDITELNOU plochu — jinak se ořízne
+// (Jan: „místo 177 je vidět jen 77“). Vrstva má viewBox = cropBox, takže když
+// je zapnutý rám (ořez okrajů), platí hranice cropBoxu, ne 0! Anotace položená
+// s x < cropBox.x se vykreslí mimo viewBox a ořízne se.
+const BAR_MIN_X = 2;
+function barClampX(x) {
+  const cb = cropBox.value;
+  const left = Math.max(BAR_MIN_X, cb.x + 2);
+  const right = Math.max(left, cb.x + cb.w - 90);   // ať se vejde i „177“
+  return Math.max(left, Math.min(x, right));
+}
+function barClampY(y, size) {
+  const cb = cropBox.value;
+  const top = Math.max(1, cb.y + size);             // ať číslo není nad viewBoxem
+  const bottom = Math.max(top, cb.y + cb.h - 4);
+  return Math.max(top, Math.min(y, bottom));
+}
 let _barDrag = null;
 function clampBarStep(v) {
   const n = Math.round(Number(v) || 0);
@@ -5267,7 +5289,11 @@ function onLayerUp(e) {
     const r = barDragBox(d.from, p2);
     const dragged = r.width >= BAR_DRAG_MIN && r.height >= BAR_DRAG_MIN;
     _lastUpDbg = dragged ? 'číslo taktu do obdélníku' : 'číslo taktu na klepnutí';
-    placeBarNumber(dragged ? r.x : p2.x, dragged ? r.y - BAR_TOP_GAP : p2.y);
+    // Účaří = horní hrana obdélníku + kapitálková výška → číslo sedí v rohu
+    // obdélníku (blíž osnově než dřív) a nikdy nevisí nad označenou plochou.
+    const size = clampBarSize(barSize.value);
+    const src = dragged ? { x: r.x, y: r.y + Math.round(size * BAR_INK_TOP) } : { x: p2.x, y: p2.y };
+    placeBarNumber(barClampX(src.x), barClampY(src.y, size));
     return;
   }
   // Pozor: `activeItem` může být mezitím prázdný (dialog textu/značky už tah

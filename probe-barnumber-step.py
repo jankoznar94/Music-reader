@@ -120,8 +120,9 @@ async def main():
             n2 = a[1]
             if abs(n2["left"] - 470) > 12:
                 fails.append("číslo nesedí na levý okraj obdélníku (left=%s)" % n2["left"])
-            if not (n2["bottom"] <= 942):
-                fails.append("číslo není NAD obdélníkem (bottom=%s)" % n2["bottom"])
+            # číslo sedí v HORNÍM ROHU obdélníku (od Nov 2026), ne nad ním
+            if not (936 <= n2.get("bottom", 0) - 16 <= 948 and n2["bottom"] <= 962):
+                fails.append("číslo nesedí u horní hrany obdélníku (bottom=%s)" % n2["bottom"])
             if n2["txt"] != "2":
                 fails.append("druhé číslo není 2 (je %s)" % n2["txt"])
 
