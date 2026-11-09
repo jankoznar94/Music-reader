@@ -2072,9 +2072,22 @@ async function ocrBarNumberAt(page, p) {
                       ink: [ink.w, ink.h] });
       } catch (e) { /* nevadí */ }
     }
-    const res = await ocrDigitsFromCanvas(prepared);
-    return { digits: String(res.digits || ''), conf: Math.round(res.confidence),
-             n: cl ? cl.n : 0, dh };
+    let res = await ocrDigitsFromCanvas(prepared);
+    let digits = String(res.digits || '');
+    let conf = Math.round(res.confidence);
+    // DVOJÍ ČTENÍ při nejistotě: tesseract v režimu „jeden řádek“ umí zaměnit
+    // 5/3 (naměřeno: „75“ → „73“ s jistotou 83). Druhé čtení v režimu „slovo“
+    // (psm 8) je na dvojice číslic jinde; když se obě SHODUJÍ, je výsledek
+    // bezpečný. Když se rozcházejí, číslo se NEVKLÁDÁ — špatné číslo pošle
+    // hudebníka na jinou stránku, to je horší než žádné.
+    let alt = null;
+    if (digits.length >= 2 && conf < 90) {
+      const r2 = await ocrDigitsFromCanvas(prepared, 8);
+      const d2 = String(r2.digits || '');
+      if (d2 && d2 !== digits) alt = { digits: d2, conf: Math.round(r2.confidence) };
+      else if (d2 === digits) conf = Math.max(conf, Math.round(r2.confidence));
+    }
+    return { digits, conf, n: cl ? cl.n : 0, dh, alt };
   };
 
   // Nejbližší shluk nemusí být ten správný (když se prst netrefí, může jako
@@ -2084,8 +2097,11 @@ async function ocrBarNumberAt(page, p) {
   let best = null, tried = [];
   for (const cl of tries.concat([null])) {
     const r = await attempt(cl);
-    tried.push({ digits: r.digits, conf: r.conf, n: r.n, d: cl ? Math.round(cl.d) : -1 });
-    const ok = /^\d{1,4}$/.test(r.digits) && r.conf >= 40
+    tried.push({ digits: r.digits, conf: r.conf, n: r.n, d: cl ? Math.round(cl.d) : -1,
+                 alt: r.alt ? r.alt.digits : null });
+    // Práh 55: naměřené správné čtení má 67–96; odpad typu „2“ s jistotou 43
+    // vznikl na prázdném/posunutém výřezu a nesmí se vložit.
+    const ok = !r.alt && /^\d{1,4}$/.test(r.digits) && r.conf >= 55
       // počet přečtených číslic vs. počet komponent: rozpor o víc než jednu
       // znamená, že OCR spolklo taktovou čáru (dřívější „19“ místo „9“)
       && !(r.n && Math.abs(r.digits.length - r.n) > 1 && r.conf < 80);
@@ -2137,6 +2153,13 @@ async function pickPrintedBarNumber(p, pointerType) {
       // jestli selhalo hledání číslic (shluk 0) nebo čtení (nízká jistota).
       const d = _lastBarOcr;
       const st2 = d && d.stats ? d.stats : null;
+      // Rozpor dvou čtení = radši nic než špatné číslo; uživateli řekneme oba tipy.
+      const amb = d && d.tried && d.tried.find(t => t.alt);
+      if (amb) {
+        showToast('Číslo je nejednoznačné (' + amb.digits + ' vs. ' + amb.alt
+          + ') — klepni znovu, nebo ho vlož ručně', 6000);
+        return;
+      }
       const occ = d && d.occ ? d.occ : null;
       showToast('Nepřečteno · ' + (occ ? occ.pointerType : '?')
         + (occ ? ' · p ' + occ.layer[0] + ',' + occ.layer[1] : '')

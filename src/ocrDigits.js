@@ -310,10 +310,13 @@ export function binarizeCanvas(cv, pad = 18, thrIn = null) {
  * @param {HTMLCanvasElement} canvas
  * @returns {Promise<{digits:string, confidence:number}>}
  */
-export async function ocrDigitsFromCanvas(canvas) {
+export async function ocrDigitsFromCanvas(canvas, psm) {
   const w = await getWorker();
+  if (psm) await w.setParameters({ tessedit_pageseg_mode: String(psm) });
   const res = await w.recognize(canvas);
   const data = res && res.data ? res.data : {};
+  // psm se nastavuje globálne na workeru — po dočtení ho vrať na „jeden řádek“.
+  if (psm) await w.setParameters({ tessedit_pageseg_mode: '7' });
   return {
     digits: String(data.text || '').replace(/[^0-9]/g, ''),
     confidence: Number(data.confidence) || 0,

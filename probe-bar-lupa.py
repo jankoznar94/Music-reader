@@ -35,6 +35,10 @@ CASES = [
     # klepnutí kousek VEDLE čísla (prst se netrefí přesně) — hledání shluku to má srovnat
     (2, 73.5, 508.0, 9),
     (6, 80.5, 47.0, 42),
+    # str. 8 — Jan: „některá čísla to přečíst nechce“ (75, 78, 81)
+    (8, 69.0, 46.8, 75),
+    (8, 70.8, 271.2, 78),
+    (8, 69.6, 493.2, 81),
 ]
 
 TO_SCREEN = """(() => { const svg=document.querySelector('.annot-layer');
