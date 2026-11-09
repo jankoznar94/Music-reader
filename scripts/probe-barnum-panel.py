@@ -26,6 +26,8 @@ import json
 import os
 
 _CDP = os.environ.get("NOTY_CDP", "http://127.0.0.1:9223")
+# Volitelně proti ŽIVÉMU webu (po nasazení): NOTY_APP=https://harlequin-music-reader.web.app/
+LIVE = os.environ.get("NOTY_APP")
 
 
 def _load_harness():
@@ -115,8 +117,20 @@ async def pick_tool(h, title_part):
 
 async def main():
     ok = Check()
-    async with _m.Harness() as h:
+    h = _m.Harness(url=LIVE) if LIVE else _m.Harness()
+    if LIVE:
+        print("   cíl:", LIVE)
+    async with h:
         await h.open()          # IDB je na about:blank zakázaná → nejdřív appka
+        if LIVE:
+            # Starý service worker by servíroval starou verzi z precache →
+            # sonda by měřila minulý build, ne ten nasazený.
+            await h.ev("(async () => { const rs = await navigator.serviceWorker.getRegistrations();"
+                       " for (const r of rs) await r.unregister();"
+                       " for (const k of await caches.keys()) await caches.delete(k);"
+                       " return true; })()", await_promise=True)
+            await asyncio.sleep(1.0)
+            await h.open()
         await h.open_song(pages=4)
         await h.annot_toggle()
         assert await pick_tool(h, "Čísla taktů"), "tlačítko nástroje Čísla taktů nenalezeno"
