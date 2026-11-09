@@ -23,6 +23,8 @@ import json
 import os
 
 _CDP = os.environ.get("NOTY_CDP", "http://127.0.0.1:9223")
+# Volitelně proti ŽIVÉMU webu: NOTY_APP=https://harlequin-music-reader.web.app/
+LIVE = os.environ.get("NOTY_APP")
 FIX = "/tmp/bars-fixture.pdf"
 
 
@@ -124,8 +126,20 @@ async def tap_layer(h, lx, ly):
 async def main():
     ok = Check()
     make_bars_pdf()
-    async with _m.Harness() as h:
+    h = _m.Harness(url=LIVE) if LIVE else _m.Harness()
+    if LIVE:
+        print("   cíl:", LIVE)
+    async with h:
         await h.open()
+        if LIVE:
+            # Starý service worker by servíroval minulý build → měřila by se
+            # stará verze, ne ta nasazená.
+            await h.ev("(async () => { const rs = await navigator.serviceWorker.getRegistrations();"
+                       " for (const r of rs) await r.unregister();"
+                       " for (const k of await caches.keys()) await caches.delete(k);"
+                       " return true; })()", await_promise=True)
+            await asyncio.sleep(1.0)
+            await h.open()
         await h.open_song(pdf=FIX, pages=1)
         await h.annot_toggle()
         assert await pick_tool(h, "Čísla taktů"), "nástroj Čísla taktů nenalezen"
