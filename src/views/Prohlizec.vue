@@ -500,6 +500,18 @@
           />
         </g>
 
+        <!-- NÁHLED dočíslování systému: čárkované čáry + čísla, kam padnou.
+             Nic z toho ještě není uložené — uživatel to potvrdí nebo zruší. -->
+        <g v-if="barFillPreview && barFillPreview.page === currentPage" class="barfill-preview">
+          <line v-for="(it, i) in barFillPreview.items" :key="'bl' + i"
+                :x1="it.x" :y1="it.y - 26" :x2="it.x" :y2="it.y + 120"
+                stroke="var(--accent,#d8a657)" stroke-width="2" stroke-dasharray="6 5" />
+          <text v-for="(it, i) in barFillPreview.items" :key="'bt' + i"
+                :x="it.x" :y="it.y" :font-size="barSize" text-anchor="start"
+                fill="var(--accent,#d8a657)" font-family="system-ui, sans-serif"
+                class="barfill-num">{{ it.text }}</text>
+        </g>
+
         <!-- Live preview bodů zvýrazňovače — kam uživatel klikl + náhled boxu -->
         <g v-if="tool === 'highlighter' && hlPoints.length" class="wedge-preview">
           <path
@@ -1027,6 +1039,14 @@
                 @click="chooseBarPick(n)" :title="'Vložit ' + n + ' jako index pro skok'">{{ n }}</button>
         <button class="bn-choice-x" @click="barPickChoice = null" title="Zrušit výběr">✕</button>
       </div>
+      <!-- POTVRZENÍ NÁHLEDU: dočíslování systémů nic neuloží, dokud to
+           uživatel nepotvrdí. Vidí čárkované čáry a čísla přímo v notách. -->
+      <div class="bn-fill-preview" v-if="barFillPreview">
+        <span class="bn-fill-q">{{ barFillPreview.bars }} taktů: {{ barFillPreview.first }}–{{ barFillPreview.first + barFillPreview.bars - 1 }}</span>
+        <span class="bn-fill-warn" v-if="barFillPreview.seen > barFillPreview.bars + 1">Našel {{ barFillPreview.seen }} čar — zkontroluj Krok</span>
+        <button class="bn-fill-ok" @click="commitBarFill" title="Vložit čísla taktů">Vložit</button>
+        <button class="bn-fill-no" @click="cancelBarFill" title="Nic nevkládat">Zrušit</button>
+      </div>
       <div class="bn-diag" v-if="barPickDiag">{{ barPickDiag }}</div>
       <div class="bn-hint" v-if="tool === 'barpick'">Lupa: klepni na VYTIŠTĚNÉ číslo taktu — appka ho přečte (u skenu z obrázku) a nastaví skrytý index pro skok. Nic se do not nekreslí.</div>
       <div class="bn-hint" v-else>Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do rohu označení.</div>
@@ -1460,6 +1480,7 @@ import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup,
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers, readPageTextNumbers } from '../pdf.js';
 import { ocrDigitsFromCanvas, ocrDigitsPerCell, binarizeCanvas, findDigitClusters, cropCanvas, inkBox, normalizeForOcr } from '../ocrDigits.js';
 import { detectBarlines } from '../barLines.js';
+
 import { analyzeContent } from '../contentBounds.js';
 // share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
 // leželo v hlavním bundlu a zpomalovalo start čtečky.
@@ -2308,12 +2329,20 @@ async function ocrBarNumberAt(page, p) {
   _lastBarChoice = choice;
   return best ? parseInt(best.digits, 10) : null;
 }
+// Náhled dočíslování nesmí zůstat viset po přepnutí stránky (patří k jedné).
+watch(currentPage, () => { barFillPreview.value = null; });
+
 // --- DOČÍSLOVÁNÍ SYSTÉMU (taktové čáry, listopad 2026) ---------------------
 // Uživatel dá číslo na začátek systému a appka doplní zbytek taktů podle
 // TAKTOVÝCH ČAR. Počet doplněných taktů se ověřuje proti „Kroku“ (kolik taktů
 // má systém) — když to nesedí, nic se nevloží a appka to řekne. Špatné číslo
 // pošle hudebníka na jinou stránku, to je horší než žádné.
 const barFillArmed = ref(false);
+// NÁHLED dočíslování: co appka našla, se NEUKLÁDÁ hned. Uživatel vidí čárkovaně,
+// kam čísla padnou, a potvrdí „Vložit" (nebo „Zrušit"). Dřív se čísla ukládala
+// rovnou — a když detekce čar sedla o pár mm vedle, hudebník to zjistil až na
+// koncertě. Špatné číslo je horší než žádné.
+const barFillPreview = ref(null);
 function armBarFill() {
   if (barFillArmed.value) { barFillArmed.value = false; showToast('Dočíslování zrušeno'); return; }
   syncBarFieldsFromDom();
@@ -2367,6 +2396,7 @@ async function _fillSystemAt(p) {
                          lines: det.lines.map(v => Math.round(v * 10) / 10),
                          bars, step, staves: det.staves, top: det.top,
                          ok: det.ok, reason: det.reason, diag: det.diag,
+                         cands: det.cands, need: det.need,
                          w: cv.width, h: cv.height } });
   if (!det.ok) {
     const msg = 'Nedočísleno: ' + (det.reason || 'taktové čáry nesedí na Krok')
@@ -2383,13 +2413,39 @@ async function _fillSystemAt(p) {
   const first = Math.max(1, Number(barNext.value) || 1);
   // Číslo patří NAD horní linku systému, na začátek taktu (kousek za čáru).
   const y = Math.max(crop.y + 1, det.top - 2);
-  for (let i = 0; i < det.lines.length; i++) {
-    const x = det.lines[i] + 1.5;
-    addBarIndex(page, first + i, x * s, y * s, 'lines');
+  // NÁHLED: čísla se ještě neukládají — uživatel je uvidí a potvrdí.
+  // Kolik čar detekce vůbec vidí (může být víc než Krok — koncová čára,
+  // ozdoby). Když je o dost víc, je Krok nejspíš špatný a uživatel to musí
+  // vidět PŘED vložením; čísla by jinak sedla na špatné takty.
+  const seen = Array.isArray(det.cands) ? det.cands.length : bars;
+  barFillPreview.value = {
+    page, first, seen,
+    items: det.lines.map((x, i) => ({
+      text: String(first + i), x: (x + 1.5) * s, y: y * s,
+    })),
+    bars,
+  };
+  _barPickDbg({ preview: { bars, first, y: Math.round(y) } });
+  showToast('Nalezeno ' + bars + ' taktů (' + first + '–' + (first + bars - 1)
+    + ') — klepni na Vložit, nebo to zruš', 7000);
+}
+// Potvrzení náhledu dočíslování: teprve tady se čísla uloží.
+function commitBarFill() {
+  const pv = barFillPreview.value;
+  if (!pv) return;
+  barFillPreview.value = null;
+  for (const it of pv.items) {
+    addBarIndex(pv.page, Number(it.text), it.x, it.y, 'lines');
   }
-  barNext.value = Math.min(9999, first + bars);
+  barNext.value = Math.min(9999, pv.first + pv.bars);
   saveBarNext();
-  showToast('Doplněno ' + bars + ' čísel — další systém začíná ' + barNext.value);
+  showToast('Vloženo ' + pv.bars + ' čísel (' + pv.first + '–'
+    + (pv.first + pv.bars - 1) + ') — další systém začíná ' + barNext.value);
+}
+function cancelBarFill() {
+  if (!barFillPreview.value) return;
+  barFillPreview.value = null;
+  showToast('Dočíslování zrušeno');
 }
 const barPickBusy = ref(false);
 // Uživatel vybral z nabídky dvou čísel (15 vs 153) — index se vloží na místo
@@ -3803,6 +3859,11 @@ function pathD(it) {
 
 // --- Načtení ---
 onMounted(async () => {
+  // DIAG (jen dev): zvenčí se dostat k renderu stránky a detekci čar, aby šla
+  // změřit skutečná geometrie skenu bez hádání. V produkci se nepřidává.
+  if (import.meta.env.DEV) {
+    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill };
+  }
   await nextTick();
   loadPanelOffsets();   // panely tam, kam si je uživatel odtáhl
   installBackGuard();   // obrana proti systémovému gestu zpět
@@ -8594,6 +8655,23 @@ async function deleteBookmark(b) {
   touch-action: manipulation;
 }
 .bn-pick.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
+/* Potvrzení dočíslování: ploché, bez karty; obě tlačítka ≥ 34 px (dotyk). */
+.bn-fill-preview {
+  display: flex; align-items: center; gap: 6px;
+  border-top: 1px solid var(--border); padding-top: 6px;
+}
+.bn-fill-q { flex: 1 1 auto; font-size: 0.72rem; color: var(--text-dim); }
+.bn-fill-warn { flex: 1 1 100%; font-size: 0.7rem; color: #e5a44a; }
+.bn-fill-ok, .bn-fill-no {
+  height: 34px; padding: 0 12px; border-radius: 10px; cursor: pointer;
+  font-family: inherit; font-size: 0.82rem; font-weight: 700;
+  touch-action: manipulation;
+}
+.bn-fill-ok { border: 1px solid var(--accent); background: var(--bg-elev2); color: var(--text); }
+.bn-fill-ok:active { background: var(--accent); color: #17130f; }
+.bn-fill-no { border: 1px solid var(--border); background: var(--bg-elev2); color: var(--text-dim); }
+.bn-fill-no:active { background: var(--border); color: var(--text); }
+/* Náhled čísel v notách — jen obrys, ať je vidět, co se chystá. */
 .bn-row { display: flex; align-items: center; gap: 6px; }
 .bn-label { font-size: 0.72rem; color: var(--text-dim); width: 32px; flex: 0 0 auto; }
 .bn-btn {

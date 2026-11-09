@@ -184,41 +184,27 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     if (last && c.x - last.x < 6) { if (c.votes > last.votes) merged[merged.length - 1] = c; continue; }
     merged.push(c);
   }
-  // Výběr `krok` čar: první čára je VŽDY levá (začátek systému), zbytek se
-  // vybírá jako kombinace s nejlepším skóre = součet hlasů − odchylka rozestupů.
-  // Skutečnou čáru vidí všechny osnovy, nožičku noty jedna nebo dvě; a rozestupy
-  // taktů v systému mají být (až na první, širší takt) stejné — špatná dvojice
-  // typu 292/304 prozradí sama sebe nerovnoměrným rozestupem.
-  const cands = merged.filter(c => c.votes >= need).sort((a, b) => a.x - b.x);
-  let lines = [];
-  if (cands.length) {
-    const first = cands[0];
-    const rest = cands.slice(1);
-    let best = null;
-    const pick = (idx, acc) => {
-      if (acc.length === krok - 1) {
-        const all = [first, ...acc.map(i => rest[i])].sort((a, b) => a.x - b.x);
-        const gaps = [];
-        for (let i = 1; i < all.length; i++) gaps.push(all[i].x - all[i - 1].x);
-        if (gaps.some(g => g < 25) || gaps.length < 2) return;
-        const tail = gaps.slice(1);
-        const mean = tail.reduce((s, v) => s + v, 0) / tail.length;
-        const sd = Math.sqrt(tail.reduce((s, v) => s + (v - mean) * (v - mean), 0) / tail.length);
-        const votes = all.reduce((s, c) => s + c.votes, 0);
-        const score = votes - sd * 0.5;
-        if (!best || score > best.score) best = { score, all };
-        return;
-      }
-      for (let i = idx; i < rest.length; i++) pick(i + 1, acc.concat(i));
-    };
-    pick(0, []);
-    if (best) lines = best.all.map(c => c.x);
-  }
+  // Výběr čar: bereme PRVNÍ `krok` skutečných čar ZLEVA.
+  //
+  // PROČ ne skóre (dřív): skóre = hlasy − odchylka rozestupů zvýhodňovalo
+  // rovnoměrné rozestupy, takže u systému, kde je první takt širší, zahodilo
+  // DRUHOU čáru a jako čtvrtou vzalo KONCOVOU. Čísla pak seděla na špatných
+  // místech (naměřeno: 65/259/361/464/566 → vybráno 65/361/464/566). Čísla
+  // taktu jdou vždy zleva doprava, takže stačí vzít prvních `krok` čar.
+  //
+  // `need` = kolik osnov čáru musí vidět: polovina zaokrouhlená nahoru, ale
+  // aspoň 2 — u jednoosnového pásu by jinak prošlo každé smetí.
+  const needV = Math.max(2, Math.ceil(0.6 * group.length));
+  const cands = merged.filter(c => c.votes >= needV).sort((a, b) => a.x - b.x);
+  const lines = cands.slice(0, krok).map(c => c.x);
   const top = (Number.isFinite(opt.offsetY) ? opt.offsetY : 0) + per[group[0]].y0;
+  const dump = cands.map(c => [Math.round(c.x * 10) / 10, c.votes]);
   if (lines.length < krok) {
     return { lines, bars: lines.length, staves: group.length, top, ok: false,
              reason: 'našel jsem jen ' + lines.length + ' z ' + krok + ' čar',
-             diag: { thr, osnovy: group.length, kandidátů: merged.length } };
+             diag: { thr, osnovy: group.length, kandidátů: merged.length },
+             cands: dump, need };
   }
-  return { lines, bars: lines.length, staves: group.length, top, ok: true, thr };
+  return { lines, bars: lines.length, staves: group.length, top, ok: true, thr,
+           cands: dump, need };
 }
