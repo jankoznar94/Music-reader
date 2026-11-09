@@ -924,6 +924,12 @@
          class="barnum-panel" data-panel="barnum" :style="panelStyle('barnum')">
       <div class="bn-head">
         <span class="bn-title">{{ tool === 'barpick' ? 'Lupa na čísla' : 'Čísla taktů' }}</span>
+        <!-- Zavřít číslování = zpět do čtení a ZPĚT HORNÍ LIŠTA (v číslování je
+             schovaná, aby nepřekrývala horní takty) — Jan, Nov 2026. -->
+        <button class="bn-close" @click="toggleBarnum" title="Zavřít číslování a vrátit horní lištu">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
         <!-- LUPA: klepnutím na vytištěné číslo v PDF z něj udělá skrytý index
              pro skok na takt (u not s textovou vrstvou). -->
         <button class="bn-pick" :class="{ on: tool === 'barpick' }" @click="toggleBarPick"
@@ -1492,6 +1498,7 @@ function toggleBarnum() {
   if (barnumMode.value) {
     barnumMode.value = false;
     annotMode.value = false;      // číslování bylo jediný důvod anotace
+    showTopBar();                 // zavření číslování vrací horní lištu
     return;
   }
   jumpMode.value = false; bookmarkMode.value = false;
@@ -1500,7 +1507,9 @@ function toggleBarnum() {
   annotMode.value = true;         // vrstva musí přijímat dotyk
   barnumMode.value = true;
   tool.value = 'barnumber';
-  showTopBar();
+  // Lišta pryč — v číslování zakrývala horní takty (Jan, Nov 2026).
+  barHidden.value = true;
+  try { localStorage.setItem('topbarHidden', '1'); } catch (e) {}
 }
 const tool = ref('pencil');
 const activeItem = ref(null);
@@ -3367,7 +3376,9 @@ const penOnly = ref(true);        // v anotaci kreslit jen perem (ignorovat doty
 // je nejde chytit (pageHits jde přes pageItems).
 const pageItems = computed(() => annotations.value.items.filter(i =>
   i.page === currentPage.value
-  && (!(i.barNum && barNumsHidden.value) && !i.hidden || tool.value === 'edit')));
+  // V režimu ČÍSLOVÁNÍ musí být skrytá čísla VIDĚT (jako u nástroje Ruka):
+  // jinak uživatel nepozná, co už očísloval a co ne (Jan, Nov 2026).
+  && (!(i.barNum && barNumsHidden.value) && !i.hidden || tool.value === 'edit' || barnumMode.value)));
 
 // Skoky, které začínají na aktuální stránce
 const currentJumps = computed(() => jumps.value.filter(j => j.fromPage === currentPage.value));
@@ -4924,7 +4935,7 @@ function toggleAnnot() {
 // přechod skladby…), výběr prvku se zruší. Dřív se endEdit() volal ručně na ~8 místech
 // a stačilo jedno opomenutí a rámeček zůstal viset přes celou obrazovku.
 watch(annotMode, (on) => {
-  if (on) showTopBar();   // v anotaci musí být lišta vidět (východ z režimu)
+  if (on && !barnumMode.value) showTopBar();   // v anotaci musí být lišta vidět (východ z režimu)
   if (!on) {
     endEdit();
     // Přerušené umisťování skončí — jinak by zůstal viset režim sběru bodů
@@ -8202,6 +8213,15 @@ async function deleteBookmark(b) {
   display: flex; align-items: center; justify-content: center;
 }
 .bn-pick svg { display: block; }
+/* Zavření číslování — malé, ale vždy po ruce: se schovanou lištou je to jediná
+   cesta zpět do čtení (a vrátí horní lištu). */
+.bn-close {
+  width: 26px; height: 26px; flex: 0 0 auto; padding: 0; margin-left: auto;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text-dim); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: manipulation;
+}
+.bn-close:active { background: var(--accent); border-color: var(--accent); color: #17130f; }
 .bn-pick.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
 .bn-row { display: flex; align-items: center; gap: 6px; }
 .bn-label { font-size: 0.72rem; color: var(--text-dim); width: 32px; flex: 0 0 auto; }

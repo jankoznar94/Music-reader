@@ -66,6 +66,11 @@ async def main():
         check(not state["annot"], "velký anotační panel zůstal zavřený")
         check(state["on"], "tlačítko svítí (aktivní režim)")
 
+        # 3b) lišta je schovaná, panel má vlastní zavírací tlačítko
+        bar_hidden = await h.ev("document.querySelector('.top-bar').classList.contains('hidden')")
+        check(bar_hidden, "horní lišta je v číslování schovaná")
+        check(await h.ev("!!document.querySelector('.bn-close')"), "panel má tlačítko na zavření")
+
         # 4) lupa v tomto režimu funguje
         await h.ev("(() => { const b=document.querySelector('.bn-pick'); if(b) b.click(); return !!b; })()")
         await asyncio.sleep(0.3)
@@ -85,11 +90,18 @@ async def main():
         digits = next((d["ocr"]["digits"] for d in got if isinstance(d, dict) and "ocr" in d), "")
         check(str(digits) == "9", "lupa v režimu číslování přečte 9", digits)
 
+        # 4b) skrytá čísla jsou v číslovacím režimu VIDĚT (jako u nástroje Ruka)
+        shown = int(await h.ev(
+            "document.querySelectorAll('.annot-layer text').length"))
+        check(shown > 0, "skryté číslo je v číslování vykreslené", shown)
+
         # 5) vypnutí tlačítkem
         await h.ev("""(() => { const b=[...document.querySelectorAll('.tb-btn')]
             .find(x => (x.title||'').startsWith('Číslování taktů')); b.click(); return true; })()""")
         await asyncio.sleep(0.5)
         check(not await h.ev("!!document.querySelector('.barnum-panel')"), "po vypnutí panel zmizí")
+        check(await h.ev("!document.querySelector('.top-bar').classList.contains('hidden')"),
+              "po zavření je horní lišta zpátky")
 
         # 6) RÁM (oříznuté okraje) — vrstva je posunutá o cropBox; lupa to musí
         #    odečíst, jinak hledá čísla o desítky bodů vedle a nic nenajde.
