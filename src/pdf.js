@@ -166,3 +166,45 @@ export async function readBarNumbers(song, onProgress) {
   }
   return out;
 }
+/**
+ * Vytištěná ČÍSLA v textové vrstvě JEDNÉ stránky, se souřadnicemi (Nov 2026).
+ *
+ * Pro nástroj „Lupa“ (v okně čísel taktů): uživatel klepne na místo, kde je
+ * v originálním PDF VYTISKNUTÉ číslo taktu, a appka v okolí najde to číslo
+ * a udělá z něj skrytý index pro skok na takt. Na rozdíl od `readBarNumbers()`
+ * se tu NEfiltruje podle okraje ani rostoucí řady — hledá se číslo v okolí
+ * klepnutí, takže může být kdekoli na stránce.
+ *
+ * Souřadnice jsou v BODECH PDF (scale 1) s y od SHORA — to je přesně soustava
+ * anotační vrstvy (viewBox = cropBox, také v bodech PDF), takže se dají přímo
+ * porovnávat s `toLayerCoords()`.
+ *
+ * @returns {Promise<Array<{n:number,x:number,yTop:number,w:number,h:number}>>}
+ */
+export async function readPageTextNumbers(song, pageNum) {
+  const doc = await getDoc(song);
+  const page = await doc.getPage(pageNum);
+  const vp = page.getViewport({ scale: 1 });
+  let tc = null;
+  try { tc = await page.getTextContent(); } catch (e) { return []; }
+  const out = [];
+  for (const item of (tc && tc.items) || []) {
+    const txt = String(item.str || '').trim();
+    if (!/^\d{1,4}\.?$/.test(txt)) continue;
+    const n = parseInt(txt, 10);
+    if (!Number.isFinite(n)) continue;
+    const tr = item.transform || [];
+    const x = tr[4] || 0;
+    const y = tr[5] || 0;
+    const size = Math.hypot(tr[2] || 0, tr[3] || 0) || 10;
+    out.push({
+      n,
+      x,
+      yTop: (vp.height || 0) - y,          // účaří, ale y od SHORA
+      w: Number(item.width) || size * 0.6 * txt.length,
+      h: size,
+    });
+  }
+  return out;
+}
+

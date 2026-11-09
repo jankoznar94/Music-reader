@@ -911,10 +911,21 @@
          ho uživatel musel pořád schovávat/posouvat — a s ním zmizelo i číslo
          a krok. Tenhle panel drží JEN číslování, je úzký, dá se odtáhnout
          a zmizí s přepnutím nástroje. -->
-    <div v-if="annotMode && !jumpPlaceMode && tool === 'barnumber'"
+    <div v-if="annotMode && !jumpPlaceMode && (tool === 'barnumber' || tool === 'barpick')"
          class="barnum-panel" data-panel="barnum" :style="panelStyle('barnum')">
       <div class="bn-head">
-        <span class="bn-title">Čísla taktů</span>
+        <span class="bn-title">{{ tool === 'barpick' ? 'Lupa na čísla' : 'Čísla taktů' }}</span>
+        <!-- LUPA: klepnutím na vytištěné číslo v PDF z něj udělá skrytý index
+             pro skok na takt (u not s textovou vrstvou). -->
+        <button class="bn-pick" :class="{ on: tool === 'barpick' }" @click="toggleBarPick"
+                :title="tool === 'barpick'
+                  ? 'Lupa je zapnutá — klepni na vytištěné číslo taktu (vypneš ji znovu tady)'
+                  : 'Lupa: klepni na vytištěné číslo taktu — najde ho a udělá skrytý index pro skok'">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/>
+          </svg>
+        </button>
         <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
                 @pointerdown="panelDragStart($event, 'barnum')" @pointermove="panelDragMove"
                 @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
@@ -976,7 +987,8 @@
           <span>{{ barClearArmed ? 'Opravdu smazat?' : 'Smazat všechny' }}</span>
         </button>
       </div>
-      <div class="bn-hint">Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do rohu označení.</div>
+      <div class="bn-hint" v-if="tool === 'barpick'">Lupa: klepni na VYTIŠTĚNÉ číslo taktu — appka ho v okolí najde a nastaví skrytý index pro skok. Nic se do not nekreslí.</div>
+      <div class="bn-hint" v-else>Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do rohu označení.</div>
     </div>
 
     <!-- Plovoucí panel anotací (v anotačním režimu; při umisťování skoku schovaný,
@@ -1404,7 +1416,7 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, toRaw } from 'vue';
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
-import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers } from '../pdf.js';
+import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers, readPageTextNumbers } from '../pdf.js';
 import { analyzeContent } from '../contentBounds.js';
 // share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
 // leželo v hlavním bundlu a zpomalovalo start čtečky.
@@ -1834,6 +1846,90 @@ function clearAllBarNums() {
   saveAnnotations();
   nextTick(() => measureTexts());
   showToast(removed ? `Smazáno ${removed} čísel taktů v celé skladbě` : 'Nebylo co smazat');
+}
+// LUPA na VYTIŠTĚNÁ čísla (Jan, Nov 2026): „Nešla by přidat funkce (tlačítko lupy
+// v okně pro číslování taktů), že bych klikl do oblasti, kde se vyskytuje
+// vytištěné číslo v originálním PDF a appka by v té oblasti (± 50px) sama našla
+// číslo taktu a nastavila by mu neviditelný index pro skákání na takty?“
+// Ano — jde to u PDF s TEXTOVOU vrstvou (noty z notačních programů). Sken bez
+// textové vrstvy číslo nemá, tam appka řekne, ať ho vloží nástrojem 1.
+// Radius je v bodech PDF (stejná soustava jako vrstva); 50 px na displeji při
+// běžném zoomu ~ odpovídá 50 bodům, proto konstanta 50.
+const BAR_PICK_RADIUS = 50;
+const _pageNumsCache = new Map();       // 'songId:page' → čísla z textové vrstvy
+async function pageTextNumbers(pageNo) {
+  const key = song.id + ':' + pageNo;
+  if (_pageNumsCache.has(key)) return _pageNumsCache.get(key);
+  const arr = await readPageTextNumbers(song, pageNo + 1);
+  _pageNumsCache.set(key, arr);
+  return arr;
+}
+function toggleBarPick() {
+  if (tool.value === 'barpick') {
+    setTool('barnumber');
+    showToast('Lupa vypnuta — zase vkládáš čísla taktů');
+    return;
+  }
+  setTool('barpick');
+  showToast('Lupa: klepni na vytištěné číslo taktu — udělá z něj skrytý index');
+}
+function _barPickDbg(info) {
+  // Diagnostická stopa (jako __navdbg u dotyků) — bez ní je „lupa nic nenašla“
+  // nezměřitelné: nepoznáš, jestli selhalo čtení textové vrstvy, nebo okolí.
+  try {
+    const a = (window.__barPickDbg = window.__barPickDbg || []);
+    a.push(info); if (a.length > 30) a.shift();
+  } catch (e) { /* nevadí */ }
+}
+async function pickPrintedBarNumber(p) {
+  const page = currentPage.value;
+  let nums = [];
+  try { nums = await pageTextNumbers(page); } catch (e) { nums = []; _barPickDbg({ err: String(e && e.message || e) }); }
+  _barPickDbg({ page, px: Math.round(p.x), py: Math.round(p.y), count: nums.length,
+    sample: nums.slice(0, 6).map(c => ({ n: c.n, x: Math.round(c.x), y: Math.round(c.yTop) })) });
+  if (!nums.length) {
+    showToast('V této stránce nejsou čísla jako text (sken) — vlož je nástrojem 1');
+    return;
+  }
+  // Nejbližší číslo k místu klepnutí (střed otisku, ne účaří).
+  let best = null;
+  for (const c of nums) {
+    const cx = c.x + c.w / 2;
+    const cy = c.yTop - c.h * 0.35;
+    const d = Math.hypot(cx - p.x, cy - p.y);
+    if (d <= BAR_PICK_RADIUS && (!best || d < best.d)) best = { ...c, d };
+  }
+  if (!best) {
+    _barPickDbg({ miss: true, px: Math.round(p.x), py: Math.round(p.y) });
+    showToast(`V okolí ${BAR_PICK_RADIUS} px není vytištěné číslo taktu`);
+    return;
+  }
+  // Skrytý index = běžná textová anotace s barNum + hidden. Do indexu pro skok
+  // patří (barIndex ho čte), na papíře ani na displeji se nekreslí (vidět a
+  // smazat je jen v režimu Ruka) a do vypáleného PDF se nevypaluje.
+  const pos = { x: Math.round(best.x), y: Math.round(best.yTop) };
+  const items = annotations.value.items;
+  const dup = items.find(it => it && it.barNum && it.page === page
+    && Math.abs(Number(it.x) - pos.x) < 40 && Math.abs(Number(it.y) - pos.y) < 40);
+  pushHistory();
+  if (dup) {
+    dup.text = String(best.n);
+    dup.hidden = true;
+  } else {
+    items.push({
+      id: crypto.randomUUID(), page,
+      tool: 'text', barNum: true, hidden: true,
+      text: String(best.n),
+      size: clampBarSize(barSize.value),
+      color: textColor.value,
+      opacity: annotOpacity.value / 100,
+      border: false,
+      x: pos.x, y: pos.y,
+    });
+  }
+  saveAnnotations();
+  nextTick(() => measureTexts());
+  showToast(dup ? `Takt ${best.n} — index přepsán` : `Takt ${best.n} — skrytý index pro skok přidán`);
 }
 // Obdélník ze dvou bodů (v souřadnicích vrstvy) — používají ho tažení i náhled.
 function barDragBox(a, b) {
@@ -4866,7 +4962,7 @@ function onLayerDown(e) {
     // zůstává zablokovaná, ať se obdélník neudělá omylem opřenou rukou.
     // U čísel taktů se nic nekreslí — prst smí ťuknout i chvíli po peru
     // (jinak by „píšu perem, pak ťuknu prstem na roh systému“ tiše nic nedělalo).
-    const barBoxByFinger = tool.value === 'barnumber' && !palm;
+    const barBoxByFinger = (tool.value === 'barnumber' || tool.value === 'barpick') && !palm;
     if (!grabInEdit && !barBoxByFinger) { _logEv('  down: penOnly blok'); return; }
   }
   // V ANOTACI se přes okraje LISTUJE TLAČÍTKY, ne klepnutím — kraj tedy patří
@@ -5027,6 +5123,17 @@ function onLayerDown(e) {
       hlPoints.value = [];
     }
     _activePointerId = null;
+    _prev = p;
+    return;
+  }
+
+  // LUPA na vytištěná čísla: klepnutím se hledá číslo v textové vrstvě PDF —
+  // nic se nekreslí, jen se přidá skrytý index pro skok na takt. MUSÍ být PŘED
+  // `isTextAnnot(...)`, protože 'barpick' mezi textové nástroje nepatří a jinak
+  // by propadl do tužkové větve a vytvořil tah.
+  if (tool.value === 'barpick') {
+    _activePointerId = null;
+    pickPrintedBarNumber(p).catch(() => {});
     _prev = p;
     return;
   }
@@ -6497,6 +6604,7 @@ function resetBarScan() {
   _barScanToken++;
   pdfBars.value = [];
   barScanning.value = false;
+  _pageNumsCache.clear();     // čísla z textové vrstvy staré skladby neplatí
 }
 // Index známých taktů: číslo → stránka. Řazeno podle stránky a svislé polohy,
 // takže stejné číslo na dvou místech (repetice) drží pořadí, v jakém jde hudba.
@@ -7864,6 +7972,15 @@ async function deleteBookmark(b) {
 .bn-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .bn-title { font-size: 0.78rem; font-weight: 700; color: var(--text); }
 .barnum-panel .panel-grip { width: 26px; height: 26px; font-size: 0.85rem; }
+/* Lupa — stejný malý kruh jako úchyt, vedle nadpisu. Zapnutá = akcent. */
+.bn-pick {
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0; margin-left: auto;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text-dim); cursor: pointer; touch-action: manipulation;
+  display: flex; align-items: center; justify-content: center;
+}
+.bn-pick svg { display: block; }
+.bn-pick.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
 .bn-row { display: flex; align-items: center; gap: 6px; }
 .bn-label { font-size: 0.72rem; color: var(--text-dim); width: 32px; flex: 0 0 auto; }
 .bn-btn {
