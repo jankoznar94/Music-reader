@@ -1002,6 +1002,7 @@
           <span>{{ barClearArmed ? 'Opravdu smazat?' : 'Smazat všechny' }}</span>
         </button>
       </div>
+      <div class="bn-diag" v-if="barPickDiag">{{ barPickDiag }}</div>
       <div class="bn-hint" v-if="tool === 'barpick'">Lupa: klepni na VYTIŠTĚNÉ číslo taktu — appka ho přečte (u skenu z obrázku) a nastaví skrytý index pro skok. Nic se do not nekreslí.</div>
       <div class="bn-hint" v-else>Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do rohu označení.</div>
     </div>
@@ -1934,6 +1935,9 @@ function toggleBarPick() {
 // Poslední diagnostika OCR — hláška o neúspěchu ji ukáže uživateli, aby se
 // „nepodařilo přečíst“ dalořešit z jednoho klepnutí (jinak se ladí naslepo).
 let _lastBarOcr = null;
+// Diagnostika POSLEDNÍHO KLEPNUTÍ, vypsaná přímo v panelu čísel. Hláška (toast)
+// na tabletu uteče a dlouhý text se v ní láme — z panelu se dá udělat screenshot.
+const barPickDiag = ref('');
 let _lastBarOcc = null;   // odkud klepnutí přišlo (prst/pero) a v jakých souřadnicích
 function _barPickDbg(info) {
   // Diagnostická stopa (jako __navdbg u dotyků) — bez ní je „lupa nic nenašla“
@@ -2118,6 +2122,13 @@ async function ocrBarNumberAt(page, p) {
   _lastBarOcr = { digits: best ? best.digits : '', conf: best ? best.conf : 0,
                   cluster: best ? best.cl : 0, tried, stats: foundFinal.stats,
                   pdf: [Math.round(px), Math.round(py)], occ: _lastBarOcc };
+  const _sq = foundFinal.stats || {};
+  barPickDiag.value = (best ? 'přečteno ' + best.digits + ' (' + best.conf + ' %)'
+    : 'NEPŘEČTENO') + ' · ' + (_lastBarOcc ? _lastBarOcc.pointerType : '?')
+    + ' · p ' + (_lastBarOcc ? _lastBarOcc.layer[0] + ',' + _lastBarOcc.layer[1] : '?')
+    + ' → pdf ' + Math.round(px) + ',' + Math.round(py)
+    + ' · shluk ' + (best ? best.cl : 0) + ', komp ' + (_sq.comps == null ? '?' : _sq.comps)
+    + ', ink ' + (_sq.inkPct == null ? '?' : _sq.inkPct) + ' %, max ' + (_sq.maxHpt == null ? '?' : _sq.maxHpt) + ' b';
   return best ? parseInt(best.digits, 10) : null;
 }
 const barPickBusy = ref(false);
@@ -8286,6 +8297,9 @@ async function deleteBookmark(b) {
 .bn-clear span { white-space: nowrap; }
 .bn-clear.armed { background: #e0836f; border-color: #e0836f; color: #17130f; }
 .bn-hint { font-size: 0.66rem; color: var(--text-dim); line-height: 1.3; }
+/* Diagnostika posledního klepnutí — drobné, ale čitelné (z tabletu se fotí). */
+.bn-diag { font-size: 0.62rem; color: var(--text-dim); line-height: 1.3;
+  border-top: 1px solid var(--border); padding-top: 4px; word-break: break-word; }
 
 /* Pásmo úprav vybrané textové/dynamické anotace — POD horní lištou.
    DVA ŘÁDKY: hlavní (vždy: typ, ✏️, velikost ±, ▢, ✓, 🗑) a řádek rámu (čipy).
