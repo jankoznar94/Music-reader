@@ -932,6 +932,11 @@
         </button>
         <!-- LUPA: klepnutím na vytištěné číslo v PDF z něj udělá skrytý index
              pro skok na takt (u not s textovou vrstvou). -->
+        <button class="bn-fill" :class="{ on: barFillArmed }" @click="armBarFill"
+                title="Dočíslovat systém — klepni do systému, doplním zbytek taktů podle taktových čar (počet se ověří proti Kroku)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round"><path d="M4 5v14M10 5v14M16 5v14M21 5v14"/><path d="M6 12h3M12 12h3"/></svg>
+        </button>
         <button class="bn-pick" :class="{ on: tool === 'barpick' }" @click="toggleBarPick"
                 :title="tool === 'barpick'
                   ? 'Lupa je zapnutá — klepni na vytištěné číslo taktu (vypneš ji znovu tady)'
@@ -1434,6 +1439,7 @@ import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers, readPageTextNumbers } from '../pdf.js';
 import { ocrDigitsFromCanvas, binarizeCanvas, findDigitClusters, cropCanvas, inkBox, normalizeForOcr } from '../ocrDigits.js';
+import { detectBarlines } from '../barLines.js';
 import { analyzeContent } from '../contentBounds.js';
 // share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
 // leželo v hlavním bundlu a zpomalovalo start čtečky.
@@ -2137,6 +2143,61 @@ async function ocrBarNumberAt(page, p) {
     + ' · shluk ' + (best ? best.cl : 0) + ', komp ' + (_sq.comps == null ? '?' : _sq.comps)
     + ', ink ' + (_sq.inkPct == null ? '?' : _sq.inkPct) + ' %, max ' + (_sq.maxHpt == null ? '?' : _sq.maxHpt) + ' b';
   return best ? parseInt(best.digits, 10) : null;
+}
+// --- DOČÍSLOVÁNÍ SYSTÉMU (taktové čáry, listopad 2026) ---------------------
+// Uživatel dá číslo na začátek systému a appka doplní zbytek taktů podle
+// TAKTOVÝCH ČAR. Počet doplněných taktů se ověřuje proti „Kroku“ (kolik taktů
+// má systém) — když to nesedí, nic se nevloží a appka to řekne. Špatné číslo
+// pošle hudebníka na jinou stránku, to je horší než žádné.
+const barFillArmed = ref(false);
+function armBarFill() {
+  if (barFillArmed.value) { barFillArmed.value = false; showToast('Dočíslování zrušeno'); return; }
+  syncBarFieldsFromDom();
+  barFillArmed.value = true;
+  showToast('Klepni kamkoli do systému — doplním čísla podle taktových čar', 5000);
+}
+async function fillSystemAt(p) {
+  const page = currentPage.value;
+  const s = await layerScale(page);
+  const cb = cropBox.value;
+  const px = (p.x - cb.x) / s, py = (p.y - cb.y) / s;   // bod PDF
+  let pw = 595, ph = 842;
+  try {
+    const d = await getPageWidthHeight(song, page + 1);
+    if (d && d.width > 0) { pw = d.width; ph = d.height; }
+  } catch (e) { /* A4 */ }
+  const bandH = 240;                                   // výška pásu (celý systém)
+  const crop = { x: 0, y: Math.max(0, Math.min(py - bandH / 2, ph - bandH)), w: pw, h: bandH };
+  const cv = document.createElement('canvas');
+  const PPT = 6;
+  await renderPageRegion(song, page + 1, cv, crop, pw * PPT, bandH * PPT);
+  const pxPerPt = cv.width / crop.w;
+  const det = detectBarlines(cv, pxPerPt);
+  const step = Math.max(1, Math.min(64, Number(barStep.value) || 1));
+  const bars = det.bars;
+  _barPickDbg({ fill: { page, pdf: [Math.round(px), Math.round(py)],
+                         lines: det.lines.map(v => Math.round(v * 10) / 10),
+                         bars, step, staves: det.staves, staffLines: det.staffLines,
+                         w: cv.width, h: cv.height } });
+  if (bars < 1) {
+    showToast('Taktové čáry jsem nenašel — klepni doprostřed systému', 5000);
+    return;
+  }
+  if (bars !== step) {
+    showToast('Nesedí počet: našel jsem ' + bars + ' taktů, ale Krok je ' + step
+      + ' — nic jsem nevložil', 6000);
+    return;
+  }
+  const first = Math.max(1, Number(barNext.value) || 1);
+  const y = crop.y + 3;                                // číslo kousek pod horní hranu pásu
+  for (let i = 0; i < det.lines.length; i++) {
+    const x = det.lines[i] + 1.5;                      // kousek za čarou
+    addBarIndex(page, first + i, cb.x + x * s, cb.y + y * s, 'lines');
+  }
+  // Počítadlo posunout na první takt následujícího systému.
+  barNext.value = Math.min(9999, first + bars);
+  saveBarNext();
+  showToast('Doplněno ' + (bars - 1) + ' čísel — další systém začíná ' + barNext.value);
 }
 const barPickBusy = ref(false);
 async function pickPrintedBarNumber(p, pointerType, ev) {
@@ -5408,6 +5469,14 @@ function onLayerDown(e) {
   // nic se nekreslí, jen se přidá skrytý index pro skok na takt. MUSÍ být PŘED
   // `isTextAnnot(...)`, protože 'barpick' mezi textové nástroje nepatří a jinak
   // by propadl do tužkové větve a vytvořil tah.
+  // Režim „Dočíslovat systém“: klepnutí jen změří pás a doplní čísla.
+  if (barFillArmed.value) {
+    _activePointerId = null;
+    barFillArmed.value = false;
+    fillSystemAt(p).catch(() => {});
+    _prev = p;
+    return;
+  }
   if (tool.value === 'barpick') {
     _activePointerId = null;
     pickPrintedBarNumber(p, e && e.pointerType, e).catch(() => {});
@@ -8259,7 +8328,14 @@ async function deleteBookmark(b) {
   color: var(--text-dim); cursor: pointer; touch-action: manipulation;
   display: flex; align-items: center; justify-content: center;
 }
-.bn-pick svg { display: block; }
+.bn-pick svg, .bn-fill svg { display: block; }
+.bn-fill {
+  width: 26px; height: 26px; flex: 0 0 auto; padding: 0;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: manipulation;
+}
+.bn-fill.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
 /* Zavření číslování — malé, ale vždy po ruce: se schovanou lištou je to jediná
    cesta zpět do čtení (a vrátí horní lištu). */
 .bn-close {
