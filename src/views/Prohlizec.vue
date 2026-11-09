@@ -2166,38 +2166,38 @@ async function fillSystemAt(p) {
     const d = await getPageWidthHeight(song, page + 1);
     if (d && d.width > 0) { pw = d.width; ph = d.height; }
   } catch (e) { /* A4 */ }
-  const bandH = 240;                                   // výška pásu (celý systém)
+  const bandH = 260;                                  // výška pásu (systém + rezerva)
   const crop = { x: 0, y: Math.max(0, Math.min(py - bandH / 2, ph - bandH)), w: pw, h: bandH };
   const cv = document.createElement('canvas');
   const PPT = 6;
   await renderPageRegion(song, page + 1, cv, crop, pw * PPT, bandH * PPT);
   const pxPerPt = cv.width / crop.w;
-  const det = detectBarlines(cv, pxPerPt);
   const step = Math.max(1, Math.min(64, Number(barStep.value) || 1));
+  // Detekce potřebuje KROK (počet taktů systému) a y klepnutí (který systém).
+  const det = detectBarlines(cv, pxPerPt, { krok: step, ypt: py, offsetY: crop.y });
   const bars = det.bars;
   _barPickDbg({ fill: { page, pdf: [Math.round(px), Math.round(py)],
                          lines: det.lines.map(v => Math.round(v * 10) / 10),
-                         bars, step, staves: det.staves, staffLines: det.staffLines,
+                         bars, step, staves: det.staves, top: det.top,
+                         ok: det.ok, reason: det.reason, diag: det.diag,
                          w: cv.width, h: cv.height } });
-  if (bars < 1) {
-    showToast('Taktové čáry jsem nenašel — klepni doprostřed systému', 5000);
-    return;
-  }
-  if (bars !== step) {
-    showToast('Nesedí počet: našel jsem ' + bars + ' taktů, ale Krok je ' + step
-      + ' — nic jsem nevložil', 6000);
+  if (!det.ok) {
+    showToast('Nedočísleno: ' + (det.reason || 'taktové čáry nesedí na Krok')
+      + (det.staves ? ' · osnov ' + det.staves : '')
+      + (det.lines.length ? ' · našel ' + det.lines.map(v => Math.round(v)).join('/') : ''),
+      7000);
     return;
   }
   const first = Math.max(1, Number(barNext.value) || 1);
-  const y = crop.y + 3;                                // číslo kousek pod horní hranu pásu
+  // Číslo patří NAD horní linku systému, na začátek taktu (kousek za čáru).
+  const y = Math.max(crop.y + 1, det.top - 2);
   for (let i = 0; i < det.lines.length; i++) {
-    const x = det.lines[i] + 1.5;                      // kousek za čarou
+    const x = det.lines[i] + 1.5;
     addBarIndex(page, first + i, cb.x + x * s, cb.y + y * s, 'lines');
   }
-  // Počítadlo posunout na první takt následujícího systému.
   barNext.value = Math.min(9999, first + bars);
   saveBarNext();
-  showToast('Doplněno ' + (bars - 1) + ' čísel — další systém začíná ' + barNext.value);
+  showToast('Doplněno ' + bars + ' čísel — další systém začíná ' + barNext.value);
 }
 const barPickBusy = ref(false);
 async function pickPrintedBarNumber(p, pointerType, ev) {
