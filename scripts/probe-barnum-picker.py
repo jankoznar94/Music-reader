@@ -70,6 +70,59 @@ def make_bars_pdf(path=FIX):
     return path
 
 
+SCAN = "/tmp/bars-scan.pdf"
+
+
+def make_scan_pdf(path=SCAN):
+    """PDF, kde je číslo taktu OBRÁZEK (sken) — textová vrstva neexistuje.
+
+    Přesně ten případ, kvůli kterému lupa musí umět číst z PIXELŮ: noty stažené
+    z internetu jako sken s vytištěnými čísly.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new("L", (240, 120), 255)
+    d = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 76)
+    except Exception:
+        font = ImageFont.load_default()
+    d.text((16, 12), "42", fill=0, font=font)
+    jpg = "/tmp/bars-scan.jpg"
+    img.save(jpg, "JPEG", quality=92)
+    data = open(jpg, "rb").read()
+
+    # stránka 595x842, obrázek 60x30 bodů na (440, 260) odspodu
+    content = b"q 60 0 0 30 440 260 cm /Im0 Do Q"
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            "/Contents 4 0 R /Resources << /XObject << /Im0 5 0 R >> >> >>",
+            b"<< /Length %d >>\nstream\n" % len(content) + content + b"\nendstream",
+            None]  # obrázek se doplní jako bajty
+    head = b"%PDF-1.4\n"
+    out = head
+    offsets = []
+    for i, obj in enumerate(objs, start=1):
+        offsets.append(len(out))
+        if obj is None:
+            out += (b"%d 0 obj\n<< /Type /XObject /Subtype /Image /Width 240 /Height 120 "
+                    b"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /DCTDecode "
+                    b"/Length %d >>\nstream\n" % (i, len(data))) + data + b"\nendstream\nendobj\n"
+        else:
+            if isinstance(obj, bytes):
+                out += b"%d 0 obj\n" % i + obj + b"\nendobj\n"
+            else:
+                out += ("%d 0 obj\n" % i + obj + "\nendobj\n").encode("latin-1")
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    for off in offsets:
+        out += b"%010d 00000 n \n" % off
+    out += (b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n"
+            % (len(objs) + 1, xref))
+    open(path, "wb").write(out)
+    return path
+
+
 BARS_JS = """(async () => {
   const q = indexedDB.open('noty-app');
   const db = await new Promise(res => { q.onsuccess = () => res(q.result); q.onerror = () => res(null); });
@@ -207,6 +260,32 @@ async def main():
             n_known = int(mm.group(1)) if mm else 0
         ok("index je mezi známými takty (skok na takt ho vidí)", n_known >= 1,
            f"známých={n_known} | {txt}")
+
+        # --- 6. SKEN: číslo je OBRÁZEK, musí ho přečíst OCR ------------------
+        make_scan_pdf()
+        await h.open_song(pdf=SCAN, pages=1)
+        await h.annot_toggle()
+        assert await pick_tool(h, "Čísla taktů"), "nástroj Čísla taktů nenalezen"
+        await h.wait_for("!!document.querySelector('.barnum-panel')", timeout=8, label="panel")
+        await h.ev("document.querySelector('.bn-pick').click()")
+        await asyncio.sleep(0.5)
+        # obrázek je 60x30 bodů na (440..500, 552..582) od shora → střed (470, 567)
+        pt = json.loads(await h.ev(TO_SCREEN_JS % (470, 567)))
+        await h.finger_tap(pt["x"], pt["y"], r=11)
+        # první OCR běh načítá model (~6 MB) → čekej trpělivě
+        got = []
+        for _ in range(40):
+            await asyncio.sleep(1.0)
+            got = await bars(h)
+            if got:
+                break
+        ok("ze SKENU se přečetlo číslo", len(got) == 1, f"{len(got)} položek")
+        if got:
+            ok("OCR přečetl správné číslo (42)", str(got[0].get("text")) == "42",
+               str(got[0].get("text")))
+            ok("i ze skenu je index SKRYTÝ", got[0].get("hidden") is True)
+        dbg = await h.ev("JSON.stringify((window.__barPickDbg||[]).slice(-3))")
+        print("   dbg:", dbg)
 
     return ok.report()
 

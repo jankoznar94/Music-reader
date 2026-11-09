@@ -987,7 +987,7 @@
           <span>{{ barClearArmed ? 'Opravdu smazat?' : 'Smazat všechny' }}</span>
         </button>
       </div>
-      <div class="bn-hint" v-if="tool === 'barpick'">Lupa: klepni na VYTIŠTĚNÉ číslo taktu — appka ho v okolí najde a nastaví skrytý index pro skok. Nic se do not nekreslí.</div>
+      <div class="bn-hint" v-if="tool === 'barpick'">Lupa: klepni na VYTIŠTĚNÉ číslo taktu — appka ho přečte (u skenu z obrázku) a nastaví skrytý index pro skok. Nic se do not nekreslí.</div>
       <div class="bn-hint" v-else>Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do rohu označení.</div>
     </div>
 
@@ -1417,6 +1417,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, toRaw
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers, readPageTextNumbers } from '../pdf.js';
+import { ocrDigitsFromCanvas } from '../ocrDigits.js';
 import { analyzeContent } from '../contentBounds.js';
 // share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
 // leželo v hlavním bundlu a zpomalovalo start čtečky.
@@ -1881,45 +1882,22 @@ function _barPickDbg(info) {
     a.push(info); if (a.length > 30) a.shift();
   } catch (e) { /* nevadí */ }
 }
-async function pickPrintedBarNumber(p) {
-  const page = currentPage.value;
-  let nums = [];
-  try { nums = await pageTextNumbers(page); } catch (e) { nums = []; _barPickDbg({ err: String(e && e.message || e) }); }
-  _barPickDbg({ page, px: Math.round(p.x), py: Math.round(p.y), count: nums.length,
-    sample: nums.slice(0, 6).map(c => ({ n: c.n, x: Math.round(c.x), y: Math.round(c.yTop) })) });
-  if (!nums.length) {
-    showToast('V této stránce nejsou čísla jako text (sken) — vlož je nástrojem 1');
-    return;
-  }
-  // Nejbližší číslo k místu klepnutí (střed otisku, ne účaří).
-  let best = null;
-  for (const c of nums) {
-    const cx = c.x + c.w / 2;
-    const cy = c.yTop - c.h * 0.35;
-    const d = Math.hypot(cx - p.x, cy - p.y);
-    if (d <= BAR_PICK_RADIUS && (!best || d < best.d)) best = { ...c, d };
-  }
-  if (!best) {
-    _barPickDbg({ miss: true, px: Math.round(p.x), py: Math.round(p.y) });
-    showToast(`V okolí ${BAR_PICK_RADIUS} px není vytištěné číslo taktu`);
-    return;
-  }
-  // Skrytý index = běžná textová anotace s barNum + hidden. Do indexu pro skok
-  // patří (barIndex ho čte), na papíře ani na displeji se nekreslí (vidět a
-  // smazat je jen v režimu Ruka) a do vypáleného PDF se nevypaluje.
-  const pos = { x: Math.round(best.x), y: Math.round(best.yTop) };
+// Vloží skrytý index pro skok (barNum + hidden) — jedno místo pro textovou
+// vrstvu i pro OCR, aby se obě cesty chovaly stejně (přepis duplicity, historie).
+function addBarIndex(page, n, x, y, src) {
+  const pos = { x: Math.round(x), y: Math.round(y) };
   const items = annotations.value.items;
   const dup = items.find(it => it && it.barNum && it.page === page
     && Math.abs(Number(it.x) - pos.x) < 40 && Math.abs(Number(it.y) - pos.y) < 40);
   pushHistory();
   if (dup) {
-    dup.text = String(best.n);
+    dup.text = String(n);
     dup.hidden = true;
   } else {
     items.push({
       id: crypto.randomUUID(), page,
       tool: 'text', barNum: true, hidden: true,
-      text: String(best.n),
+      text: String(n),
       size: clampBarSize(barSize.value),
       color: textColor.value,
       opacity: annotOpacity.value / 100,
@@ -1929,7 +1907,69 @@ async function pickPrintedBarNumber(p) {
   }
   saveAnnotations();
   nextTick(() => measureTexts());
-  showToast(dup ? `Takt ${best.n} — index přepsán` : `Takt ${best.n} — skrytý index pro skok přidán`);
+  _barPickDbg({ added: n, src, x: pos.x, y: pos.y });
+  showToast(`${src === 'ocr' ? 'Z obrázku přečteno' : 'Nalezeno'} ${n} — skrytý index pro skok ${dup ? 'přepsán' : 'přidán'}`);
+}
+// OCR ze SKENU: vyřízne okolí klepnutí z PDF plátna ve vysokém rozlišení a nechá
+// ho přečíst lokálním tesseractem (jen číslice). Vrací číslo taktu nebo null.
+async function ocrBarNumberAt(page, p) {
+  // DVĚ KOLA: širší okolí (92x34 bodů), a když z něj vyleze nesmysl (víc než
+  // 4 číslice = OCR slil číslo taktu s prstokladem nebo tempem), zkusí se
+  // ÚZKÝ výřez přesně pod prstem. Číslo, na které uživatel klepl, je v obou.
+  const tries = [
+    { x: p.x - 46, y: p.y - 19, w: 92, h: 34 },
+    { x: p.x - 24, y: p.y - 12, w: 48, h: 22 },
+  ];
+  let last = null;
+  for (const crop of tries) {
+    const outW = Math.round(crop.w * 8), outH = Math.round(crop.h * 8);   // 8× pro OCR
+    const cv = document.createElement('canvas');
+    await renderPageRegion(song, page + 1, cv, crop, outW, outH);
+    const res = await ocrDigitsFromCanvas(cv);
+    const digits = String(res.digits || '');
+    last = { digits, confidence: Math.round(res.confidence), crop };
+    _barPickDbg({ ocr: last });
+    if (/^\d{1,4}$/.test(digits) && !(res.confidence && res.confidence < 40)) {
+      return parseInt(digits, 10);
+    }
+  }
+  _barPickDbg({ ocrFail: last });
+  return null;
+}
+const barPickBusy = ref(false);
+async function pickPrintedBarNumber(p) {
+  const page = currentPage.value;
+  // 1) PŘESNÁ cesta: textová vrstva PDF (noty z notačních programů).
+  let nums = [];
+  try { nums = await pageTextNumbers(page); } catch (e) { nums = []; _barPickDbg({ err: String(e && e.message || e) }); }
+  _barPickDbg({ page, px: Math.round(p.x), py: Math.round(p.y), count: nums.length,
+    sample: nums.slice(0, 6).map(c => ({ n: c.n, x: Math.round(c.x), y: Math.round(c.yTop) })) });
+  let best = null;
+  for (const c of nums) {
+    const cx = c.x + c.w / 2;
+    const cy = c.yTop - c.h * 0.35;
+    const d = Math.hypot(cx - p.x, cy - p.y);
+    if (d <= BAR_PICK_RADIUS && (!best || d < best.d)) best = { ...c, d };
+  }
+  if (best) { addBarIndex(page, best.n, best.x, best.yTop, 'text'); return; }
+
+  // 2) SKEN: žádná textová vrstva → čti číslo z OBRÁZKU stránky.
+  if (barPickBusy.value) return;
+  barPickBusy.value = true;
+  showToast('Čtu číslo z obrázku…');
+  try {
+    const n = await ocrBarNumberAt(page, p);
+    if (n == null) {
+      _barPickDbg({ miss: true, px: Math.round(p.x), py: Math.round(p.y) });
+      showToast('Číslo se nepodařilo přečíst — klepni přesně na číslo taktu');
+      return;
+    }
+    addBarIndex(page, n, p.x, p.y, 'ocr');
+  } catch (e) {
+    showToast('Čtení z obrázku selhalo: ' + (e && e.message ? e.message : e));
+  } finally {
+    barPickBusy.value = false;
+  }
 }
 // Obdélník ze dvou bodů (v souřadnicích vrstvy) — používají ho tažení i náhled.
 function barDragBox(a, b) {

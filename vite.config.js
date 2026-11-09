@@ -17,7 +17,7 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 5242880,
         // woff2 = font dynamiky NotyDyn; bez něj by offline režim ukázal rozbité znaky.
         // POZOR: png tu být NESMÍ (ikony se přednačítají přes manifest.icons a vznikly by duplicity).
-        globPatterns: ['**/*.{js,mjs,css,html,ico,svg,woff2}'],
+        globPatterns: ['**/*.{js,mjs,css,html,ico,svg,woff2,gz}'],
         runtimeCaching: [
           {
             urlPattern: ({ request }) => request.mode === 'navigate',
@@ -31,7 +31,7 @@ export default defineConfig({
       injectManifest: {
         maximumFileSizeToCacheInBytes: 5242880,
         // Stejné jako workbox výše — v injectManifest strategii se čtou globy odtud.
-        globPatterns: ['**/*.{js,mjs,css,html,ico,svg,woff2}'],
+        globPatterns: ['**/*.{js,mjs,css,html,ico,svg,woff2,gz}'],
       },
       manifest: {
         name: "Noty App",

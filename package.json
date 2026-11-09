@@ -17,6 +17,7 @@
     "fflate": "^0.8.3",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
+    "tesseract.js": "^7.0.0",
     "vue": "^3.5.24",
     "vue-router": "^4.6.3"
   }
