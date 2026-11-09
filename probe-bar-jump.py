@@ -102,11 +102,16 @@ async def main():
         # dialog před očíslováním
         await h.ev("document.querySelector('.tb-page').click()")
         await h.wait_for("!!document.querySelector('.pg-bar-go')", timeout=8, label="dialog")
+        for _ in range(80):   # doběhne čtení textové vrstvy PDF
+            if not await h.ev("""[...document.querySelectorAll('.page-go .pg-hint')]
+                    .some(e => e.textContent.includes('Načítám čísla taktů'))"""):
+                break
+            await asyncio.sleep(0.25)
         hint = await h.ev("""[...document.querySelectorAll('.page-go .pg-hint')].map(e => e.textContent).join(' | ')""")
         await h.ev("document.querySelector('.pg-btn') && [...document.querySelectorAll('.pg-btn')].find(b => b.textContent.trim() === 'Zavřít').click()")
         await asyncio.sleep(0.3)
         print("hint bez čísel:", hint)
-        if "Zatím žádná čísla taktů" not in hint:
+        if "V PDF nejsou čísla taktů" not in hint:
             fails.append("chybí hláška o chybějících číslech")
 
         # dialog zavřel anotační režim → znovu ho zapni

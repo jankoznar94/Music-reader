@@ -678,11 +678,12 @@
           />
           <button class="pg-btn" @click="goToTypedBar">Takt</button>
         </div>
-        <div class="pg-hint" v-if="barIndex.length">
-          Známých taktů: {{ barIndex.length }} ({{ barIndex[0].n }}–{{ barIndex[barIndex.length - 1].n }}).
+        <div class="pg-hint" v-if="barScanning">Načítám čísla taktů z PDF…</div>
+        <div class="pg-hint" v-else-if="barIndex.length">
+          Známých taktů: {{ barIndex.length }} ({{ barIndex[0].n }}–{{ barIndex[barIndex.length - 1].n }})<template v-if="pdfBars.length"> · z PDF {{ pdfBars.length }}</template>.
         </div>
         <div class="pg-hint" v-else>
-          Zatím žádná čísla taktů — očísluj je nástrojem <b>1</b> v anotacích.
+          V PDF nejsou čísla taktů jako text (sken) — očísluj je nástrojem <b>1</b> v anotacích.
         </div>
       </div>
     </div>
@@ -1363,7 +1364,7 @@
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, toRaw } from 'vue';
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
-import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount } from '../pdf.js';
+import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers } from '../pdf.js';
 import { analyzeContent } from '../contentBounds.js';
 // share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
 // leželo v hlavním bundlu a zpomalovalo start čtečky.
@@ -3027,6 +3028,7 @@ onMounted(async () => {
   const s = await dbGetSong(props.id);
   if (!s) { router.push('/'); return; }
   song.id = s.id; song.data = s.data; song.name = s.name; song.fileName = s.fileName;
+  resetBarScan();   // index taktů z PDF patří k předchozí skladbě
 
   // Načíst skupinu (setlist) z query, pokud je otevřeno přes skupinu
   const gid = router.currentRoute.value.query.group;
@@ -3894,6 +3896,7 @@ async function switchSong(idx, toEnd) {
   await flushAnnotations();
   // načíst novou skladbu
   song.id = s.id; song.data = s.data; song.name = s.name; song.fileName = s.fileName;
+  resetBarScan();   // index taktů z PDF patří k předchozí skladbě
   groupIndex.value = idx;
   // Uložená zobrazení nové skladby (per-stránková i globální) — vycentruje,
   // nastaví zoom, posun i rotaci
@@ -6254,6 +6257,7 @@ function openPageGo() {
   annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false;
   zoomPanelOpen.value = false; rotPanelOpen.value = false;
   pagesPanelOpen.value = false; pagesListOpen.value = false;
+  ensurePdfBars();   // čísla taktů z textové vrstvy PDF (u skenů nic nenajde)
   endEdit(); // zrušit výběr prvku — jinak by rámeček zůstal viset přes dialog
   nextTick(() => {
     const el = pageGoInputEl.value;
@@ -6289,17 +6293,57 @@ function goToTypedPage() {
 // záměrně nepoužívá (u skenů nefunguje, u vektorových PDF dělá chyby; špatný
 // skok při koncertě je horší než žádný), viz references/pdf-score-geometry.md.
 const barGoValue = ref('');
+// Čísla taktů PŘEČTENÁ Z PDF (textová vrstva) — u not z notačních programů
+// tam čísla taktů opravdu jsou jako text, takže se nemusí nic doťukávat.
+// U skenů je seznam prázdný a platí jen ručně vložená čísla.
+const pdfBars = ref([]);
+const barScanning = ref(false);
+const _barScanned = new Set();      // song.id, u kterých už pokus proběhl
+let _barScanToken = 0;              // ochrana proti dopsání indexu z jiné skladby
+async function ensurePdfBars() {
+  const s = song;
+  if (!s || !s.id || !s.data) return;
+  if (_barScanned.has(s.id) || barScanning.value) return;
+  const token = ++_barScanToken;
+  barScanning.value = true;
+  try {
+    const found = await readBarNumbers(s);
+    if (token !== _barScanToken) return;      // mezitím jiná skladba
+    pdfBars.value = found;
+    _barScanned.add(s.id);
+  } catch (e) {
+    if (token === _barScanToken) { pdfBars.value = []; _barScanned.add(s.id); }
+  } finally {
+    if (token === _barScanToken) barScanning.value = false;
+  }
+}
+// Nová skladba = index z PDF je neplatný (ať se nescannuje dvakrát).
+function resetBarScan() {
+  _barScanToken++;
+  pdfBars.value = [];
+  barScanning.value = false;
+}
 // Index známých taktů: číslo → stránka. Řazeno podle stránky a svislé polohy,
 // takže stejné číslo na dvou místech (repetice) drží pořadí, v jakém jde hudba.
+// Ruční anotace mají PŘEDNOST před číslem z PDF (uživatel je vidí na papíře
+// a může je opravit, kdežto automatika se může splést).
 const barIndex = computed(() => {
-  const out = [];
+  const byKey = new Map();
+  const add = (e, manual) => {
+    const key = e.page + '@' + e.n;
+    const prev = byKey.get(key);
+    if (prev && (prev.manual || !manual)) return;
+    byKey.set(key, { ...e, manual });
+  };
   for (const it of annotations.value.items) {
     if (!it || !it.barNum) continue;
     const n = parseInt(String(it.text == null ? '' : it.text).trim(), 10);
     if (!Number.isFinite(n)) continue;
-    out.push({ n, page: it.page, y: Number(it.y) || 0, x: Number(it.x) || 0 });
+    add({ n, page: it.page, y: Number(it.y) || 0, x: Number(it.x) || 0, src: 'annot' }, true);
   }
-  out.sort((a, b) => (a.page - b.page) || (a.y - b.y) || (a.x - b.x));
+  for (const e of pdfBars.value) add({ ...e }, false);
+  const out = [...byKey.values()];
+  out.sort((a, b) => (a.page - b.page) || (a.y - b.y) || (a.x || 0) - (b.x || 0));
   return out;
 });
 // Známé takty jen v části, kde právě stojíme (část = od záložky k záložce).

@@ -105,3 +105,64 @@ export async function renderPageRegion(song, pageNum, canvas, crop, outW, outH) 
 export function clearPdfCache() {
   _docs.clear();
 }
+
+/**
+ * Přečte čísla taktů z TEXTOVÉ VRSTVY PDF.
+ *
+ * Proč: noty z notačních programů (LilyPond, Finale, Sibelius, MuseScore) mají
+ * čísla taktů jako SKUTEČNÝ TEXT, ne jako obrázek — dají se tedy přečíst přesně.
+ * Skeny textovou vrstvu nemají, tam vrátíme prázdné pole (a čísla se čtou
+ * z ručních anotací nástroje „Čísla taktů“).
+ *
+ * Heuristika (naměřeno na reálných notách: číslo taktu je samostatné celé
+ * číslo drobným písmem u LEVÉHO okraje, vždy na začátku systému):
+ *  - text je jen číslice (příp. s tečkou na konci),
+ *  - levý okraj: x < 14 % šířky stránky (čísla stránek jsou uprostřed, názvy
+ *    skladeb velkým písmem → vypadnou),
+ *  - malé písmo: velikost < 3 % šířky stránky,
+ *  - na stránce musí čísla ve směru čtení RŮST (dolů po stránce), jinak jde
+ *    o náhodné číslo (tempo, poznámka) a zahodí se.
+ *
+ * @param {*} song skladba s .data Blob
+ * @param {(done:number,total:number)=>void} onProgress průběh po stránkách
+ * @returns {Promise<Array<{n:number,page:number,y:number,src:'pdf'}>>}
+ */
+export async function readBarNumbers(song, onProgress) {
+  const doc = await getDoc(song);
+  const total = doc.numPages;
+  const out = [];
+  for (let pno = 1; pno <= total; pno++) {
+    let page = null;
+    try { page = await doc.getPage(pno); } catch (e) { continue; }
+    const vp = page.getViewport({ scale: 1 });
+    let tc = null;
+    try { tc = await page.getTextContent(); } catch (e) { tc = null; }
+    if (tc && tc.items && tc.items.length) {
+      const cand = [];
+      for (const item of tc.items) {
+        const txt = String(item.str || '').trim();
+        if (!/^\d{1,4}\.?$/.test(txt)) continue;
+        const n = parseInt(txt, 10);
+        if (!Number.isFinite(n)) continue;
+        const tr = item.transform || [];
+        const x = tr[4] || 0;
+        const y = tr[5] || 0;
+        const size = Math.hypot(tr[2] || 0, tr[3] || 0);
+        if (x > vp.width * 0.14) continue;          // ne levý okraj
+        if (size > vp.width * 0.03) continue;       // moc velké písmo
+        cand.push({ n, x, y, size });
+      }
+      // Čtení shora dolů (PDF má y odspodu) a jen ta čísla, která v tom směru
+      // rostou — přesně to dělají čísla taktů na začátcích systémů.
+      cand.sort((a, b) => b.y - a.y);
+      let last = -Infinity;
+      for (const c of cand) {
+        if (c.n <= last) continue;
+        last = c.n;
+        out.push({ n: c.n, page: pno - 1, y: 1 - (c.y / (vp.height || 1)), src: 'pdf' });
+      }
+    }
+    if (onProgress) { try { onProgress(pno, total); } catch (e) { /* UI klidně spadne */ } }
+  }
+  return out;
+}
