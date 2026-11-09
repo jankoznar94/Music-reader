@@ -88,7 +88,24 @@ def make_scan_pdf(path=SCAN):
         font = ImageFont.load_default()
     d.text((16, 12), "42", fill=0, font=font)
     jpg = "/tmp/bars-scan.jpg"
-    img.save(jpg, "JPEG", quality=92)
+    quality = 92
+    if os.environ.get("NOTY_SCAN") == "noisy":
+        # Realistický sken: nízké rozlišení → zvětšení, šum, mírné natočení,
+        # agresivnější JPEG. Musí to projít taky, jinak je funkce na nic.
+        import random
+        from PIL import ImageFilter
+        small = img.resize((120, 60), Image.LANCZOS)
+        small = small.rotate(1.5, resample=Image.BILINEAR, fillcolor=255)
+        px = small.load()
+        rnd = random.Random(7)
+        for y in range(small.height):
+            for x in range(small.width):
+                v = px[x, y] + rnd.randint(-28, 28)
+                px[x, y] = max(0, min(255, v))
+        small = small.filter(ImageFilter.GaussianBlur(0.6))
+        img = small.resize((240, 120), Image.LANCZOS)
+        quality = 60
+    img.save(jpg, "JPEG", quality=quality)
     data = open(jpg, "rb").read()
 
     # stránka 595x842, obrázek 60x30 bodů na (440, 260) odspodu
