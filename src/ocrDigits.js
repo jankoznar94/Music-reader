@@ -95,16 +95,23 @@ function otsuFromHist(hist, total) {
  *          Otsuův práh CELÉ oblasti — použij ho i pro binarizaci výřezu, jinak
  *          si malý výřez spočítá práh z pár pixelů a číslice se rozpadne.
  */
-export function findDigitClusters(cv, pxPerPt, tap) {
+export function findDigitClusters(cv, pxPerPt, tap, opt = {}) {
+  const minHpt = opt.minHpt == null ? 3.0 : opt.minHpt;
+  const maxHpt = opt.maxHpt == null ? 12.0 : opt.maxHpt;
+  const maxWpt = opt.maxWpt == null ? 12.0 : opt.maxWpt;
   const { g, w, h, hist } = grayOf(cv);
   const thr = otsuFromHist(hist, w * h);
   const mask = new Uint8Array(w * h);
-  for (let p = 0; p < w * h; p++) mask[p] = g[p] < thr ? 1 : 0;
+  let ink = 0;
+  for (let p = 0; p < w * h; p++) {
+    if (g[p] < thr) { mask[p] = 1; ink++; }
+  }
   const seen = new Uint8Array(w * h);
   const stack = new Int32Array(w * h);
-  const minH = 3.0 * pxPerPt, maxH = 12.0 * pxPerPt;
-  const minW = 0.7 * pxPerPt, maxW = 12.0 * pxPerPt;
+  const minH = minHpt * pxPerPt, maxH = maxHpt * pxPerPt;
+  const minW = 0.7 * pxPerPt, maxW = maxWpt * pxPerPt;
   const comps = [];
+  let compCount = 0, maxHpx = 0;
   for (let start = 0; start < w * h; start++) {
     if (!mask[start] || seen[start]) continue;
     let sp = 0;
@@ -129,6 +136,8 @@ export function findDigitClusters(cv, pxPerPt, tap) {
       }
     }
     const cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+    compCount++;
+    if (ch > maxHpx) maxHpx = ch;
     if (area < 12 || ch < minH || ch > maxH || cw < minW || cw > maxW) continue;
     if (cw / ch > 6) continue;                 // vodorovná čárka
     comps.push({ x0, y0, x1, y1, base: y1, ch });
@@ -155,7 +164,15 @@ export function findDigitClusters(cv, pxPerPt, tap) {
                d: Math.hypot(cx - tap.x, cy - tap.y) });
   }
   out.sort((a, b) => a.d - b.d);
-  return { clusters: out, thr };
+  return {
+    clusters: out, thr,
+    stats: {
+      comps: compCount,
+      inkPct: Math.round((ink / (w * h)) * 1000) / 10,
+      maxHpt: Math.round((maxHpx / pxPerPt) * 10) / 10,
+      pxW: w, pxH: h,
+    },
+  };
 }
 
 /**

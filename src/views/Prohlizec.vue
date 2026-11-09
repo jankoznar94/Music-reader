@@ -1925,6 +1925,7 @@ function toggleBarPick() {
 // Poslední diagnostika OCR — hláška o neúspěchu ji ukáže uživateli, aby se
 // „nepodařilo přečíst“ dalořešit z jednoho klepnutí (jinak se ladí naslepo).
 let _lastBarOcr = null;
+let _lastBarOcc = null;   // odkud klepnutí přišlo (prst/pero) a v jakých souřadnicích
 function _barPickDbg(info) {
   // Diagnostická stopa (jako __navdbg u dotyků) — bez ní je „lupa nic nenašla“
   try {
@@ -2024,6 +2025,18 @@ async function ocrBarNumberAt(page, p) {
   const clusters = found.clusters;
   const tFind = performance.now() - t1;
 
+  // Když nejsou číslice ani po obnově plátna, zkus VOLNĚJŠÍ filtr výšky: skeny
+  // mívají čísla taktu i 14–20 bodu vysoká (a naopak drobnější než 3 body),
+  // striktní rozsah 3–12 bodů je zahodí a lupa hlásí „shluk 0“ na každý pokus.
+  let foundFinal = found;
+  let relaxed = false;
+  if (!found.clusters.length && found.stats && found.stats.comps > 0) {
+    const f3 = findDigitClusters(cv, pxPerPt, tapPx, { minHpt: 1.5, maxHpt: 24, maxWpt: 24 });
+    _barPickDbg({ relaxed: f3.clusters.length, stats: f3.stats });
+    if (f3.clusters.length) { foundFinal = f3; relaxed = true; }
+  }
+  const useClusters = foundFinal.clusters;
+
   // Zkusí přečíst okno kolem daného shluku (nebo kolem klepnutí). Vrací
   // {digits, conf} — levné: překresluje se jen JEDNOU, tady se jen ořezává.
   const attempt = async (cl) => {
@@ -2037,7 +2050,7 @@ async function ocrBarNumberAt(page, p) {
       w: winW * pxPerPt, h: winH * pxPerPt,
     }, 0);
     // Práh z CELÉ oblasti, ne z výřezu — viz komentář v `binarizeCanvas()`.
-    const bin = binarizeCanvas(cut, 0, found.thr);
+    const bin = binarizeCanvas(cut, 0, foundFinal.thr);
     // Ohraničení inkoustu + okraj a NORMALIZOVANÁ VÝŠKA: bez toho tesseract
     // „9“ četl jako „4“ (naměřeno; se 96px výškou je 5/5 správně, Ø jistota 92).
     let ink = inkBox(bin);
@@ -2058,7 +2071,7 @@ async function ocrBarNumberAt(page, p) {
   // Nejbližší shluk nemusí být ten správný (když se prst netrefí, může jako
   // „číslice“ vyjít i něco jiného v okolí). Proto zkus až tři nejbližší shluky
   // a nakonec okno přesně kolem klepnutí; bere se nejlepší jistota.
-  const tries = clusters.filter(c => c.d < 28 * pxPerPt).slice(0, 3);
+  const tries = (relaxed ? useClusters : useClusters.filter(c => c.d < 28 * pxPerPt)).slice(0, 3);
   let best = null, tried = [];
   for (const cl of tries.concat([null])) {
     const r = await attempt(cl);
@@ -2072,17 +2085,20 @@ async function ocrBarNumberAt(page, p) {
   }
   _barPickDbg({
     ocr: { digits: best ? best.digits : '', confidence: best ? best.conf : 0,
-           cluster: best ? best.cl : 0, tried,
+           cluster: best ? best.cl : 0, tried, stats: foundFinal.stats,
+           pdf: [Math.round(px), Math.round(py)],
            render: Math.round(tRender), find: Math.round(tFind),
            total: Math.round(performance.now() - t0) },
   });
   _lastBarOcr = { digits: best ? best.digits : '', conf: best ? best.conf : 0,
-                  cluster: best ? best.cl : 0, tried };
+                  cluster: best ? best.cl : 0, tried, stats: foundFinal.stats,
+                  pdf: [Math.round(px), Math.round(py)], occ: _lastBarOcc };
   return best ? parseInt(best.digits, 10) : null;
 }
 const barPickBusy = ref(false);
-async function pickPrintedBarNumber(p) {
+async function pickPrintedBarNumber(p, pointerType) {
   const page = currentPage.value;
+  _lastBarOcc = { pointerType: pointerType || '?', layer: [Math.round(p.x), Math.round(p.y)] };
   // 1) PŘESNÁ cesta: textová vrstva PDF (noty z notačních programů).
   let nums = [];
   try { nums = await pageTextNumbers(page); } catch (e) { nums = []; _barPickDbg({ err: String(e && e.message || e) }); }
@@ -2111,8 +2127,14 @@ async function pickPrintedBarNumber(p) {
       // Čísla v hlášce = diagnostika pro Jana: z jednoho klepnutí je vidět,
       // jestli selhalo hledání číslic (shluk 0) nebo čtení (nízká jistota).
       const d = _lastBarOcr;
-      showToast('Číslo se nepodařilo přečíst (jistota ' + (d ? d.conf : '?')
-        + ', shluk ' + (d ? d.cluster : '?') + ') — klepni přesně na číslo taktu', 4000);
+      const st2 = d && d.stats ? d.stats : null;
+      const occ = d && d.occ ? d.occ : null;
+      showToast('Nepřečteno · ' + (occ ? occ.pointerType : '?')
+        + (occ ? ' · p ' + occ.layer[0] + ',' + occ.layer[1] : '')
+        + (d && d.pdf ? ' → pdf ' + d.pdf[0] + ',' + d.pdf[1] : '')
+        + ' · jistota ' + (d ? d.conf : '?') + ', shluk ' + (d ? d.cluster : '?')
+        + (st2 ? ' · komp ' + st2.comps + ', ink ' + st2.inkPct + ' %, max ' + st2.maxHpt + ' b' : ''),
+        8000);
       return;
     }
     addBarIndex(page, n, p.x, p.y, 'ocr');
@@ -5330,7 +5352,7 @@ function onLayerDown(e) {
   // by propadl do tužkové větve a vytvořil tah.
   if (tool.value === 'barpick') {
     _activePointerId = null;
-    pickPrintedBarNumber(p).catch(() => {});
+    pickPrintedBarNumber(p, e && e.pointerType).catch(() => {});
     _prev = p;
     return;
   }
