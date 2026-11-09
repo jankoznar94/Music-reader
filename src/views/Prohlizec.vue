@@ -991,6 +991,17 @@
         </button>
       </div>
       <div class="bn-row">
+        <!-- ZPĚT: poslední vložené číslo zpátky (a počítadlo s ním) — Jan:
+             „ať kvůli každé chybě nemusí zapínat anotační okno a pak se vracet“.
+             Undo je stejný jako v anotačním panelu, jen po ruce tady. -->
+        <button class="bn-undo" @click="undoBarNum" :disabled="!canUndo"
+                title="Zpět — vrátí poslední vložené číslo a počítadlo na něj">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 7L4 12l5 5"/><path d="M4 12h10a5 5 0 0 1 0 10h-2"/>
+          </svg>
+          <span>Zpět</span>
+        </button>
         <!-- Smazání číslování v CELÉM souboru (všechny stránky skladby).
              Destruktivní akce bez dialogu (Jan dialogy nechce): první klepnutí
              tlačítko jen „nabije“, druhé do 4 s teprve maže — stejný vzor jako
@@ -1006,6 +1017,15 @@
           </svg>
           <span>{{ barClearArmed ? 'Opravdu smazat?' : 'Smazat všechny' }}</span>
         </button>
+      </div>
+      <!-- NEJEDNOZNAČNÉ ČTENÍ: lupa našla dvě různá čísla (např. 15 vs. 153).
+           Většinou je jedno z nich správné, takže uživatel jen ťukne — žádné
+           opisování. Tlačítka drží i místo klepnutí, index se vloží tam. -->
+      <div class="bn-choice" v-if="barPickChoice">
+        <span class="bn-choice-q">Které číslo?</span>
+        <button v-for="n in barPickChoice.nums" :key="n" class="bn-choice-btn"
+                @click="chooseBarPick(n)" :title="'Vložit ' + n + ' jako index pro skok'">{{ n }}</button>
+        <button class="bn-choice-x" @click="barPickChoice = null" title="Zrušit výběr">✕</button>
       </div>
       <div class="bn-diag" v-if="barPickDiag">{{ barPickDiag }}</div>
       <div class="bn-hint" v-if="tool === 'barpick'">Lupa: klepni na VYTIŠTĚNÉ číslo taktu — appka ho přečte (u skenu z obrázku) a nastaví skrytý index pro skok. Nic se do not nekreslí.</div>
@@ -1895,6 +1915,28 @@ function clearAllBarNums() {
   nextTick(() => measureTexts());
   showToast(removed ? `Smazáno ${removed} čísel taktů v celé skladbě` : 'Nebylo co smazat');
 }
+// ZPĚT přímo v panelu čísel (Jan: „ať kvůli každé chybě nemusí zapínat anotační
+// okno a pak se vracet“). Je to stejné undo jako v anotacích, ale navíc vrátí
+// počítadlo na nejnižší odebrané číslo — jinak by po mýlce zůstalo poskozené
+// a uživatel by musel „Další“ přepisovat ručně.
+function undoBarNum() {
+  if (!canUndo.value) { showToast('Není co vrátit'); return; }
+  const before = annotations.value.items.filter(x => x && x.barNum);
+  undoAnnot();
+  const afterIds = new Set(annotations.value.items.map(x => x.id));
+  const removed = before.filter(x => !afterIds.has(x.id));
+  if (removed.length) {
+    const nums = removed.map(x => parseInt(String(x.text || ''), 10)).filter(n => Number.isFinite(n) && n > 0);
+    if (nums.length) {
+      barNext.value = Math.min(...nums);
+      saveBarNext();
+    }
+  }
+  nextTick(() => measureTexts());
+  showToast(removed.length
+    ? `Zpět — odebráno ${removed.length} čísel, další je ${barNext.value}`
+    : 'Zpět');
+}
 // LUPA na VYTIŠTĚNÁ čísla (Jan, Nov 2026): „Nešla by přidat funkce (tlačítko lupy
 // v okně pro číslování taktů), že bych klikl do oblasti, kde se vyskytuje
 // vytištěné číslo v originálním PDF a appka by v té oblasti (± 50px) sama našla
@@ -1950,6 +1992,11 @@ let _lastBarOcr = null;
 // Diagnostika POSLEDNÍHO KLEPNUTÍ, vypsaná přímo v panelu čísel. Hláška (toast)
 // na tabletu uteče a dlouhý text se v ní láme — z panelu se dá udělat screenshot.
 const barPickDiag = ref('');
+// Nejednoznačné čtení lupy: dvě různá čísla z jednoho klepnutí (Jan: „v 90 %
+// případů je jedno z těch dvou správné“). Tlačítka v panelu nechají uživatele
+// vybrat — index se vloží na místo původního klepnutí.
+const barPickChoice = ref(null);   // { nums:['15','153'], page, x, y }
+let _lastBarChoice = null;         // poslední nabídka z OCR (pro pickPrintedBarNumber)
 let _lastBarOcc = null;   // odkud klepnutí přišlo (prst/pero) a v jakých souřadnicích
 function _barPickDbg(info) {
   // Diagnostická stopa (jako __navdbg u dotyků) — bez ní je „lupa nic nenašla“
@@ -2091,6 +2138,14 @@ async function ocrBarNumberAt(page, p) {
     let res = await ocrDigitsFromCanvas(prepared);
     let digits = String(res.digits || '');
     let conf = Math.round(res.confidence);
+    // VŠECHNA čtení z tohoto okna — z nich se staví nabídka „vyber správné
+    // číslo“, když se pipeline nedokáže rozhodnout sama.
+    const readings = [];
+    const pushR = (d, c) => {
+      d = String(d || '');
+      if (/^\d{1,4}$/.test(d) && Number(c) >= 1) readings.push({ d, c: Math.round(Number(c)) });
+    };
+    pushR(digits, conf);
     // DVOJÍ ČTENÍ při nejistotě: tesseract v režimu „jeden řádek“ umí zaměnit
     // 5/3 (naměřeno: „75“ → „73“ s jistotou 83). Druhé čtení v režimu „slovo“
     // (psm 8) je na dvojice číslic jinde; když se obě SHODUJÍ, je výsledek
@@ -2104,6 +2159,7 @@ async function ocrBarNumberAt(page, p) {
       // (naměřeno „75“ → psm 7 „73“/83, psm 8 „75“/48), kdežto pětka a sedmička
       // samostatně se čtou bezpečně.
       const per = await ocrDigitsPerCell(prepared, digits.length);
+      pushR(per.digits, per.confidence);
       if (per.digits.length >= 2) {
         const pc = Math.round(per.confidence);
         if (per.digits === digits) {
@@ -2115,17 +2171,19 @@ async function ocrBarNumberAt(page, p) {
         } else {
           const r2 = await ocrDigitsFromCanvas(prepared, 8);
           const d2 = String(r2.digits || '');
+          pushR(d2, r2.confidence);
           if (d2 === per.digits) { digits = per.digits; conf = Math.max(pc, Math.round(r2.confidence)); agree = true; }
           else alt = { digits: per.digits, conf: pc };
         }
       } else {
         const r2 = await ocrDigitsFromCanvas(prepared, 8);
         const d2 = String(r2.digits || '');
+        pushR(d2, r2.confidence);
         if (d2 && d2 === digits) { conf = Math.max(conf, Math.round(r2.confidence)); agree = true; }
         else if (d2) alt = { digits: d2, conf: Math.round(r2.confidence) };
       }
     }
-    return { digits, conf, n: cl ? cl.n : 0, dh, alt, agree };
+    return { digits, conf, n: cl ? cl.n : 0, dh, alt, agree, readings };
   };
 
   // Nejbližší shluk nemusí být ten správný (když se prst netrefí, může jako
@@ -2133,10 +2191,12 @@ async function ocrBarNumberAt(page, p) {
   // a nakonec okno přesně kolem klepnutí; bere se nejlepší jistota.
   const tries = (relaxed ? useClusters : useClusters.filter(c => c.d < 28 * pxPerPt)).slice(0, 3);
   let best = null, tried = [];
+  const allReads = [];
   for (const cl of tries.concat([null])) {
     const r = await attempt(cl);
     tried.push({ digits: r.digits, conf: r.conf, n: r.n, d: cl ? Math.round(cl.d) : -1,
                  alt: r.alt ? r.alt.digits : null });
+    for (const x of (r.readings || [])) allReads.push(x);
     // Práh 55: naměřené správné čtení má 67–96; odpad typu „2“ s jistotou 43
     // vznikl na prázdném/posunutém výřezu a nesmí se vložit. Výjimka: dvě
     // nezávislá čtení (psm 7 + 8/10) se SHODUJÍ → správně je i 53 (naměřeno
@@ -2149,9 +2209,24 @@ async function ocrBarNumberAt(page, p) {
     if (ok && (!best || r.conf > best.conf)) best = { ...r, cl: cl ? cl.n : 0 };
     if (best && best.conf >= 70) break;
   }
+  // NEJEDNOZNAČNÉ: žádné čtení neprošlo prahem, ale padla dvě (a víc) různá
+  // čísla s rozumnou jistotou. Uživatel dostane tlačítka a vybere — dřív se
+  // jen odmítlo a klepalo se znovu naslepo.
+  let choice = null;
+  if (!best) {
+    const uniq = new Map();
+    for (const r of allReads) {
+      if (!/^\d{1,4}$/.test(r.d) || r.c < 40) continue;
+      const prev = uniq.get(r.d);
+      if (!prev || prev.c < r.c) uniq.set(r.d, { d: r.d, c: r.c });
+    }
+    const list = [...uniq.values()].sort((a, b) => b.c - a.c);
+    if (list.length >= 2 && list[0].c >= 45) choice = list.slice(0, 2).map(x => x.d);
+  }
   _barPickDbg({
     ocr: { digits: best ? best.digits : '', confidence: best ? best.conf : 0,
            cluster: best ? best.cl : 0, tried, stats: foundFinal.stats,
+           choice, reads: allReads,
            pdf: [Math.round(px), Math.round(py)],
            render: Math.round(tRender), find: Math.round(tFind),
            total: Math.round(performance.now() - t0) },
@@ -2161,7 +2236,7 @@ async function ocrBarNumberAt(page, p) {
                   pdf: [Math.round(px), Math.round(py)], occ: _lastBarOcc };
   const _sq = foundFinal.stats || {};
   barPickDiag.value = (best ? 'přečteno ' + best.digits + ' (' + best.conf + ' %)'
-    : 'NEPŘEČTENO') + ' · ' + (_lastBarOcc ? _lastBarOcc.pointerType : '?')
+    : (choice ? 'nejednoznačné ' + choice.join(' / ') : 'NEPŘEČTENO')) + ' · ' + (_lastBarOcc ? _lastBarOcc.pointerType : '?')
     + ' · p ' + (_lastBarOcc ? _lastBarOcc.layer[0] + ',' + _lastBarOcc.layer[1] : '?')
     + ' → pdf ' + Math.round(px) + ',' + Math.round(py)
     + (_lastBarOcc && _lastBarOcc.screen ? ' · obraz ' + _lastBarOcc.screen[0] + ',' + _lastBarOcc.screen[1] : '')
@@ -2169,6 +2244,7 @@ async function ocrBarNumberAt(page, p) {
         + '/' + _lastBarOcc.vb[2] + '×' + _lastBarOcc.vb[3] : '')
     + ' · shluk ' + (best ? best.cl : 0) + ', komp ' + (_sq.comps == null ? '?' : _sq.comps)
     + ', ink ' + (_sq.inkPct == null ? '?' : _sq.inkPct) + ' %, max ' + (_sq.maxHpt == null ? '?' : _sq.maxHpt) + ' b';
+  _lastBarChoice = choice;
   return best ? parseInt(best.digits, 10) : null;
 }
 // --- DOČÍSLOVÁNÍ SYSTÉMU (taktové čáry, listopad 2026) ---------------------
@@ -2184,6 +2260,17 @@ function armBarFill() {
   showToast('Klepni kamkoli do systému — doplním čísla podle taktových čar', 5000);
 }
 async function fillSystemAt(p) {
+  // Chyba (příliš velké plátno, getImageData, render) MUSÍ být vidět — dřív ji
+  // volající polykal přes `.catch(() => {})` a uživatel neviděl vůbec nic.
+  try {
+    await _fillSystemAt(p);
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    barPickDiag.value = 'Dočíslování SELHALO: ' + msg;
+    showToast('Dočíslování selhalo: ' + msg, 9000);
+  }
+}
+async function _fillSystemAt(p) {
   const page = currentPage.value;
   const s = await layerScale(page);
   const cb = cropBox.value;
@@ -2196,8 +2283,21 @@ async function fillSystemAt(p) {
   const bandH = 260;                                  // výška pásu (systém + rezerva)
   const crop = { x: 0, y: Math.max(0, Math.min(py - bandH / 2, ph - bandH)), w: pw, h: bandH };
   const cv = document.createElement('canvas');
+  // ⚠️ PLÁTNO NESMÍ RŮST S dpr. `renderPageRegion()` násobí dpr samo, takže
+  // dřívější `pw * PPT` dalo na tabletu (dpr 2,6) pás 9 000 × 4 000 px = 36 M px;
+  // `getImageData` na takovém plátně tiše selže a protože volající měl
+  // `.catch(() => {})`, nedělo se VŮBEC NIC (Jan: „dočíslování nefunguje“).
+  // Stejný trik jako u lupy: cílíme PIXELY na bod nezávisle na dpr.
   const PPT = 6;
-  await renderPageRegion(song, page + 1, cv, crop, pw * PPT, bandH * PPT);
+  const dpr = window.devicePixelRatio || 1;
+  let outW = pw * PPT / dpr, outH = bandH * PPT / dpr;
+  const MAX_PX = 12e6;
+  const areaPx = outW * outH * dpr * dpr;
+  if (areaPx > MAX_PX) {
+    const k = Math.sqrt(MAX_PX / areaPx);
+    outW *= k; outH *= k;
+  }
+  await renderPageRegion(song, page + 1, cv, crop, outW, outH);
   const pxPerPt = cv.width / crop.w;
   const step = Math.max(1, Math.min(64, Number(barStep.value) || 1));
   // Detekce potřebuje KROK (počet taktů systému) a y klepnutí (který systém).
@@ -2209,10 +2309,15 @@ async function fillSystemAt(p) {
                          ok: det.ok, reason: det.reason, diag: det.diag,
                          w: cv.width, h: cv.height } });
   if (!det.ok) {
-    showToast('Nedočísleno: ' + (det.reason || 'taktové čáry nesedí na Krok')
+    const msg = 'Nedočísleno: ' + (det.reason || 'taktové čáry nesedí na Krok')
       + (det.staves ? ' · osnov ' + det.staves : '')
-      + (det.lines.length ? ' · našel ' + det.lines.map(v => Math.round(v)).join('/') : ''),
-      7000);
+      + (det.lines.length ? ' · našel ' + det.lines.map(v => Math.round(v)).join('/') : '')
+      + ' · Krok ' + step
+      + (det.diag ? ' · ' + JSON.stringify(det.diag) : '');
+    // Důvod patří i do panelu — hláška na tabletu uteče.
+    barPickDiag.value = 'Dočíslování · ' + msg + ' · pdf ' + Math.round(px) + ',' + Math.round(py);
+    showToast(msg + (det.reason && /našel jsem jen/.test(det.reason)
+      ? ' — zkontroluj Krok (počet taktů systému)' : ''), 9000);
     return;
   }
   const first = Math.max(1, Number(barNext.value) || 1);
@@ -2227,11 +2332,22 @@ async function fillSystemAt(p) {
   showToast('Doplněno ' + bars + ' čísel — další systém začíná ' + barNext.value);
 }
 const barPickBusy = ref(false);
+// Uživatel vybral z nabídky dvou čísel (15 vs 153) — index se vloží na místo
+// původního klepnutí, protože přesně tam vytištěné číslo je.
+function chooseBarPick(n) {
+  const c = barPickChoice.value;
+  if (!c) return;
+  barPickChoice.value = null;
+  addBarIndex(c.page, Number(n), c.x, c.y, 'ocr');
+}
 async function pickPrintedBarNumber(p, pointerType, ev) {
   const page = currentPage.value;
+  barPickChoice.value = null;      // nové klepnutí ruší starou nabídku
+  _lastBarChoice = null;
   const _svb = layerSvgEl.value ? layerSvgEl.value.getAttribute('viewBox') : null;
   const _srect = layerSvgEl.value ? layerSvgEl.value.getBoundingClientRect() : null;
-  _lastBarOcc = { pointerType: pointerType || '?', layer: [Math.round(p.x), Math.round(p.y)],
+  _lastBarOcc = { pointerType: pointerType || '?', path: _lastCoordPath,
+                  layer: [Math.round(p.x), Math.round(p.y)],
                   screen: ev ? [Math.round(ev.clientX), Math.round(ev.clientY)] : null,
                   vb: _svb ? _svb.split(/\s+/).map(Number).slice(0, 4) : null,
                   rect: _srect ? [Math.round(_srect.left), Math.round(_srect.top),
@@ -2261,19 +2377,19 @@ async function pickPrintedBarNumber(p, pointerType, ev) {
     const n = await ocrBarNumberAt(page, p);
     if (n == null) {
       _barPickDbg({ miss: true, px: Math.round(p.x), py: Math.round(p.y) });
-      // Čísla v hlášce = diagnostika pro Jana: z jednoho klepnutí je vidět,
-      // jestli selhalo hledání číslic (shluk 0) nebo čtení (nízká jistota).
       const d = _lastBarOcr;
       const st2 = d && d.stats ? d.stats : null;
-      // Rozpor dvou čtení = radši nic než špatné číslo; uživateli řekneme oba tipy.
-      const amb = d && d.tried && d.tried.find(t => t.alt);
-      if (amb) {
-        showToast('Číslo je nejednoznačné (' + amb.digits + ' vs. ' + amb.alt
-          + ') — klepni znovu, nebo ho vlož ručně', 6000);
+      // Dvě různá čísla = uživatel vybere tlačítkem (v 90 % je jedno správné).
+      // Dřív se jen odmítlo a klepalo se znovu naslepo.
+      if (_lastBarChoice && _lastBarChoice.length >= 2) {
+        barPickChoice.value = { nums: _lastBarChoice.slice(), page, x: p.x, y: p.y };
+        showToast('Číslo je nejednoznačné — vyber v panelu: '
+          + _lastBarChoice.join(' nebo '), 6000);
         return;
       }
       const occ = d && d.occ ? d.occ : null;
       showToast('Nepřečteno · ' + (occ ? occ.pointerType : '?')
+        + (occ && occ.path ? ' (' + occ.path + ')' : '')
         + (occ ? ' · p ' + occ.layer[0] + ',' + occ.layer[1] : '')
         + (d && d.pdf ? ' → pdf ' + d.pdf[0] + ',' + d.pdf[1] : '')
         + ' · jistota ' + (d ? d.conf : '?') + ', shluk ' + (d ? d.cluster : '?')
@@ -5106,9 +5222,11 @@ function setTool(t) {
   // Nedokončené označení taktu/systému nesmí zůstat viset po přepnutí nástroje
   // (jinak by obdélník zůstal nakreslený a další tah by se choval jako drag).
   _barDrag = null; barDragRect.value = null;
+  barPickChoice.value = null; _lastBarChoice = null;   // nabídka čísel platí jen pro lupu
   jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
 }
 
+let _lastCoordPath = '';   // 'ctm' | 'ratio' — kterou cestou se naposledy přepočítalo klepnutí
 function toLayerCoords(e) {
   // Přes převodní matici SVG (getScreenCTM) — ta zná zoom, posun I ROTACI stage.
   // Dřív se měřilo jen podle poměru šířek, takže na otočené stránce pero kreslilo
@@ -5119,15 +5237,24 @@ function toLayerCoords(e) {
   const ctm = svg.getScreenCTM();
   if (ctm && typeof DOMPoint !== 'undefined') {
     const p = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+    _lastCoordPath = 'ctm';
     return { x: p.x, y: p.y };
   }
   // Záložní cesta (kdyby matice nebyla k dispozici) — bez rotace jako dřív.
-  // Souřadnice vrstvy jsou referenční px celé stránky, ne displayed px.
+  // ⚠️ Souřadnice vrstvy jsou v soustavě VIEWBOXu = cropBoxu, ne 0..w výřezu.
+  // Dřív se tu vracely souřadnice RELATIVNÍ k výřezu (bez cropBox.x/y). Bez
+  // ořezu je cropBox (0,0), takže se to neprojevilo; se zapnutým rámem byl
+  // každý bod posunutý o ořez k levo a nahoru — a protože lupa i Dočíslování
+  // ten posun pak ještě jednou odečítají, hledaly číslo dvakrát dál
+  // (naměřeno na str. 16: klepnutí na číslo 11 skončilo na `pdf 14,487`,
+  // skutečné číslo je na `pdf 72,528`, rozdíl = přesně cropBox).
   const rect = svg.getBoundingClientRect();
-  const scale = cropBox.value.w / rect.width;
+  const cb = cropBox.value;
+  const scale = cb.w / rect.width;
+  _lastCoordPath = 'ratio';
   return {
-    x: (clientX - rect.left) * scale,
-    y: (clientY - rect.top) * scale,
+    x: cb.x + (clientX - rect.left) * scale,
+    y: cb.y + (clientY - rect.top) * scale,
   };
 }
 
@@ -8343,14 +8470,14 @@ async function deleteBookmark(b) {
   display: flex; flex-direction: column; gap: 6px;
   background: var(--bg-elev); border: 1px solid var(--border); border-radius: 14px;
   padding: 8px 10px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); z-index: 27;
-  width: 214px; max-width: 92vw;
+  width: 234px; max-width: 92vw;
 }
 .bn-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.bn-title { font-size: 0.78rem; font-weight: 700; color: var(--text); }
+.bn-title { font-size: 0.78rem; font-weight: 700; color: var(--text); white-space: nowrap; }
 .barnum-panel .panel-grip { width: 26px; height: 26px; font-size: 0.85rem; }
 /* Lupa — stejný malý kruh jako úchyt, vedle nadpisu. Zapnutá = akcent. */
 .bn-pick {
-  flex: 0 0 auto; width: 26px; height: 26px; padding: 0; margin-left: auto;
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
   border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
   color: var(--text-dim); cursor: pointer; touch-action: manipulation;
   display: flex; align-items: center; justify-content: center;
@@ -8366,12 +8493,43 @@ async function deleteBookmark(b) {
 /* Zavření číslování — malé, ale vždy po ruce: se schovanou lištou je to jediná
    cesta zpět do čtení (a vrátí horní lištu). */
 .bn-close {
-  width: 26px; height: 26px; flex: 0 0 auto; padding: 0; margin-left: auto;
+  width: 26px; height: 26px; flex: 0 0 auto; padding: 0;
   border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
   color: var(--text-dim); display: flex; align-items: center; justify-content: center;
   cursor: pointer; touch-action: manipulation;
 }
 .bn-close:active { background: var(--accent); border-color: var(--accent); color: #17130f; }
+/* Zpět — ploché tlačítko vedle „Smazat všechny“ (v hlavičce už není místo:
+   název + ✕ + lupa + dočíslování + úchyt se do 214 px nevejdou). */
+.bn-undo {
+  flex: 0 0 auto; height: 30px; padding: 0 9px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 0.76rem; font-family: inherit; line-height: 1;
+  display: flex; align-items: center; gap: 5px; cursor: pointer;
+  touch-action: manipulation;
+}
+.bn-undo svg { display: block; }
+.bn-undo:active { background: var(--accent); border-color: var(--accent); color: #17130f; }
+.bn-undo:disabled { opacity: 0.35; cursor: default; }
+/* Volba mezi dvěma přečtenými čísly — velká plochá tlačítka s číslem. */
+.bn-choice {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  border-top: 1px solid var(--border); padding-top: 6px;
+}
+.bn-choice-q { font-size: 0.72rem; color: var(--text-dim); flex: 1 1 100%; }
+.bn-choice-btn {
+  min-width: 46px; height: 34px; padding: 0 10px; border-radius: 10px;
+  border: 1px solid var(--accent); background: var(--bg-elev2);
+  color: var(--text); font-size: 1rem; font-weight: 700; font-family: inherit;
+  cursor: pointer; touch-action: manipulation;
+}
+.bn-choice-btn:active { background: var(--accent); color: #17130f; }
+.bn-choice-x {
+  width: 28px; height: 28px; padding: 0; flex: 0 0 auto;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text-dim); font-size: 0.8rem; line-height: 1; cursor: pointer;
+  touch-action: manipulation;
+}
 .bn-pick.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
 .bn-row { display: flex; align-items: center; gap: 6px; }
 .bn-label { font-size: 0.72rem; color: var(--text-dim); width: 32px; flex: 0 0 auto; }
