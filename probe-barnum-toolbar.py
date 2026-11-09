@@ -91,6 +91,36 @@ async def main():
         await asyncio.sleep(0.5)
         check(not await h.ev("!!document.querySelector('.barnum-panel')"), "po vypnutí panel zmizí")
 
+        # 6) RÁM (oříznuté okraje) — vrstva je posunutá o cropBox; lupa to musí
+        #    odečíst, jinak hledá čísla o desítky bodů vedle a nic nenajde.
+        await h.ev("""(() => { const b=[...document.querySelectorAll('.tb-btn')]
+            .find(x => (x.title||'').startsWith('Vycentrovat')); if(b) b.click(); return !!b; })()""")
+        await asyncio.sleep(0.4)
+        await h.ev("""(() => { const b=[...document.querySelectorAll('[title]')]
+            .find(x => (x.title||'').startsWith('Oříznout okraje')); if(b) b.click(); return !!b; })()""")
+        await asyncio.sleep(1.6)
+        vb2 = [float(v) for v in (await h.ev(
+            "document.querySelector('.annot-layer').getAttribute('viewBox')")).split()]
+        print("   viewBox po zapnutí rámu:", vb2)
+        check(vb2[0] > 0.5 and vb2[1] > 0.5, "rám je zapnutý (viewBox má posun)", vb2[:2])
+        await h.ev("""(() => { const b=[...document.querySelectorAll('.tb-btn')]
+            .find(x => (x.title||'').startsWith('Číslování taktů')); b.click(); return true; })()""")
+        await h.wait_for("!!document.querySelector('.barnum-panel')", timeout=8, label="barnum panel 2")
+        await h.ev("(() => { const b=document.querySelector('.bn-pick'); if(b) b.click(); return !!b; })()")
+        await asyncio.sleep(0.3)
+        pt2 = json.loads(await h.ev("""(() => { const svg=document.querySelector('.annot-layer');
+            const g=svg.getScreenCTM(); const p=new DOMPoint(%f,%f).matrixTransform(g);
+            return JSON.stringify({x:p.x,y:p.y}); })()""" % (vb2[0] + 67.1 * s, vb2[1] + 515.2 * s)))
+        n1 = int(await h.ev("JSON.stringify((window.__barPickDbg||[]).length)"))
+        await h.cdp("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [
+            {"x": pt2["x"], "y": pt2["y"], "id": 0, "radiusX": 11, "radiusY": 11, "force": 1.0}]})
+        await asyncio.sleep(0.05)
+        await h.cdp("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        await asyncio.sleep(3)
+        got2 = json.loads(await h.ev("JSON.stringify((window.__barPickDbg||[]).slice(%d))" % n1))
+        digits2 = next((d["ocr"]["digits"] for d in got2 if isinstance(d, dict) and "ocr" in d), "")
+        check(str(digits2) == "9", "lupa přečte 9 i s OŘÍZNUTOU stránkou (rám)", digits2)
+
         print("SOUHRN: %d OK, %d chyb" % (len(OK), len(BAD)))
 
 

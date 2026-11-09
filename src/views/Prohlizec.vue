@@ -1977,7 +1977,13 @@ const OCR_REGION_H = 70;
 const OCR_PPT = 12;         // PIXELY canvasu na PDF bod (nezávisle na dpr)
 async function ocrBarNumberAt(page, p) {
   const s = await layerScale(page);      // referenční px vrstvy / bod PDF
-  const px = p.x / s, py = p.y / s;      // klepnutí v bodech PDF
+  // ⚠️ VRSTVA JE POSUNUTÁ O cropBox! `toLayerCoords()` vrací souřadnice
+  // v prostoru CELÉ stránky (viewBox = cropBox), takže se do PDF bodů převádí
+  // `(p - cropBox) / s`. Bez odečtení se u OŘÍZNUTÉ stránky (rám zapnutý,
+  // okraje uříznuté — Janův sken) hledá o desítky bodů vedle a lupa nenajde
+  // žádnou číslici: „na všechny pokusy se nepodařilo přečíst“.
+  const cb = cropBox.value;
+  const px = (p.x - cb.x) / s, py = (p.y - cb.y) / s;   // klepnutí v bodech PDF
   let pw = 595, ph = 842;
   try {
     const d = await getPageWidthHeight(song, page + 1);
@@ -2083,14 +2089,16 @@ async function pickPrintedBarNumber(p) {
   _barPickDbg({ page, px: Math.round(p.x), py: Math.round(p.y), count: nums.length,
     sample: nums.slice(0, 6).map(c => ({ n: c.n, x: Math.round(c.x), y: Math.round(c.yTop) })) });
   const s = await layerScale(page);      // referenční px vrstvy / bod PDF
+  // Stejný posun jako u OCR: textová vrstva je v bodech PDF, vrstva v cropBoxu.
+  const cb = cropBox.value;
   let best = null;
   for (const c of nums) {
-    const cx = (c.x + c.w / 2) * s;
-    const cy = (c.yTop - c.h * 0.35) * s;
+    const cx = cb.x + (c.x + c.w / 2) * s;
+    const cy = cb.y + (c.yTop - c.h * 0.35) * s;
     const d = Math.hypot(cx - p.x, cy - p.y);
     if (d <= BAR_PICK_RADIUS && (!best || d < best.d)) best = { ...c, d };
   }
-  if (best) { addBarIndex(page, best.n, best.x * s, best.yTop * s, 'text'); return; }
+  if (best) { addBarIndex(page, best.n, cb.x + best.x * s, cb.y + best.yTop * s, 'text'); return; }
 
   // 2) SKEN: žádná textová vrstva → čti číslo z OBRÁZKU stránky.
   if (barPickBusy.value) return;
