@@ -164,11 +164,19 @@ async def main():
         xs = [round(it["x"] / lay - 1.5, 1) for it in pv.get("items", [])]
         res["layerScale"] = round(lay, 4)
         res["preview"] = {"bars": bars, "texts": texts, "lines": xs}
+        # POČET ČÍSEL SE NEŘÍDÍ „Krokem" — appka takty spočítá z čar. Krok je
+        # jen kontrola, takže očekávaný počet bereme z ověřených pozic čar.
+        want_n = len(expect) if expect else a.krok - 1
         chk("náhled vznikl", True, f"bars={bars}")
-        chk("počet čísel = Krok − 1", bars == a.krok - 1, f"{bars} vs {a.krok - 1}")
+        chk("počet čísel = počet nalezených čar", bars == want_n, f"{bars} vs {want_n}")
         chk("první číslo = 1. takt + 1", texts[:1] == [str(a.first + 1)], texts[:2])
-        chk("poslední číslo = 1. takt + Krok − 1",
-            texts[-1:] == [str(a.first + a.krok - 1)], texts[-1:])
+        chk("poslední číslo = 1. takt + počet čar",
+            texts[-1:] == [str(a.first + want_n)], texts[-1:])
+        pv_mis = await h.ev("""(() => { const r = window.__barDev.barFillPreview;
+          const pp = (r && r.value !== undefined) ? r.value : r;
+          return pp ? !!pp.mismatch : null; })()""")
+        if a.krok >= 2:
+            chk("nesouhlas s Krokem je označený", pv_mis == (a.krok - 1 != want_n), pv_mis)
         if expect:
             bad = [(v, e) for v, e in zip(xs, expect) if abs(v - e) > 3]
             chk("čísla stojí na vnitřních čarách",
@@ -177,7 +185,7 @@ async def main():
         await h.click(".bn-fill-ok")
         await asyncio.sleep(1.0)
         nxt = await h.ev("Number(document.querySelectorAll('.bn-input')[0].value)")
-        chk("Další = 1. takt + Krok", nxt == a.first + a.krok, nxt)
+        chk("Další = 1. takt + počet čar", nxt == a.first + want_n + 1, nxt)
         cnt = await h.ev("""(() => { const r = window.__barDev.annotations;
           const a = (r && r.value !== undefined) ? r.value : r;
           const items = (a && a.items) || [];

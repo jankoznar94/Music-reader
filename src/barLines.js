@@ -1,36 +1,32 @@
 // src/barLines.js — TAKTOVÉ ČÁRY v systému (pro „Dočíslovat systém")
 //
-// PROČ TAKHLE (naměřeno na reálném skenu Mozart/Carus, listopad 2026):
-//  - Původní verze hledala linky osnov jako řádky s > 45 % inkoustu a používala
-//    Otsuův práh celého pásu. Na skutečném skenu jsou linky šedé a rozpadají se:
-//    práh 168 dá podíl 0,46–0,64, takže se našlo 7 řádků místo 10 a ze dvou osnov
-//    jedna → `need = max(2, …)` už nikdy nic nepustilo. Odtud „Taktové čáry jsem
-//    nenašel“ na každé klepnutí.
-//  - Pás 240 b často obsahuje DVĚ systémy; míchání jejich čar dá nesmyslný počet.
-//  - Rozdělit systémy podle mezery mezi osnovami nejde (uvnitř 38–45 b, mezi
-//    systémy 42 b) — jediné spolehlivé kritérium je SHODA TAKTOVÝCH ČAR.
-//  - Počet čar se NESMÍ hádat: uživatel zadává „Krok“ = počet taktů systému.
+// HISTORIE CHYB (ať se nevrací):
+//  1) Práh na linky osnov z celého pásu → na šedém skenu se linky rozpadaly.
+//     Teď: Otsu + 35, práh max 235.
+//  2) Úvodní taktová čára se vyhazovala hackem `x < 55 b` (od okraje STRÁNKY),
+//     takže u sazby s větším levým okrajem prošla a čísla se posunula o 1.
+//     Teď se měří okraj SYSTÉMU (první inkoust na lince osnov).
+//  3) „Čára“ = sloupec plný ve výšce osnovy → bralo i nožičky not (akord je
+//     stejně vysoký jako osnova a u sboru se nožičky hlasů kryjí).
+//  4) Podmínka „čára přesahuje osnovu nad i pod“ — na skenu Carus je přesah
+//     0,0 b, takže neprošla ANI JEDNA čára (`overshoot: 0` v diagnostice).
+//  5) Seskupování osnov do systému se slévalo přes dva systémy (`staves: 9`
+//     místo 6) a pak se hledaly čáry, které neexistují.
 //
-// CO BYLO ŠPATNĚ (Jan, listopad 2026) a jak je to teď:
-//  1) „Počítá i první taktovou čáru na začátku systému, takže odhaduje o jednoho
-//     kandidáta víc.“ → Dřív se úvodní čára vyhazovala jen hackem `x < 55 b`
-//     (vzdálenost od okraje STRÁNKY). U sazby s větším levým okrajem je úvodní
-//     čára dál než 55 b a počítala se. Teď se měří okraj SYSTÉMU: nejmenší x,
-//     kde začíná linka osnov (`staffLeft`), a vše, co leží na něm nebo kousek
-//     za ním, je úvodní čára (i s tlustou svorkou) — vrací se jen VNITŘNÍ čáry.
-//  2) „První takt v systému už číslo má, takže ani ten by se neměl počítat.“
-//     → Čísla se proto vkládají až od DRUHÉHO taktu: systém o `krok` taktech má
-//     `krok − 1` vnitřních čar a tolik čísel (první takt si nechá vytištěné číslo).
-//  3) „Jako čáry bere i nožičky not.“ → Sloupec se počítal jako čára, když měl
-//     ≥ 92 % inkoustu ve VÝŠCE OSNOVY. Nožička akordu tuhle podmínku splní (je
-//     stejně vysoká jako osnova) a u sboru se nožičky hlasů navíc kryjí ve
-//     svislici, takže projdou i hlasováním. Naměřeno na skenu (mezera 3,42 b):
-//       taktová čára  tah 14,7–15,0 b, přesah NAD i POD osnovou 0,3–0,7 b
-//       nožička       tah 12,0–13,7 b, přesah aspoň na jedné straně ZÁPORNÝ
-//     Čára teď musí: (a) být plná v KAŽDÉ osnově systému, (b) přesáhnout oba
-//     konce osnovy, (c) nemít na konci tahu široký vodorovný útvar (hlavičku
-//     noty nebo trámec) — to je geometrie, ne práh na štěstí.
-//     Minimální výška tahu = výška celého systému (všechny osnovy + mezery).
+// SOUČASNÝ PŘÍSTUP (listopad 2026) — nic z toho nepotřebuje:
+//  * Bere se JEDINÁ osnova, do které uživatel klepl. Seskupování do systému
+//    odpadá, takže se nemůže splést počet osnov.
+//  * Kandidáti = svislé tahy v té osnově (taktové čáry, nožičky, občas klíč).
+//  * Rozhoduje PRAVIDELNOST: takty jdou za sebou v pravidelném kroku, kdežto
+//    nožičky stojí uvnitř taktů na náhodných místech. Hledá se proto nejdelší
+//    řetěz kandidátů se stejnou vzdáleností (kotva + k × P) na obě strany.
+//    Nožička do řetězu nesedne, protože rozestupy by přestaly vycházet.
+//  * Úvodní ani koncová čára takt nezačínají (stojí na okrajích osnovy) —
+//    obojí se vyhodí. Čísla jdou na takty 2..N, protože 1. takt systému má
+//    číslo vytištěné (Jan, listopad 2026).
+//  * „Krok“ je jen KONTROLA, ne vstup pro výpočet: appka takty spočítá sama
+//    a když se to s Krokem rozchází, řekne to. (Jan: „já nevěděl, že má vliv,
+//    co zadám do Další a Krok“ — nemá.)
 
 /** Otsuův práh z histogramu šedi. */
 function otsu(hist, total) {
@@ -60,32 +56,70 @@ function longestRun(mask, off, w) {
   return best;
 }
 
-/** Šířka vodorovného tahu v řádku `y`, který obsahuje sloupec `x` (v px). */
-function hRunAt(mask, w, x, y) {
-  if (!mask[y * w + x]) return 0;
-  let a = x, b = x;
-  while (a > 0 && mask[y * w + a - 1]) a--;
-  while (b < w - 1 && mask[y * w + b + 1]) b++;
-  return b - a + 1;
+/**
+ * Nejdelsi řetěz bodů s pravidelným krokem — takhle se oddělí taktové čáry od
+ * nožiček: nožičky stojí uvnitř taktů, takže rozestupy rozhodí, kdežto skutečné
+ * čáry drží krok. Krok P se hledá HLASOVÁNÍM přes všechny dvojice kandidátů
+ * (ne z mezer mezi sousedy — jedna nožička mezi dvěma čarami mezeru rozpůlí),
+ * pak se od každé kotvy zkouší řetěz na obě strany.
+ */
+function barChain(xs, spacePx) {
+  const n = xs.length;
+  if (n < 2) return xs.slice();
+  const diffs = [];
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) diffs.push(xs[j] - xs[i]);
+  // Tolerance MUSÍ být těsná: volnější (1,2 mezery) brala jako čárty i nožičky
+  // trámcované skupiny (naměřeno: 245,2 místo 249,9) a klíč (69,5).
+  const tolOf = (P) => Math.max(1.5, Math.min(0.05 * P, 0.6 * spacePx));
+  const minP = 6 * spacePx;                 // takt je širší než 6 mezer
+  let bestP = 0, bestScore = 0;
+  for (const P of diffs) {
+    if (P < minP) continue;
+    let sc = 0;
+    for (const d of diffs) {
+      if (d < P * 0.94) continue;
+      const k = Math.round(d / P);
+      if (k >= 1 && Math.abs(d - k * P) <= tolOf(P)) sc += 1 / k;
+    }
+    if (sc > bestScore) { bestScore = sc; bestP = P; }
+  }
+  if (!bestP) return [];
+  const tol = tolOf(bestP);
+  let best = [];
+  for (const a of xs) {
+    const pts = [a];
+    for (let i = 1; i <= 64; i++) {
+      const want = a + i * bestP;
+      const hit = xs.find(v => Math.abs(v - want) <= tol);
+      if (hit == null) break;
+      pts.push(hit);
+    }
+    for (let i = 1; i <= 64; i++) {
+      const want = a - i * bestP;
+      const hit = xs.find(v => Math.abs(v - want) <= tol);
+      if (hit == null) break;
+      pts.unshift(hit);
+    }
+    if (pts.length > best.length) best = pts;
+  }
+  return best;
 }
 
 /**
  * Najde VNITŘNÍ taktové čáry systému (čáry, které začínají 2. a další takt).
  *
- * @param {HTMLCanvasElement} cv pás přes celou šířku (240–260 bodů vysoký)
+ * @param {HTMLCanvasElement} cv pás přes celou šířku (240–420 bodů vysoký)
  * @param {number} pxPerPt pixely canvasu na PDF bod
- * @param {{krok:number, ypt:number, offsetY?:number}} opt `krok` = počet taktů
- *        systému (zadává uživatel), `ypt` = y klepnutí v bodech PDF (rozhoduje,
- *        který systém se bere)
- * @returns {{lines:number[], bars:number, krok:number, staves:number, top:number,
- *            ok:boolean, reason?:string, opening?:number|null, mode?:string}}
- *          `lines` = x-ové souřadnice začátků taktů 2..krok v BODECH PDF (první
- *          takt se nečísluje, má vytištěné číslo), `top` = horní linka systému
- *          v bodech PDF (číslo taktu patří nad ni)
+ * @param {{krok?:number, ypt?:number, offsetY?:number}} opt `krok` = počet taktů
+ *        systému (jen kontrola, ne vstup výpočtu), `ypt` = y klepnutí v bodech PDF
+ * @returns {{lines:number[], bars:number, krok:number, top:number, ok:boolean,
+ *            reason?:string, opening?:number|null, closing?:number|null}}
+ *          `lines` = x-ové souřadnice začátků taktů 2..N v BODECH PDF,
+ *          `top` = horní linka osnovy v bodech PDF (číslo patří nad ni)
  */
 export function detectBarlines(cv, pxPerPt, opt = {}) {
   const w = cv.width, h = cv.height;
-  const krok = Math.max(1, Math.min(64, Math.round(opt.krok || 1)));
+  const krok = Math.max(0, Math.min(64, Math.round(opt.krok || 0)));
   const ypt = Number.isFinite(opt.ypt) ? opt.ypt : null;
   const d = cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
   const hist = new Uint32Array(256);
@@ -127,196 +161,160 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     else cs.push(c);
   }
   const gapMax = Math.max(12, Math.round(pxPerPt * 8));
-  const staves = [];
+  const groups = [];
   let cur = [];
   for (const c of cs) {
     if (cur.length && c - cur[cur.length - 1] < gapMax) cur.push(c);
-    else { if (cur.length) staves.push(cur); cur = [c]; }
+    else { if (cur.length) groups.push(cur); cur = [c]; }
   }
-  if (cur.length) staves.push(cur);
-  const real = staves.filter(s => s.length >= 4);
+  if (cur.length) groups.push(cur);
+  // Osnova = 4–6 ROVNOMĚRNÝCH linek. Nerovnoměrné skupiny (řádky textu,
+  // podtržení, obloučky) se zahazují — dřív z nich vznikaly falešné „osnovy“
+  // a z těch pak nesmyslný počet osnov (naměřeno `staves: 9`).
+  const real = groups.filter((g) => {
+    if (g.length < 4) return false;
+    const gaps = [];
+    for (let i = 1; i < g.length; i++) gaps.push(g[i] - g[i - 1]);
+    gaps.sort((a, b) => a - b);
+    const med = gaps[Math.floor(gaps.length / 2)];
+    if (med < 2) return false;
+    let same = 0;
+    for (const gp of gaps) if (gp >= 0.7 * med && gp <= 1.4 * med) same++;
+    return same >= g.length - 2;
+  });
   if (!real.length) {
     return { lines: [], bars: 0, krok, staves: 0, top: 0, ok: false,
              reason: 'nenašel jsem linky osnov (' + cs.length + ' linek)' };
   }
 
-  // 2) Hrubé svislice v každé osnově — sloupec plný po celé výšce osnovy.
-  //    Slouží JEN k seskupení osnov do systému (shoda čar mezi osnovami),
-  //    ne k rozhodnutí „tohle je taktová čára“.
-  const maxW = Math.max(2, Math.round(pxPerPt * 2.6));
-  const per = real.map((s) => {
-    const yTop = s[0], yBot = s[s.length - 1];
-    const bh = Math.max(1, yBot - yTop);
+  // 2) OSNOVA U KLEPNUTÍ — jediná, žádné seskupování do systému
+  const dists = real.map((g) => {
+    const y0 = g[0] / pxPerPt, y1 = g[g.length - 1] / pxPerPt;
+    const dd = (ypt != null && y0 <= ypt && ypt <= y1)
+      ? 0 : (ypt == null ? 0 : Math.min(Math.abs(ypt - y0), Math.abs(ypt - y1)));
+    return { g, y0, y1, dd };
+  });
+  let near = dists[0];
+  for (const it of dists) if (it.dd < near.dd) near = it;
+  const rows = near.g;
+  const yTop = rows[0], yBot = rows[rows.length - 1];
+  const staffH = Math.max(2, yBot - yTop);
+  const spacePx = Math.max(2, staffH / 4);
+  const top = (Number.isFinite(opt.offsetY) ? opt.offsetY : 0) + near.y0;
+
+  // 3) svislé tahy v této osnově (taktové čáry + nožičky + občas klíč)
+  const maxW = Math.max(2, Math.round(0.9 * spacePx));      // čára je tenká
+  const win0 = Math.max(0, Math.floor(yTop - 0.6 * spacePx));
+  const win1 = Math.min(h - 1, Math.ceil(yBot + 0.6 * spacePx));
+  const strokes = [];
+  {
     const cols = [];
     for (let x = 0; x < w; x++) {
       let ink = 0;
       for (let y = yTop; y <= yBot; y++) ink += mask[y * w + x];
-      if (ink / bh >= 0.90) cols.push(x);
+      if (ink / staffH >= 0.80) cols.push(x);
     }
-    const xs = [];
     let i = 0;
     while (i < cols.length) {
       let j = i;
       while (j + 1 < cols.length && cols[j + 1] - cols[j] <= 2) j++;
-      if (cols[j] - cols[i] + 1 <= maxW) xs.push((cols[i] + cols[j]) / 2 / pxPerPt);
+      if (cols[j] - cols[i] + 1 <= maxW) {
+        const cx = (cols[i] + cols[j]) / 2;
+        // přesah tahu nad/pod osnovou jen do diagnostiky (rozhodovat NESMÍ —
+        // na skenu Carus je 0,0 a dřív kvůli tomu neprošla žádná čára)
+        let runS = -1, best = 0, bestS = 0;
+        for (let y = win0; y <= win1; y++) {
+          if (mask[y * w + Math.round(cx)]) {
+            if (runS < 0) runS = y;
+            const len = y - runS + 1;
+            if (len > best) { best = len; bestS = runS; }
+          } else runS = -1;
+        }
+        strokes.push({ x: cx, overTop: (yTop - bestS) / pxPerPt,
+                       overBot: (bestS + best - yBot) / pxPerPt, run: best / pxPerPt });
+      }
       i = j + 1;
     }
-    return { y0: s[0] / pxPerPt, y1: s[s.length - 1] / pxPerPt, py0: s[0], py1: s[s.length - 1], cols: xs, src: s };
-  });
-
-  // 3) systém = osnovy u klepnutí, které jsou souvislé a mají shodné čáry
-  const dist = (o) => (o.y0 <= ypt && ypt <= o.y1)
-    ? 0 : Math.min(Math.abs(ypt - o.y0), Math.abs(ypt - o.y1));
-  let start = 0;
-  if (ypt != null) {
-    let bd = Infinity;
-    per.forEach((o, i) => { const dd = dist(o); if (dd < bd) { bd = dd; start = i; } });
   }
-  const same = (a, b) => {
-    let hit = 0;
-    for (const x of a) if (b.some(y => Math.abs(x - y) <= 1.5)) hit++;
-    return hit >= 2;
+
+  // 4) okraje osnovy — úvodní ani koncová čára takt nezačínají
+  const lineRow = (yy) => {
+    const yr = Math.round(yy) * w;
+    let a = -1, b = -1;
+    for (let x = 0; x < w; x++) if (mask[yr + x]) { if (a < 0) a = x; b = x; }
+    return [a, b];
   };
-  const group = [start];
-  // MEZERA UVNITŘ SYSTÉMU vs MEZI SYSTÉMY (naměřeno na skutečné sazbě):
-  // uvnitř systému 20–29 b, mezi systémy 52 b. Pevných 55 b (dřív) proto
-  // slilo dva systémy do jednoho a detekce pak nenašla ani jednu čáru — čáry
-  // dvou systémů totiž nemají nic společného. Mez se bere z mediánu mezer
-  // na stránce, ne z konstanty: uvnitř je jich většina, takže medián = mezera
-  // uvnitř systému a 1,75× mediánu už mezi systémy neprojde.
-  const gapsPt = [];
-  for (let i = 1; i < per.length; i++) gapsPt.push(per[i].y0 - per[i - 1].y1);
-  gapsPt.sort((a, b) => a - b);
-  const medGap = gapsPt.length ? gapsPt[Math.floor(gapsPt.length / 2)] : 30;
-  const GAP_PT = Math.max(26, Math.min(55, 1.75 * medGap));
-  for (let i = start + 1; i < per.length; i++) {
-    const prev = per[group[group.length - 1]];
-    if (per[i].y0 - prev.y1 > GAP_PT || !same(per[i].cols, per[start].cols)) break;
-    group.push(i);
-  }
-  for (let i = start - 1; i >= 0; i--) {
-    const prev = per[group[0]];
-    if (prev.y0 - per[i].y1 > GAP_PT || !same(per[i].cols, per[start].cols)) break;
-    group.unshift(i);
-  }
+  const [leftA, leftB] = lineRow(yTop);
+  const staffLeft = leftA < 0 ? 0 : leftA;
+  const staffRight = leftB < 0 ? w - 1 : leftB;
 
-  // 4) GEOMETRIE: co je taktová čára a co nožička
-  const st = group.map(i => ({ y0: per[i].py0, y1: per[i].py1 }));
-  const heights = st.map(s => Math.max(1, s.y1 - s.y0));
-  const spacePx = Math.max(2, Math.round(heights[0] / 4));   // mezera osnovy v px
-  const gTop = Math.min(...st.map(s => s.y0));
-  const gBot = Math.max(...st.map(s => s.y1));
-  // Každá osnova má vlastní okno o mezeru širší — na skenu je taktová čára
-  // kreslená ZVLÁŠŤ pro každou osnovu, takže mezi osnovami je mezera a hledat
-  // jeden souvislý tah přes celý systém nemá smysl.
-  const segs = st.map((s, i) => {
-    const sp = Math.max(2, Math.round(heights[i] / 4));
-    return { y0: s.y0, y1: s.y1, h: heights[i], sp,
-             w0: Math.max(0, Math.floor(s.y0 - 1.5 * sp)),
-             w1: Math.min(h - 1, Math.ceil(s.y1 + 1.5 * sp)) };
+  const xsAll = strokes.map(s => s.x);
+  const inner = xsAll.filter(x => x > staffLeft + 0.6 * spacePx && x < staffRight - 0.8 * spacePx);
+  const opening = xsAll.find(x => x <= staffLeft + 0.6 * spacePx);
+  const closing = xsAll.find(x => x >= staffRight - 0.8 * spacePx);
+
+  // 5) pravidelný řetěz = taktové čáry (nožičky na něj nesednou)
+  let chain = barChain(inner, spacePx);
+  // 5b) HLASY SOUSEDNÍCH OSNOV: taktová čára je ve všech osnovách systému na
+  // stejném x, kdežto klíč nebo oblouček jen v jedné. Řetěz se proto pročistí —
+  // na skenu Carus jinak prošel klíč jako „první taktová čára“ (naměřeno: 71
+  // místo správných 132). Hlasy se počítají jen z osnov blízkých té kliknuté,
+  // aby se nemíchal sousední systém.
+  const staffCols = real.map((g) => {
+    const yT = g[0], yB = g[g.length - 1], bh = Math.max(1, yB - yT);
+    const out = [];
+    for (let x = 0; x < w; x++) {
+      let ink = 0;
+      for (let y = yT; y <= yB; y++) ink += mask[y * w + x];
+      if (ink / bh >= 0.80) out.push(x);
+    }
+    return { g, out };
   });
-  // řádky linek osnov — v nich se šířka tahu NESMÍ měřit (linka jde přes stránku)
-  const isStaffRow = new Uint8Array(h);
-  for (const c of cs) {
-    for (let y = Math.max(0, c - 2); y <= Math.min(h - 1, c + 2); y++) isStaffRow[y] = 1;
+  const nearIdx = real.indexOf(near.g);
+  const neighbours = staffCols
+    .map((sc, i) => ({ i, sc }))
+    .filter(({ i, sc }) => i !== nearIdx && Math.abs(sc.g[0] - yTop) < 12 * spacePx)
+    .map(({ sc }) => sc.out);
+  const votes = (x) => neighbours.reduce((n, cols) =>
+    n + (cols.some(v => Math.abs(v - x) <= 0.8 * spacePx) ? 1 : 0), 0);
+  if (neighbours.length) {
+    const kept = chain.filter(x => votes(x) >= Math.min(1, neighbours.length));
+    if (kept.length >= 2) chain = kept;
   }
-
-  // Levý okraj systému = první inkoust na horní (a dolní) lince kterékoliv osnovy.
-  // Úvodní taktová čára stojí právě tady — a ta se nepočítá (takt 1 má číslo).
-  let staffLeft = w;
-  for (const s of st) {
-    for (const yy of [Math.round(s.y0), Math.round(s.y1)]) {
-      for (let x = 0; x < w; x++) {
-        if (mask[yy * w + x]) { if (x < staffLeft) staffLeft = x; break; }
-      }
+  // 5c) Klíč stojí hned za úvodní čarou a v každé osnově je na stejném x
+  // (proto ho hlasy neodliší). Takt je ale širší: první taktová čára nemůže
+  // být blíž než ~0,45 šířky taktu od okraje osnovy — naměřeno na skenu Carus
+  // prošel klíč v x=71, správná první čára je 132 (krok 60).
+  if (chain.length >= 3) {
+    const d = [];
+    for (let i = 1; i < chain.length; i++) d.push(chain[i] - chain[i - 1]);
+    d.sort((a, b) => a - b);
+    const P = d[Math.floor(d.length / 2)];
+    if (P > 0) {
+      const kept = chain.filter(x => x >= staffLeft + 0.45 * P);
+      if (kept.length >= 2) chain = kept;
     }
   }
-  if (staffLeft >= w) staffLeft = 0;
-  const openSkip = staffLeft + 0.6 * spacePx;      // px
+  const linesPt = chain.map(x => x / pxPerPt);
+  const bars = linesPt.length;                    // čísel = takty 2..N
+  const dbg = {
+    staff: [+near.y0.toFixed(1), +near.y1.toFixed(1)], space: +(spacePx / pxPerPt).toFixed(2),
+    staffLeft: +(staffLeft / pxPerPt).toFixed(1), staffRight: +(staffRight / pxPerPt).toFixed(1),
+    strokes: strokes.length, inner: inner.length,
+    over: strokes.filter(s => s.overTop > 0 && s.overBot > 0).length,
+    all: real.map(g => [+(g[0] / pxPerPt).toFixed(1), +(g[g.length - 1] / pxPerPt).toFixed(1), g.length]),
+  };
+  const diag = { thr, osnov: real.length, strokes: strokes.length, inner: inner.length,
+                 chain: chain.length, krok };
+  const cands = strokes.map(s => [+(s.x / pxPerPt).toFixed(1), +s.overTop.toFixed(2), +s.overBot.toFixed(2)]);
 
-  const blobWpx = 0.85 * spacePx;                  // hlava noty / trámec
-  const cols = [];
-  for (let x = 0; x < w; x++) {
-    let full = true, blob = false, runMax = 0;
-    let overTop = -999, overBot = -999;
-    for (let i = 0; i < segs.length; i++) {
-      const sg = segs[i];
-      let runS = -1, best = 0, bestS = 0, ink = 0;
-      for (let y = sg.w0; y <= sg.w1; y++) {
-        if (mask[y * w + x]) {
-          if (runS < 0) runS = y;
-          const len = y - runS + 1;
-          if (len > best) { best = len; bestS = runS; }
-          if (y >= sg.y0 && y <= sg.y1) ink++;
-        } else runS = -1;
-      }
-      // (a) sloupec musí být plný v KAŽDÉ osnově systému — nožička je jen v jedné
-      if (ink / sg.h < 0.85) { full = false; break; }
-      if (i === 0) overTop = (sg.y0 - bestS) / pxPerPt;
-      if (i === segs.length - 1) overBot = (bestS + best - sg.y1) / pxPerPt;
-      if (best > runMax) runMax = best;
-      // (c) široký vodorovný útvar na konci tahu = hlava noty / trámec → nožička
-      const step = Math.max(1, Math.round(sg.sp / 4));
-      for (let k = 0; k <= step * 3 && !blob; k++) {
-        const ys = [bestS + k, bestS + best - 1 - k];
-        for (const y of ys) {
-          if (y < 0 || y >= h || isStaffRow[y]) continue;
-          if (hRunAt(mask, w, x, y) >= blobWpx) { blob = true; break; }
-        }
-      }
-      if (blob) break;
-    }
-    if (!full) continue;
-    // (b) přesah nad PRVNÍ a pod POSLEDNÍ osnovou systému (u nožičky chybí)
-    cols.push({ x, overTop, overBot, run: runMax / pxPerPt, blob });
+  if (!chain.length) {
+    return { lines: [], bars: 0, krok, staves: real.length, top, ok: false, opening, closing,
+             reason: 'v téhle osnově jsem nenašel pravidelný sled taktových čar',
+             diag, dbg, cands };
   }
-  // slít sousední sloupce jedné čáry (tlustá čára = 2–4 px)
-  const merged = [];
-  for (const c of cols) {
-    const last = merged[merged.length - 1];
-    if (last && c.x - last.x <= Math.max(2, Math.round(pxPerPt * 1.0))) {
-      if (c.run > last.run) merged[merged.length - 1] = c;
-      continue;
-    }
-    merged.push(c);
-  }
-  // úvodní čára (na okraji systému) — vyhodit, takt 1 má vytištěné číslo
-  let opening = null;
-  const rest = [];
-  for (const c of merged) {
-    if (opening == null && c.x <= openSkip) { opening = c.x / pxPerPt; continue; }
-    rest.push(c);
-  }
-  const want = krok - 1;                     // vnitřní čáry = takty 2..krok
-  const toPt = (c) => c.x / pxPerPt;
-  const candsOf = (arr) => arr.map(c => [+toPt(c).toFixed(1), c.run, c.overTop.toFixed(2), c.overBot.toFixed(2), c.blob ? 1 : 0]);
-  // Přísně: přesah na OBOU koncích. Když to nestačí (některá vydání mají čáry
-  // zarovnané přesně s osnovou), zkusí se totéž bez požadavku na přesah —
-  // hlava noty na konci tahu pořád platí jako důkaz nožičky.
-  const dbg = { group: st.map(s => [+(s.y0 / pxPerPt).toFixed(1), +(s.y1 / pxPerPt).toFixed(1)]),
-                staffLeft: +(staffLeft / pxPerPt).toFixed(1), space: +(spacePx / pxPerPt).toFixed(2),
-                all: real.map(g => [+(g[0] / pxPerPt).toFixed(1), +(g[g.length - 1] / pxPerPt).toFixed(1), g.length]) };
-  const strict = rest.filter(c => !c.blob && c.overTop > 0 && c.overBot > 0);
-  const loose = rest.filter(c => !c.blob);
-  const mode = strict.length >= want ? 'přesah' : (loose.length >= want ? 'bez přesahu' : 'málo');
-  // Špatné číslo je horší než žádné (Jan) — radši chyba s počtem než posun.
-  const pick = (mode === 'přesah' ? strict : loose).slice(0, Math.max(0, want));
-  const lines = pick.map(toPt);
-  const top = (Number.isFinite(opt.offsetY) ? opt.offsetY : 0) + per[group[0]].y0;
-
-  const diag = { thr, staves: group.length, cols: cols.length, merged: merged.length,
-                 opening: opening == null ? null : +opening.toFixed(1), mode,
-                 overshoot: rest.filter(c => c.overTop > 0 && c.overBot > 0).length };
-  if (want < 1) {
-    return { lines: [], bars: 0, krok, staves: group.length, top, ok: false, opening,
-             reason: 'systém o jednom taktu — první takt už číslo má, není co dočíslovat',
-             diag, dbg, cands: candsOf(merged) };
-  }
-  if (lines.length < want) {
-    return { lines, bars: lines.length, krok, staves: group.length, top, ok: false, opening,
-             reason: 'našel jsem jen ' + lines.length + ' z ' + want + ' vnitřních čar',
-             diag, dbg, cands: candsOf(merged) };
-  }
-  return { lines, bars: lines.length, krok, staves: group.length, top, ok: true, thr,
-           opening, diag, mode, dbg, cands: candsOf(merged) };
+  // „Krok“ je jen kontrola: appka takty spočítá sama a případný rozdíl ukáže.
+  const krokBars = krok >= 2 ? krok - 1 : null;
+  return { lines: linesPt, bars, krok, krokBars, staves: real.length, top, ok: true, thr,
+           opening, closing, diag, dbg, mode: 'mřížka', cands };
 }

@@ -932,7 +932,7 @@
          ho uživatel musel pořád schovávat/posouvat — a s ním zmizelo i číslo
          a krok. Tenhle panel drží JEN číslování, je úzký, dá se odtáhnout
          a zmizí s přepnutím nástroje. -->
-    <div v-if="annotMode && !jumpPlaceMode && (tool === 'barnumber' || tool === 'barpick')"
+    <div v-if="annotMode && barnumMode && !jumpPlaceMode && (tool === 'barnumber' || tool === 'barpick')"
          class="barnum-panel" data-panel="barnum" :style="panelStyle('barnum')">
       <div class="bn-head">
         <span class="bn-title">{{ tool === 'barpick' ? 'Lupa na čísla' : 'Čísla taktů' }}</span>
@@ -1043,7 +1043,7 @@
            uživatel nepotvrdí. Vidí čárkované čáry a čísla přímo v notách. -->
       <div class="bn-fill-preview" v-if="barFillPreview">
         <span class="bn-fill-q">{{ barFillPreview.bars }} čísel: {{ barFillPreview.start }}–{{ barFillPreview.start + barFillPreview.bars - 1 }} (1. takt = {{ barFillPreview.first }})</span>
-        <span class="bn-fill-warn" v-if="barFillPreview.seen > barFillPreview.bars + 1">Našel {{ barFillPreview.seen }} čar — zkontroluj Krok</span>
+        <span class="bn-fill-warn" v-if="barFillPreview.mismatch">Krok {{ barFillPreview.krokBars + 1 }} nesedí na {{ barFillPreview.bars }} čar — platí čáry</span>
         <button class="bn-fill-ok" @click="commitBarFill" title="Vložit čísla taktů">Vložit</button>
         <button class="bn-fill-no" @click="cancelBarFill" title="Nic nevkládat">Zrušit</button>
       </div>
@@ -1097,13 +1097,9 @@
           <button class="ap-tool" @click="setTool('note')" :class="{ on: tool === 'note' }" title="Vkládání not (celá, půlová, čtvrťová, osminová, šestnáctinová a pomlky) — v dialogu lze zapnout tečkovaný rytmus">
             <span class="dyn-ico nota-ico">{{ noteGlyph('ctvrt_h').text }}</span>
           </button>
-          <!-- Čísla taktů: klepnutí nad začátek taktu vloží další číslo.
-               Záměrně nástroj, ne automatika — u skenovaných not se počet taktů
-               nedá spolehlivě spočítat, kdežto ruční číslování je přesné všude. -->
-          <button class="ap-tool" @click="setTool('barnumber')" :class="{ on: tool === 'barnumber' }"
-                  title="Čísla taktů — klepni nad začátek taktu, číslo se samo zvýší">
-            <span class="ap-glyph t-glyph">1</span>
-          </button>
+          <!-- Čísla taktů tu ZÁMĚRNĚ NEJSOU (Jan, Nov 2026): okno číslování
+               se otevírá JEN tlačítkem v horní liště a z anotačního panelu
+               se otevírat nesmí. -->
         </div>
       </div>
 
@@ -1546,6 +1542,7 @@ function toggleBarnum() {
   if (barnumMode.value) {
     barnumMode.value = false;
     annotMode.value = false;      // číslování bylo jediný důvod anotace
+    tool.value = 'pencil';        // ať se okno číslování neobjeví v anotaci
     showTopBar();                 // zavření číslování vrací horní lištu
     return;
   }
@@ -2415,8 +2412,8 @@ async function _fillSystemAt(p) {
       + (det.diag ? ' · ' + JSON.stringify(det.diag) : '');
     // Důvod patří i do panelu — hláška na tabletu uteče.
     barPickDiag.value = 'Dočíslování · ' + msg + ' · pdf ' + Math.round(px) + ',' + Math.round(py);
-    showToast(msg + (det.reason && /našel jsem jen/.test(det.reason)
-      ? ' — zkontroluj Krok (počet taktů systému)' : ''), 9000);
+    // Krok tady NENÍ rada — čísla se počítají z čar. Rada je klepnout do osnovy.
+    showToast(msg + ' — klepni přesně do osnovy systému (na noty, ne mezi systémy)', 9000);
     return;
   }
   const first = Math.max(1, Number(barNext.value) || 1);
@@ -2431,18 +2428,25 @@ async function _fillSystemAt(p) {
   // Kolik čar detekce vůbec vidí (může být víc než Krok — koncová čára,
   // ozdoby). Když je o dost víc, je Krok nejspíš špatný a uživatel to musí
   // vidět PŘED vložením; čísla by jinak sedla na špatné takty.
+  // „Krok“ je jen kontrola: appka takty spočítá sama z čar. Když se to s Krokem
+  // rozchází, řekneme to — ale čísla se řídí NALEZENÝMI čarami (Jan: „já
+  // nevěděl, že má vliv, co zadám do Další a Krok“ — nemá).
+  const krokBars = Number.isFinite(det.krokBars) ? det.krokBars : null;
+  const mismatch = krokBars != null && krokBars !== bars;
   const seen = Array.isArray(det.cands) ? det.cands.length : bars;
   barFillPreview.value = {
-    page, first, start: startNum, seen,
+    page, first, start: startNum, seen, bars, mismatch, krokBars,
     items: det.lines.map((x, i) => ({
       text: String(startNum + i), x: (x + 1.5) * s, y: y * s,
     })),
-    bars,
   };
-  _barPickDbg({ preview: { bars, first, start: startNum, y: Math.round(y) } });
-  showToast('Systém ' + (bars + 1) + ' taktů: doplním ' + bars + ' čísel ('
-    + startNum + '–' + (startNum + bars - 1) + '), 1. takt má číslo ' + first
-    + ' — klepni na Vložit, nebo to zruš', 8000);
+  _barPickDbg({ preview: { bars, first, start: startNum, krokBars, y: Math.round(y) } });
+  showToast((mismatch
+      ? 'Našel jsem ' + bars + ' vnitřních čar (takty 2–' + (bars + 1)
+        + '), Krok ' + (krokBars + 1) + ' nesedí — řídím se čarami. '
+      : 'Systém ' + (bars + 1) + ' taktů: ')
+    + 'doplním ' + bars + ' čísel (' + startNum + '–' + (startNum + bars - 1)
+    + '), 1. takt má číslo ' + first + ' — klepni na Vložit, nebo to zruš', 9000);
 }
 // Potvrzení náhledu dočíslování: teprve tady se čísla uloží.
 function commitBarFill() {
