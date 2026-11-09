@@ -5712,8 +5712,12 @@ function pageHits(p) {
   const items = pageItems.value;
   let best = null, bestArea = Infinity;
   for (const it of items) {
-    const b = itemBox(it);
-    if (!b || p.x < b.x || p.y < b.y || p.x > b.x + b.w || p.y > b.y + b.h) continue;
+    let b = itemBox(it);
+    if (!b) continue;
+    // Číslo taktu je drobné (pár px) — prstem by se trefovalo jen naslepo.
+    // V režimu Ruka se mu hit-test zvětší, aby šlo ťuknout a smazat/přesunout.
+    if (it.barNum) b = { x: b.x - 10, y: b.y - 10, w: b.w + 20, h: b.h + 20 };
+    if (p.x < b.x || p.y < b.y || p.x > b.x + b.w || p.y > b.y + b.h) continue;
     const area = b.w * b.h;
     if (area < bestArea) { bestArea = area; best = it; }
   }
