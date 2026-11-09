@@ -1659,6 +1659,13 @@ const BAR_DRAG_MIN = 8;
 // sedí v levém horním rohu označené plochy — přesně tam, kam uživatel táhl.
 // 0,72 = kapitálková výška číslic u system-ui (naměřeno canvasem).
 const BAR_INK_TOP = 0.72;
+// Dolazení proti levému hornímu rohu obdélníku (Jan, Nov 2026: „o malý kousíček
+// výš a hlavně více doprava — číslo začíná lehce před osnovou, mělo by být
+// zarovno s osnovou“). Uživatel táhne obdélník kousek PŘED osnovu, takže číslo
+// pak začínalo před ní. Odsazení doprava (podíl velikosti čísla) ho srovná
+// s začátkem osnovy; nahoru jen 2 px, víc ne (aby neviselo nad obdélníkem).
+const BAR_INK_LEFT = 0.35;
+const BAR_UP = 2;
 // Číslo se nesmí dostat mimo VIDITELNOU plochu — jinak se ořízne
 // (Jan: „místo 177 je vidět jen 77“). Vrstva má viewBox = cropBox, takže když
 // je zapnutý rám (ořez okrajů), platí hranice cropBoxu, ne 0! Anotace položená
@@ -1689,8 +1696,10 @@ function loadBarStyle() {
   try {
     const s = Number(localStorage.getItem('noty.barSize'));
     if (s) barSize.value = clampBarSize(s);
-    const n = Number(localStorage.getItem('noty.barNext'));
-    if (n > 0) barNext.value = Math.round(n);
+    // „Další“ číslo je PER SKLADBA (Jan, Nov 2026: „číslo se přenáší mezi
+    // skladbami, dám jinou skladbu a zůstane 178 z minula“) — načítá se
+    // v loadBarNextForSong(), tady se neřeší.
+
     const st = Number(localStorage.getItem('noty.barStep'));
     if (st > 0) barStep.value = clampBarStep(st);
     barNumsHidden.value = localStorage.getItem('noty.barHidden') === '1';
@@ -1699,7 +1708,6 @@ function loadBarStyle() {
 function saveBarStyle() {
   try {
     localStorage.setItem('noty.barSize', String(barSize.value));
-    localStorage.setItem('noty.barNext', String(barNext.value));
     localStorage.setItem('noty.barStep', String(barStep.value));
     localStorage.setItem('noty.barHidden', barNumsHidden.value ? '1' : '0');
   } catch (e) { /* viz výše */ }
@@ -1708,11 +1716,25 @@ function bumpBarSize(dir) {
   barSize.value = clampBarSize(barSize.value + dir * BAR_SIZE_STEP);
   saveBarStyle();
 }
+// Klíč počítadla je vázaný na skladbu — každá skladba začíná svým číslem
+// (a po otevření jiné skladby tam nesmí zůstat číslo z minulé).
+function barNextKey(id) { return 'noty.barNext.' + (id || 'x'); }
+function loadBarNextForSong() {
+  let n = 1;
+  try {
+    const v = Number(localStorage.getItem(barNextKey(song.id)));
+    if (v > 0) n = Math.round(v);
+  } catch (e) { /* soukromý režim */ }
+  barNext.value = n;
+}
+function saveBarNext() {
+  try { localStorage.setItem(barNextKey(song.id), String(barNext.value)); } catch (e) { /* viz výše */ }
+}
 function bumpBarNext(dir) {
   // Krokem se hýbe i „+“/„−“ u dalšího čísla — jinak by u systému po 4 taktech
   // tlačítko skočilo jen o 1 a muselo by se to doťukávat.
   barNext.value = Math.max(1, barNext.value + dir * barStep.value);
-  saveBarStyle();
+  saveBarNext();
 }
 function bumpBarStep(dir) {
   barStep.value = clampBarStep(barStep.value + dir);
@@ -1726,7 +1748,7 @@ function setBarStep(v) {
 function setBarNext(v) {
   const n = Math.round(Number(v) || 0);
   barNext.value = Math.max(1, n || 1);
-  saveBarStyle();
+  saveBarNext();
 }
 // Obdélník ze dvou bodů (v souřadnicích vrstvy) — používají ho tažení i náhled.
 function barDragBox(a, b) {
@@ -1749,7 +1771,7 @@ function placeBarNumber(x, y) {
     x, y,
   });
   barNext.value = Math.max(1, barNext.value + barStep.value);
-  saveBarStyle();
+  saveBarNext();
   saveAnnotations();
   // Skutečná šířka čísla pro rámeček výběru (stejné měření jako u textu).
   nextTick(() => measureTexts());
@@ -3075,6 +3097,7 @@ onMounted(async () => {
   if (!s) { router.push('/'); return; }
   song.id = s.id; song.data = s.data; song.name = s.name; song.fileName = s.fileName;
   resetBarScan();   // index taktů z PDF patří k předchozí skladbě
+  loadBarNextForSong();   // počítadlo čísel taktů je per skladba
 
   // Načíst skupinu (setlist) z query, pokud je otevřeno přes skupinu
   const gid = router.currentRoute.value.query.group;
@@ -3943,6 +3966,7 @@ async function switchSong(idx, toEnd) {
   // načíst novou skladbu
   song.id = s.id; song.data = s.data; song.name = s.name; song.fileName = s.fileName;
   resetBarScan();   // index taktů z PDF patří k předchozí skladbě
+  loadBarNextForSong();   // každá skladba začíná svým číslem taktu
   groupIndex.value = idx;
   // Uložená zobrazení nové skladby (per-stránková i globální) — vycentruje,
   // nastaví zoom, posun i rotaci
@@ -5292,7 +5316,9 @@ function onLayerUp(e) {
     // Účaří = horní hrana obdélníku + kapitálková výška → číslo sedí v rohu
     // obdélníku (blíž osnově než dřív) a nikdy nevisí nad označenou plochou.
     const size = clampBarSize(barSize.value);
-    const src = dragged ? { x: r.x, y: r.y + Math.round(size * BAR_INK_TOP) } : { x: p2.x, y: p2.y };
+    const src = dragged
+      ? { x: r.x + Math.round(size * BAR_INK_LEFT), y: r.y + Math.round(size * BAR_INK_TOP) - BAR_UP }
+      : { x: p2.x, y: p2.y };
     placeBarNumber(barClampX(src.x), barClampY(src.y, size));
     return;
   }

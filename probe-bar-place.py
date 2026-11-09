@@ -68,16 +68,17 @@ async def main():
         else:
             n = a[0]
             # horní hrana obdélníku na obrazovce = 880; inkoust čísla má začínat tam
-            if not (876 <= n["top"] <= 892):
+            if not (870 <= n["top"] <= 884):
                 fails.append("číslo nesedí u horní hrany obdélníku (top=%s, čekáno ~880)" % n["top"])
-            if abs(n["left"] - 470) > 12:
-                fails.append("číslo není u levé hrany obdélníku (left=%s)" % n["left"])
+            # číslo se posouvá o ~0,35×velikost doprava (zarovno s osnovou)
+            if not (470 < n["left"] <= 486):
+                fails.append("číslo není zarovno s levou hranou obdélníku (left=%s)" % n["left"])
 
         # 2) velký obdélník začínající vysoko nad systémem → i tak sedí u jeho hrany
         await drag(h, 470, 800, 700, 1000)
         a = await texts(h)
         print("po vysokém obdélníku:", a[-1] if a else None)
-        if len(a) < 2 or not (796 <= a[-1]["top"] <= 812):
+        if len(a) < 2 or not (790 <= a[-1]["top"] <= 812):
             fails.append("u vysokého obdélníku číslo nezačíná u jeho horní hrany")
 
         # 3) rám (ořez) + číslo u levého okraje → nesmí se oříznout
