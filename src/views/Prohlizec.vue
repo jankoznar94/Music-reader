@@ -2127,14 +2127,23 @@ async function ocrBarNumberAt(page, p) {
     : 'NEPŘEČTENO') + ' · ' + (_lastBarOcc ? _lastBarOcc.pointerType : '?')
     + ' · p ' + (_lastBarOcc ? _lastBarOcc.layer[0] + ',' + _lastBarOcc.layer[1] : '?')
     + ' → pdf ' + Math.round(px) + ',' + Math.round(py)
+    + (_lastBarOcc && _lastBarOcc.screen ? ' · obraz ' + _lastBarOcc.screen[0] + ',' + _lastBarOcc.screen[1] : '')
+    + (_lastBarOcc && _lastBarOcc.vb ? ' · vb ' + _lastBarOcc.vb[0] + ',' + _lastBarOcc.vb[1]
+        + '/' + _lastBarOcc.vb[2] + '×' + _lastBarOcc.vb[3] : '')
     + ' · shluk ' + (best ? best.cl : 0) + ', komp ' + (_sq.comps == null ? '?' : _sq.comps)
     + ', ink ' + (_sq.inkPct == null ? '?' : _sq.inkPct) + ' %, max ' + (_sq.maxHpt == null ? '?' : _sq.maxHpt) + ' b';
   return best ? parseInt(best.digits, 10) : null;
 }
 const barPickBusy = ref(false);
-async function pickPrintedBarNumber(p, pointerType) {
+async function pickPrintedBarNumber(p, pointerType, ev) {
   const page = currentPage.value;
-  _lastBarOcc = { pointerType: pointerType || '?', layer: [Math.round(p.x), Math.round(p.y)] };
+  const _svb = layerSvgEl.value ? layerSvgEl.value.getAttribute('viewBox') : null;
+  const _srect = layerSvgEl.value ? layerSvgEl.value.getBoundingClientRect() : null;
+  _lastBarOcc = { pointerType: pointerType || '?', layer: [Math.round(p.x), Math.round(p.y)],
+                  screen: ev ? [Math.round(ev.clientX), Math.round(ev.clientY)] : null,
+                  vb: _svb ? _svb.split(/\s+/).map(Number).slice(0, 4) : null,
+                  rect: _srect ? [Math.round(_srect.left), Math.round(_srect.top),
+                                  Math.round(_srect.width), Math.round(_srect.height)] : null };
   // 1) PŘESNÁ cesta: textová vrstva PDF (noty z notačních programů).
   let nums = [];
   try { nums = await pageTextNumbers(page); } catch (e) { nums = []; _barPickDbg({ err: String(e && e.message || e) }); }
@@ -5397,7 +5406,7 @@ function onLayerDown(e) {
   // by propadl do tužkové větve a vytvořil tah.
   if (tool.value === 'barpick') {
     _activePointerId = null;
-    pickPrintedBarNumber(p, e && e.pointerType).catch(() => {});
+    pickPrintedBarNumber(p, e && e.pointerType, e).catch(() => {});
     _prev = p;
     return;
   }
