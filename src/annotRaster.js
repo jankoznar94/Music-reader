@@ -31,6 +31,8 @@ function roundRect(ctx, r) {
  *   displayText   (it) => znak glyfu pro dynamiku/značku/notu
  *   borderRects   (it) => [{x,y,width,height,dash}] rámečky textové anotace
  *   noteStroke    (it) => tloušťka tahu noty
+ *   noteDot       (it) => {cx, cy, r} tečka tečkovaného rytmu (NEzrcadlená —
+ *                        zrcadlení už je v ctx), nebo null
  */
 export function renderAnnotationLayer(canvas, items, opts) {
   const w = Math.max(1, Math.round(opts.w));
@@ -39,6 +41,9 @@ export function renderAnnotationLayer(canvas, items, opts) {
   const displayText = opts.displayText || ((it) => it.text || '');
   const borderRects = opts.borderRects || (() => []);
   const noteStroke = opts.noteStroke || (() => 0);
+  // Tečka tečkovaného rytmu (font ji nemá) — kreslí se kruhem jako v SVG.
+  // Souřadnice jsou NEzrcadlené: zrcadlení noty už řeší transformace ctx níž.
+  const noteDot = opts.noteDot || (() => null);
   // Zrcadlení noty ve svislé ose NENÍ jen geometrie: u not, které mají
   // v fontu obrácenou variantu (NOTE_DIR_SWAP), je směr už v glyfu a flipY
   // se geometricky neprojeví. Rozhoduje o tom Prohlížeč → callback.
@@ -130,8 +135,19 @@ export function renderAnnotationLayer(canvas, items, opts) {
           ctx.lineWidth = sw;
           ctx.strokeText(ch, it.x, it.y);
         }
+        ctx.fillText(ch, it.x, it.y);
+        // Tečka tečkovaného rytmu: stejný tah i výplň jako nota, aby vypadala
+        // jako součást glyfu (a stejně jako na obrazovce).
+        const d = noteDot(it);
+        if (d) {
+          ctx.beginPath();
+          ctx.arc(d.cx, d.cy, d.r, 0, Math.PI * 2);
+          if (sw > 0) { ctx.lineWidth = sw; ctx.stroke(); }
+          ctx.fill();
+        }
+      } else {
+        ctx.fillText(ch, it.x, it.y);
       }
-      ctx.fillText(ch, it.x, it.y);
     } else if (it.tool === 'crescendo' || it.tool === 'decrescendo') {
       ctx.strokeStyle = it.color;
       ctx.lineWidth = it.width || 2;

@@ -364,19 +364,29 @@
           <!-- Značky pro výšky not (posuvky, ozdoby, artikulace) a VLOŽENÉ NOTY —
                stejný princip jako dynamika: klepnutím na dlaždici se glyf položí na
                noty. Nota se kreslí týmž prvkem i ukotvením (střed = místo klepnutí). -->
-          <text
+          <g
             v-else-if="it.tool === 'mark' || it.tool === 'note'"
-            :x="it.x" :y="it.y"
-            :transform="noteFlipTransform(it)"
-            :fill="it.color"
-            :stroke="it.tool === 'note' ? it.color : 'none'"
-            :stroke-width="noteStroke(it)"
-            paint-order="stroke"
-            :font-size="it.size"
-            font-family="'NotyDyn', serif"
             :opacity="it.opacity != null ? it.opacity : 1"
-            text-anchor="middle"
-          >{{ annotDisplayText(it) }}</text>
+          >
+            <text
+              :x="it.x" :y="it.y"
+              :transform="noteFlipTransform(it)"
+              :fill="it.color"
+              :stroke="it.tool === 'note' ? it.color : 'none'"
+              :stroke-width="noteStroke(it)"
+              paint-order="stroke"
+              :font-size="it.size"
+              font-family="'NotyDyn', serif"
+              text-anchor="middle"
+            >{{ annotDisplayText(it) }}</text>
+            <!-- Tečka tečkovaného rytmu — font ji neobsahuje, kreslí se jako kruh
+                 stejnou barvou a stejným ztlustňujícím tahem jako nota. -->
+            <circle
+              v-if="noteDot(it)"
+              :cx="noteDot(it).cx" :cy="noteDot(it).cy" :r="noteDot(it).r"
+              :fill="it.color" :stroke="it.color" :stroke-width="noteStroke(it)"
+            />
+          </g>
           <!-- Crescendo (otvírá se vpravo) / decrescendo (otvírá se vlevo) -->
           <!-- Uložený klín: špička (x1,y1), dvě ramena (x2,y2) a (x3,y3). ŽÁDNÁ středová čára. -->
           <g v-else-if="it.tool === 'crescendo' || it.tool === 'decrescendo'"
@@ -398,16 +408,24 @@
             :x1="activeItem.x1" :y1="activeItem.y1" :x2="activeItem.x2" :y2="activeItem.y2"
             :stroke="activeItem.color" :stroke-width="activeItem.width" stroke-linecap="round" />
           <!-- Dynamika / značka: náhled budoucího glyfu (text zatím prázdný → tečka), ať uživatel vidí, co dostane -->
-          <text
+          <g
             v-else-if="isNotationText(activeItem) && activeItem.text"
-            :x="activeItem.x" :y="activeItem.y"
-            :transform="noteFlipTransform(activeItem)"
-            :fill="activeItem.color"
-            :font-size="activeItem.size"
-            font-family="'NotyDyn', serif"
             :opacity="activeItem.opacity != null ? activeItem.opacity : 1"
-            text-anchor="middle"
-          >{{ annotDisplayText(activeItem) }}</text>
+          >
+            <text
+              :x="activeItem.x" :y="activeItem.y"
+              :transform="noteFlipTransform(activeItem)"
+              :fill="activeItem.color"
+              :font-size="activeItem.size"
+              font-family="'NotyDyn', serif"
+              text-anchor="middle"
+            >{{ annotDisplayText(activeItem) }}</text>
+            <circle
+              v-if="noteDot(activeItem)"
+              :cx="noteDot(activeItem).cx" :cy="noteDot(activeItem).cy" :r="noteDot(activeItem).r"
+              :fill="activeItem.color"
+            />
+          </g>
           <!-- Text: náhled rámečku už při umísťování — uživatel vidí čtverec
                ještě předtím, než napíše text (jinak by „border“ objevil až po uložení). -->
           <g v-else-if="activeItem.tool === 'text'">
@@ -895,7 +913,7 @@
           <button class="ap-tool" @click="setTool('mark')" :class="{ on: tool === 'mark' }" title="Značky pro výšky not (béčko, odrážka, křížek, ozdoby...)">
             <span class="dyn-ico">{{ markGlyph('k').text }}</span>
           </button>
-          <button class="ap-tool" @click="setTool('note')" :class="{ on: tool === 'note' }" title="Vkládání not (celá, půlová, čtvrťová, osminová, šestnáctinová a pomlky)">
+          <button class="ap-tool" @click="setTool('note')" :class="{ on: tool === 'note' }" title="Vkládání not (celá, půlová, čtvrťová, osminová, šestnáctinová a pomlky) — v dialogu lze zapnout tečkovaný rytmus">
             <span class="dyn-ico nota-ico">{{ noteGlyph('ctvrt_h').text }}</span>
           </button>
         </div>
@@ -1023,6 +1041,13 @@
            se musela smazat a vložit znovu. Vlastní řádek = čipy neodsouvají koš. -->
       <div v-if="editingAnnot && editingAnnot.tool === 'note'"
            class="eb-row eb-row-frame">
+        <span class="eb-size">Rytmus</span>
+        <button class="eb-chip" :class="{ on: !!editingAnnot.dot }"
+                @click="toggleNoteDot(editingAnnot)"
+                title="Tečkovaný rytmus — čtvrtka s tečkou, půlka s tečkou…">Tečka</button>
+      </div>
+      <div v-if="editingAnnot && editingAnnot.tool === 'note'"
+           class="eb-row eb-row-frame">
         <span class="eb-size">Zrcadlení</span>
         <button class="eb-chip" :class="{ on: !!editingAnnot.flipX }"
                 @click="toggleNoteFlip(editingAnnot, 'x')"
@@ -1134,6 +1159,12 @@
           </span>
         </div>
 
+        <div v-if="editingAnnotTool === 'note'" class="ti-row">
+          <span class="ti-size-label">Tečka</span>
+          <button class="ti-toggle" :class="{ on: noteDotDraft }" @click="toggleNoteDotDraft()"
+                  title="Tečkovaný rytmus — čtvrtka s tečkou, půlka s tečkou…">Tečkovaný rytmus</button>
+        </div>
+
         <!-- Zrcadlení noty PŘED vložením — vodorovně (nožička i praporek na druhou
              stranu) i svisle (nožička nahoru/dolů). Zrcadlí se KOLEM UKOTVENÍ, takže
              hlavička zůstane přesně v místě klepnutí. Volba se NEPAMATUJE: zrcadlení
@@ -1222,8 +1253,8 @@
         <span v-if="editingAnnotTool === 'note' && annotTextDraft.trim() && !noteGlyph(annotTextDraft).known" class="ti-warn">
           Tuhle notu font nezná — vyber ji z nabídky výše.
         </span>
-        <span v-else-if="editingAnnotTool === 'note' && noteLabel(annotTextDraft)" class="ti-note">
-          {{ noteLabel(annotTextDraft) }}
+        <span v-else-if="editingAnnotTool === 'note' && noteLabel(annotTextDraft, noteDotDraft)" class="ti-note">
+          {{ noteLabel(annotTextDraft, noteDotDraft) }}
         </span>
 
         <div class="ti-actions">
@@ -1543,6 +1574,10 @@ function bumpNoteSize(dir) {
 // noty, ne skladby, takže další nota začíná nezrcadlená.
 const noteFlipX = ref(false);
 const noteFlipY = ref(false);
+// Tečka (tečkovaný rytmus) je VLASTNOST NOTY, stejně jako zrcadlení — volba se
+// proto nepamatuje pro další vložení (jinak by uživatel jednou tečkovanou notou
+// „nakazil“ všechny další). Do dat se ukládá jako `dot: true`.
+const noteDotDraft = ref(false);
 // Transformace pro SVG <text>: měřítko kolem ukotvení (translate → scale → zpět).
 // Bez zrcadlení vrací undefined, aby se atribut vůbec nevypsal.
 // Svisle se u not s nožičkou překlápí VÝMĚNOU GLYFU (viz NOTE_DIR_SWAP), takže
@@ -1568,6 +1603,22 @@ function toggleFlip(axis) {
     it.flipX = noteFlipX.value;
     it.flipY = noteFlipY.value;
   }
+}
+// Přepnutí tečky v dialogu (před vložením). Propíše se i do rozpracované noty,
+// aby náhled na stránce ukazoval totéž co náhled v dialogu.
+function toggleNoteDotDraft() {
+  noteDotDraft.value = !noteDotDraft.value;
+  const it = activeItem.value;
+  if (it && it.tool === 'note' && editingAnnotationId.value === it.id) {
+    it.dot = noteDotDraft.value;
+  }
+}
+// Přepnutí tečky u UŽ VLOŽENÉ noty (pás úprav nástroje Ruka).
+function toggleNoteDot(it) {
+  if (!it || it.tool !== 'note') return;
+  it.dot = !it.dot;
+  noteDotDraft.value = !!it.dot;
+  saveAnnotations();
 }
 // Přepnutí zrcadlení u UŽ VLOŽENÉ noty (pás úprav nástroje Ruka).
 function toggleNoteFlip(it, axis) {
@@ -1758,27 +1809,34 @@ const NOTE_GROUPS = [
     // varianty. Stačí možnost to otočit.“ Varianty „_d“ proto zůstávají v datech
     // (kvůli UŽ ULOŽENÝM notám a kvůli výměně glyfu při svislém zrcadlení), ale
     // dlaždici nedostanou (`hide`).
+    // `dotAt` = poloha tečky pro TEČKOVANÝ rytmus v em: [dx, dy] od ukotvení
+    // (dx vpravo od středu, dy NAD účařím). Font NotyDyn tečku jako glyf nemá
+    // (změřeno: v cmap nejsou U+E1E7 ani jiné tečky), takže se kreslí kruhem
+    // vedle noty. dx u not vychází z PRAVÉHO OKRAJE HLAVIČKY (ne z celého glyfu) —
+    // u osminové noty sahá box až za praporek, tečka ale patří hned za hlavičku.
     label: 'Noty',
     items: [
-      { key: 'cela',     label: 'celá nota',              cp: 0xE1D2, adv: 0.4590, box: [0.0000, 0.4590, -0.1370, 0.1360] },
-      { key: 'pulova_h', label: 'půlová nota',            cp: 0xE1D3, adv: 0.3410, box: [0.0000, 0.3410, -0.1450, 0.8750] },
-      { key: 'ctvrt_h',  label: 'čtvrťová nota',          cp: 0xE1D5, adv: 0.3320, box: [0.0000, 0.3320, -0.1410, 0.8750] },
-      { key: 'osm_h',    label: 'osminová nota',          cp: 0xE1D7, adv: 0.5660, box: [0.0000, 0.5660, -0.1380, 0.8730] },
-      { key: 'sestn_h',  label: 'šestnáctinová nota',     cp: 0xE1D9, adv: 0.5810, box: [0.0000, 0.5810, -0.1380, 0.8730] },
-      { key: 'pulova_d', label: 'půlová nota (dolů)',     cp: 0xE1D4, adv: 0.3410, box: [0.0000, 0.3410, -0.8750, 0.1450], hide: true },
-      { key: 'ctvrt_d',  label: 'čtvrťová nota (dolů)',   cp: 0xE1D6, adv: 0.3320, box: [0.0000, 0.3320, -0.8750, 0.1410], hide: true },
-      { key: 'osm_d',    label: 'osminová nota (dolů)',   cp: 0xE1D8, adv: 0.3320, box: [0.0000, 0.3320, -0.8820, 0.1410], hide: true },
-      { key: 'sestn_d',  label: 'šestnáctinová nota (dolů)', cp: 0xE1DA, adv: 0.3320, box: [0.0000, 0.3320, -0.8830, 0.1410], hide: true },
+      { key: 'cela',     label: 'celá nota',              cp: 0xE1D2, adv: 0.4590, box: [0.0000, 0.4590, -0.1370, 0.1360], dotAt: [0.4300, 0.0000] },
+      { key: 'pulova_h', label: 'půlová nota',            cp: 0xE1D3, adv: 0.3410, box: [0.0000, 0.3410, -0.1450, 0.8750], dotAt: [0.3700, 0.0000] },
+      { key: 'ctvrt_h',  label: 'čtvrťová nota',          cp: 0xE1D5, adv: 0.3320, box: [0.0000, 0.3320, -0.1410, 0.8750], dotAt: [0.3700, 0.0000] },
+      { key: 'osm_h',    label: 'osminová nota',          cp: 0xE1D7, adv: 0.5660, box: [0.0000, 0.5660, -0.1380, 0.8730], dotAt: [0.3700, 0.0000] },
+      { key: 'sestn_h',  label: 'šestnáctinová nota',     cp: 0xE1D9, adv: 0.5810, box: [0.0000, 0.5810, -0.1380, 0.8730], dotAt: [0.3700, 0.0000] },
+      { key: 'pulova_d', label: 'půlová nota (dolů)',     cp: 0xE1D4, adv: 0.3410, box: [0.0000, 0.3410, -0.8750, 0.1450], hide: true, dotAt: [0.3700, 0.0000] },
+      { key: 'ctvrt_d',  label: 'čtvrťová nota (dolů)',   cp: 0xE1D6, adv: 0.3320, box: [0.0000, 0.3320, -0.8750, 0.1410], hide: true, dotAt: [0.3700, 0.0000] },
+      { key: 'osm_d',    label: 'osminová nota (dolů)',   cp: 0xE1D8, adv: 0.3320, box: [0.0000, 0.3320, -0.8820, 0.1410], hide: true, dotAt: [0.3700, 0.0000] },
+      { key: 'sestn_d',  label: 'šestnáctinová nota (dolů)', cp: 0xE1DA, adv: 0.3320, box: [0.0000, 0.3320, -0.8830, 0.1410], hide: true, dotAt: [0.3700, 0.0000] },
     ],
   },
   {
+    // U pomlk sedí tečka v MEZEŘE NAD pomlkou (jako v notovém písmě), proto
+    // dy = horní okraj otisku + půl notové mezery (0,125 em).
     label: 'Pomlky',
     items: [
-      { key: 'poml_cela',  label: 'pomlka celá',          cp: 0xE4E3, adv: 0.2830, box: [0.0000, 0.2820, -0.1350, 0.0090] },
-      { key: 'poml_pul',   label: 'pomlka půlová',        cp: 0xE4E4, adv: 0.2830, box: [0.0000, 0.2820, -0.0020, 0.1420] },
-      { key: 'poml_ctvrt', label: 'pomlka čtvrťová',      cp: 0xE4E5, adv: 0.2700, box: [0.0010, 0.2700, -0.3750, 0.3730] },
-      { key: 'poml_osm',   label: 'pomlka osminová',      cp: 0xE4E6, adv: 0.2500, box: [0.0000, 0.2470, -0.2510, 0.1740] },
-      { key: 'poml_sestn', label: 'pomlka šestnáctinová', cp: 0xE4E7, adv: 0.3200, box: [0.0000, 0.3200, -0.5000, 0.1790] },
+      { key: 'poml_cela',  label: 'pomlka celá',          cp: 0xE4E3, adv: 0.2830, box: [0.0000, 0.2820, -0.1350, 0.0090], dotAt: [0.3400, 0.1340] },
+      { key: 'poml_pul',   label: 'pomlka půlová',        cp: 0xE4E4, adv: 0.2830, box: [0.0000, 0.2820, -0.0020, 0.1420], dotAt: [0.3400, 0.2670] },
+      { key: 'poml_ctvrt', label: 'pomlka čtvrťová',      cp: 0xE4E5, adv: 0.2700, box: [0.0010, 0.2700, -0.3750, 0.3730], dotAt: [0.3350, 0.4980] },
+      { key: 'poml_osm',   label: 'pomlka osminová',      cp: 0xE4E6, adv: 0.2500, box: [0.0000, 0.2470, -0.2510, 0.1740], dotAt: [0.3250, 0.2990] },
+      { key: 'poml_sestn', label: 'pomlka šestnáctinová', cp: 0xE4E7, adv: 0.3200, box: [0.0000, 0.3200, -0.5000, 0.1790], dotAt: [0.3600, 0.3040] },
     ],
   },
 ];
@@ -1811,9 +1869,33 @@ function noteGlyphFor(raw, flipY) {
   return { text: String.fromCodePoint(it.cp), known: true };
 }
 function noteGlyph(raw) { return noteGlyphFor(raw, false); }
-function noteLabel(raw) {
+function noteLabel(raw, dot) {
   const it = NOTE_LOOKUP.get(String(raw || '').trim().toLowerCase());
-  return it ? it.label : '';
+  if (!it) return '';
+  return dot ? `${it.label} s tečkou` : it.label;
+}
+// --- Tečkovaný rytmus -------------------------------------------------------
+// Notační font tečku neobsahuje (změřeno: cmap nemá U+E1E7 ani jinou tečku),
+// takže se tečka kreslí jako KRUH ve stejné barvě a se stejným ztlustňujícím
+// tahem jako nota — výsledek vypadá jako součást glyfu. Poloha je v datech
+// (`dotAt`), takže dlaždice, náhled, kreslení, výběr i vypálení do PDF počítají
+// z jednoho čísla.
+const NOTE_DOT_R_EM = 0.1;
+function noteDotRaw(it) {
+  if (!it || it.tool !== 'note' || !it.dot) return null;
+  const n = NOTE_LOOKUP.get(noteEffKey(it.text, it.flipY));
+  if (!n || !n.dotAt || it.x == null || it.y == null) return null;
+  const s = it.size || noteSize.value;
+  return { cx: it.x + n.dotAt[0] * s, cy: it.y - n.dotAt[1] * s, r: NOTE_DOT_R_EM * s };
+}
+// Tečka jako v SVG: zrcadlí se stejně jako nota, aby u překlopené noty
+// (vodorovně i svisle) zůstala na správné straně.
+function noteDot(it) {
+  const d = noteDotRaw(it);
+  if (!d) return null;
+  if (it.flipX) d.cx = 2 * it.x - d.cx;
+  if (noteMirrorY(it)) d.cy = 2 * it.y - d.cy;
+  return d;
 }
 // Rámeček výběru i hit-test pro notu: SKUTEČNÉ obrysové meze glyfu z fontu.
 // Kreslí se s text-anchor="middle", takže počátek glyfu leží o půl šířky VLEVO
@@ -1834,6 +1916,15 @@ function noteInkBox(it) {
   // i hit-test zůstaly na NEzrcadlené straně a nota by se „dala vybrat jen jinde“.
   if (it.flipX) { const a = 2 * it.x - x1; x1 = 2 * it.x - x0; x0 = a; }
   if (noteMirrorY(it)) { const a = 2 * it.y - y1; y1 = 2 * it.y - y0; y0 = a; }
+  // Tečka tečkovaného rytmu leží VEDLE noty — musí být uvnitř rámečku výběru
+  // i klikatelné plochy, jinak by se dala „vybrat jen za notu“.
+  const d = noteDot(it);
+  if (d) {
+    if (d.cx - d.r < x0) x0 = d.cx - d.r;
+    if (d.cx + d.r > x1) x1 = d.cx + d.r;
+    if (d.cy - d.r < y0) y0 = d.cy - d.r;
+    if (d.cy + d.r > y1) y1 = d.cy + d.r;
+  }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 // Dlaždice noty se musí vycentrovat na CELÝ OTISK noty, ne na účaří (Jan: „obrázky
@@ -4595,7 +4686,7 @@ function onLayerDown(e) {
   if (isTextAnnot(tool.value)) {
     // Nová nota začíná NEZRCADLENÁ — zrcadlení je vlastnost jedné noty, ne skladby
     // (na rozdíl od velikosti, ta se pamatuje). Drží to `noteFlipX/Y` z dialogu.
-    if (tool.value === 'note') { noteFlipX.value = false; noteFlipY.value = false; }
+    if (tool.value === 'note') { noteFlipX.value = false; noteFlipY.value = false; noteDotDraft.value = false; }
     activeItem.value = {
       id: crypto.randomUUID(), page: currentPage.value,
       tool: tool.value,
@@ -4616,6 +4707,7 @@ function onLayerDown(e) {
       // Zrcadlení nese jen nota (viz noteFlipX/Y a toggleFlip).
       flipX: tool.value === 'note' ? noteFlipX.value : undefined,
       flipY: tool.value === 'note' ? noteFlipY.value : undefined,
+      dot: tool.value === 'note' ? false : undefined,
       x: p.x, y: p.y, text: '',
       pending: true,   // po uvolnění otevře vstup
     };
@@ -5033,6 +5125,7 @@ async function confirmTextAnnot(withHand = false) {
       it.size = noteSize.value;
       it.flipX = noteFlipX.value;
       it.flipY = noteFlipY.value;
+      it.dot = !!noteDotDraft.value;
       saveNoteSize();
     }
   }
@@ -5337,6 +5430,7 @@ function editText(it) {
     noteSizeDraft.value = clampNoteSize(it.size || noteSize.value);
     noteFlipX.value = !!it.flipX;
     noteFlipY.value = !!it.flipY;
+    noteDotDraft.value = !!it.dot;
   }
   editingTextSize.value = it.tool === 'text' ? clampTextSize(it.size || 20) : null;
   editingAnnotationId.value = it.id;
@@ -5693,6 +5787,8 @@ const shareHelpers = {
   borderRects: textBorderRects,
   noteStroke,
   noteFlipY: noteMirrorY,
+  // NEzrcadlená tečka — zrcadlení řeší canvas sám (jako u noty).
+  noteDot: noteDotRaw,
 };
 async function exportPdf(kind) {
   if (exporting.value) return;
