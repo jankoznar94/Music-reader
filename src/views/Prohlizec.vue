@@ -994,8 +994,16 @@
           <button class="ap-size" @click="bumpBarSize(-1)" title="Menší číslo">−</button>
           <span class="ap-bar-val">{{ barSize }}</span>
           <button class="ap-size" @click="bumpBarSize(1)" title="Větší číslo">+</button>
+          <!-- U not, kde jsou čísla taktů UŽ VYTISKnutá, se vložené číslo jen
+               schová — slouží pro skok na takt a na papíře nic nezdvojuje.
+               Vidět (a smazat) je jen v režimu Ruka. -->
+          <button class="ap-size bar-hidden" @click="toggleBarNumsHidden" :class="{ on: barNumsHidden }"
+                  title="Vložená čísla taktů jen pro skok na takt — v notách je nevidět (pro noty s vytištěnými čísly)">
+            <span>{{ barNumsHidden ? 'Čísla: skrytá' : 'Čísla: viditelná' }}</span>
+          </button>
         </div>
         <div class="ap-hint">Tažením označ takt nebo celý systém — číslo se doplní do levého horního rohu. Klepnutí položí číslo pod prst.</div>
+        <div class="ap-hint" v-if="barNumsHidden">Čísla jsou v notách skrytá — slouží jen ke skoku na takt (pro noty s vytištěnými čísly). Přepínač je zase zobrazí.</div>
       </div>
 
       <!-- Kategorie: Styl -->
@@ -1632,6 +1640,14 @@ const barSize = ref(16);     // velikost čísla (menší než běžný text —
 // takže se číslo dává jen na začátek každého systému (krok 4 → 1, 5, 9, 13…).
 const BAR_STEP_MIN = 1, BAR_STEP_MAX = 64;
 const barStep = ref(1);
+// SKRYTÁ ČÍSLA (Jan, Nov 2026): u not, kde jsou čísla taktů už VYTISKNUTÁ, by
+// se ruční číslo na papíře zdvojilo. Skryté číslo se nekreslí (jen v režimu
+// Ruka), ale do indexu pro skok na takt patří stejně jako viditelné.
+const barNumsHidden = ref(false);
+function toggleBarNumsHidden() {
+  barNumsHidden.value = !barNumsHidden.value;
+  saveBarStyle();
+}
 // Náhled obdélníku při označování taktu/systému (ref px vrstvy).
 const barDragRect = ref(null);
 // Meze tahu, od kterých se počítá „tažení“ (menší = klepnutí s chvěním prstu).
@@ -1655,6 +1671,7 @@ function loadBarStyle() {
     if (n > 0) barNext.value = Math.round(n);
     const st = Number(localStorage.getItem('noty.barStep'));
     if (st > 0) barStep.value = clampBarStep(st);
+    barNumsHidden.value = localStorage.getItem('noty.barHidden') === '1';
   } catch (e) { /* soukromý režim — jede se s výchozími hodnotami */ }
 }
 function saveBarStyle() {
@@ -1662,6 +1679,7 @@ function saveBarStyle() {
     localStorage.setItem('noty.barSize', String(barSize.value));
     localStorage.setItem('noty.barNext', String(barNext.value));
     localStorage.setItem('noty.barStep', String(barStep.value));
+    localStorage.setItem('noty.barHidden', barNumsHidden.value ? '1' : '0');
   } catch (e) { /* viz výše */ }
 }
 function bumpBarSize(dir) {
@@ -2905,7 +2923,13 @@ const penOnly = ref(true);        // v anotaci kreslit jen perem (ignorovat doty
 
 // Rozměry a stránka
 
-const pageItems = computed(() => annotations.value.items.filter(i => i.page === currentPage.value));
+// Skrytá čísla taktů (`hidden`) existují jen kvůli SKOKU NA TAKT — na papíře
+// už tištěná čísla jsou, takže by se zdvojovala. Kreslí se jen v režimu Ruka,
+// aby se dala zkontrolovat, přesunout nebo smazat; jinde nejsou vidět ani
+// je nejde chytit (pageHits jde přes pageItems).
+const pageItems = computed(() => annotations.value.items.filter(i =>
+  i.page === currentPage.value
+  && (!(i.barNum && barNumsHidden.value) && !i.hidden || tool.value === 'edit')));
 
 // Skoky, které začínají na aktuální stránce
 const currentJumps = computed(() => jumps.value.filter(j => j.fromPage === currentPage.value));
@@ -6038,7 +6062,11 @@ async function exportPdf(kind) {
       // o průběhu to vypadá, že se nic neděje — a když se dřív zasekl `toBlob`,
       // tlačítko zůstalo šedé bez jakékoli zprávy.
       const out = await withTimeout(share.exportBurnedPdf(bytes, {
-        items: annotations.value.items,
+        // Skrytá čísla taktů se do PDF nevypalují — v notách už vytištěná
+        // čísla jsou a zdvojila by se (index pro skok je drží dál).
+        items: barNumsHidden.value
+          ? annotations.value.items.filter(it => !(it.barNum && barNumsHidden.value) && !it.hidden)
+          : annotations.value.items,
         ref: annotRefStamp(),
         helpers: shareHelpers,
         payload,
@@ -7663,6 +7691,13 @@ async function deleteBookmark(b) {
 .ap-bar-next::-webkit-outer-spin-button,
 .ap-bar-next::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ap-bar-val { font-size: 0.9rem; color: var(--text); min-width: 26px; text-align: center; }
+/* Přepínač „Skrytá / Viditelná“ — plochý, jen rámeček jako ostatní ovládání. */
+.bar-hidden {
+  width: auto; min-width: 96px; padding: 0 10px; border-radius: 10px;
+}
+.bar-hidden span { font-size: 0.82rem; color: var(--text); line-height: 1; }
+.bar-hidden.on { border-color: var(--accent); }
+.bar-hidden.on span { color: var(--accent); }
 .ap-hint { font-size: 0.72rem; color: var(--text-dim); line-height: 1.35; padding: 2px 2px 0; }
 .ap-delpage { font-size: 0.55rem; font-weight: 700; margin-left: 1px; }
 

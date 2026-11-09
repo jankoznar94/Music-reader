@@ -188,7 +188,9 @@ export async function burnOverlayIntoPdf(pdfBytes, opts) {
   const jobs = [];
   if (items.length) {
     for (let i = 0; i < pages.length; i++) {
-      const pageItems = items.filter((x) => x && x.page === i);
+      // Skrytá čísla taktů se do PDF NEVYPALUJÍ — slouží jen ke skoku na takt
+      // a v notách už tištěná čísla jsou, takže by se zdvojila.
+      const pageItems = items.filter((x) => x && x.page === i && !x.hidden);
       if (pageItems.length) jobs.push({ index: i, pageItems });
     }
   }
