@@ -20,7 +20,7 @@ CASES = [(2, 67.1, 515.2, 9), (6, 74.2, 345.2, 47), (6, 75.8, 662.9, 52),
 TO_SCREEN = """(() => { const svg=document.querySelector('.annot-layer');
   const vb=(svg.getAttribute('viewBox')||'0 0 1 1').split(/\\s+/).map(Number);
   const s=%f/595.2; const g=svg.getScreenCTM();
-  const p=new DOMPoint(%f + %f*s, %f + %f*s).matrixTransform(g);
+  const p=new DOMPoint(%f*s, %f*s).matrixTransform(g);
   return JSON.stringify({x:p.x,y:p.y}); })()"""
 
 
@@ -69,7 +69,7 @@ async def run(h, REF_W, label, zoom_clicks, enable_frame=True):
         await ensure_tool(h, page)
         vb = [float(v) for v in (await h.ev(
             "document.querySelector('.annot-layer').getAttribute('viewBox')")).split()]
-        pt = json.loads(await h.ev(TO_SCREEN % (REF_W, vb[0], px, vb[1], py)))
+        pt = json.loads(await h.ev(TO_SCREEN % (REF_W, px, py)))
         hit = await h.ev("""(() => { const el=document.elementFromPoint(%f,%f);
             return el ? String(el.className && el.className.baseVal !== undefined ?
             el.className.baseVal : el.className) : 'null'; })()""" % (pt["x"], pt["y"]))

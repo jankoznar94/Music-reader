@@ -33,7 +33,7 @@ CASES = [
 TO_SCREEN = """(() => { const svg=document.querySelector('.annot-layer');
   const vb=(svg.getAttribute('viewBox')||'0 0 1 1').split(/\\s+/).map(Number);
   const s=%f/595.2; const g=svg.getScreenCTM();
-  const p=new DOMPoint(%f + %f*s, %f + %f*s).matrixTransform(g);
+  const p=new DOMPoint(%f*s, %f*s).matrixTransform(g);
   return JSON.stringify({x:p.x,y:p.y}); })()"""
 
 HIT = """(() => { const el=document.elementFromPoint(%f,%f);
@@ -90,7 +90,7 @@ async def main():
             await ensure_tool(h, page)
             vb = [float(v) for v in (await h.ev(
                 "document.querySelector('.annot-layer').getAttribute('viewBox')")).split()]
-            pt = json.loads(await h.ev(TO_SCREEN % (REF_W, vb[0], px, vb[1], py)))
+            pt = json.loads(await h.ev(TO_SCREEN % (REF_W, px, py)))
             hit = await h.ev(HIT % (pt["x"], pt["y"]))
             n0 = int(await h.ev("JSON.stringify((window.__barPickDbg||[]).length)"))
             await h.finger_tap(pt["x"], pt["y"], r=10)

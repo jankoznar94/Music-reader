@@ -28,7 +28,7 @@ TO_SCREEN = """(() => { const svg=document.querySelector('.annot-layer');
   const vb=(svg.getAttribute('viewBox')||'0 0 1 1').split(/\\s+/).map(Number);
   const s=vb[2]/595.2;
   const g=svg.getScreenCTM();
-  const p=new DOMPoint(vb[0]+%f*s, vb[1]+%f*s).matrixTransform(g);
+  const p=new DOMPoint(%f*s, %f*s).matrixTransform(g);
   return JSON.stringify({x:p.x,y:p.y,vb:vb,s:s}); })()"""
 
 

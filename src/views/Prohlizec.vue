@@ -1997,6 +1997,7 @@ const barPickDiag = ref('');
 // vybrat — index se vloží na místo původního klepnutí.
 const barPickChoice = ref(null);   // { nums:['15','153'], page, x, y }
 let _lastBarChoice = null;         // poslední nabídka z OCR (pro pickPrintedBarNumber)
+let _lastBarMap = '';              // kterým přepočtem klepnutí se nakonec četlo
 let _lastBarOcc = null;   // odkud klepnutí přišlo (prst/pero) a v jakých souřadnicích
 function _barPickDbg(info) {
   // Diagnostická stopa (jako __navdbg u dotyků) — bez ní je „lupa nic nenašla“
@@ -2048,37 +2049,96 @@ function addBarIndex(page, n, x, y, src) {
 const OCR_REGION_W = 100;   // body PDF — okolí klepnutí, kde se číslice hledají
 const OCR_REGION_H = 70;
 const OCR_PPT = 12;         // PIXELY canvasu na PDF bod (nezávisle na dpr)
+// Poslední vykreslení stránky: který výřez v BODECH PDF je na plátně vidět.
+// Je to NEZÁVISLÝ zdroj pravdy pro přepočet klepnutí → PDF body (SVG matice
+// se na některých zařízeních chová jinak než na desktopu a s ořezem pak lupа
+// hledá o desítky bodů vedle — Jan: „s ořezem to čísla stále nebere“).
+let _pageRender = null;   // { page, cropPt }
+// Kandidátní přepočty klepnutí na body PDF, od nejvěrohodnějšího. Lupa je
+// VYZKOUŠÍ NA OBRAZE (najde v okolí číslice?) a použije ten, který trefí —
+// místo aby slepě věřila jednomu vzorci. Tři vzorce, tři možné poruchy:
+//   1) `vrstva`  = (p − cropBox)/s … správně na desktopu i v headless Chromu,
+//   2) `plátno`  = poloha klepnutí vůči vykreslené bitmapě (SVG se nepoužívá),
+//   3) `bez posunu` = p/s … kdyby p už bylo relativní k výřezu (dvojí odečet).
+function _barMapCandidates(p, s) {
+  const cb = cropBox.value;
+  const out = [];
+  const add = (px, py, id) => {
+    if (!Number.isFinite(px) || !Number.isFinite(py)) return;
+    if (px < -5 || py < -5) return;
+    if (out.some(c => Math.abs(c.px - px) < 1.5 && Math.abs(c.py - py) < 1.5)) return;
+    out.push({ px, py, id });
+  };
+  add((p.x) / s, (p.y) / s, 'stránka');
+  const cvEl = canvasEl.value;
+  const scr = _lastBarOcc && _lastBarOcc.screen;
+  if (cvEl && scr && _pageRender && _pageRender.page === currentPage.value && !rot.value) {
+    const r = cvEl.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) {
+      const cp = _pageRender.cropPt;
+      add(cp.x + (scr[0] - r.left) * cp.w / r.width,
+          cp.y + (scr[1] - r.top) * cp.h / r.height, 'plátno');
+    }
+  }
+  // (formule s odečteným cropBoxem se UKÁZALA CHYBNÁ — hledala o ořez vedle;
+  //  proto tu žádná třetí varianta není, jen dvě nezávislé správné cesty)
+  _barPickDbg({ mapCandidates: out.map(c => [c.id, Math.round(c.px), Math.round(c.py)]) });
+  return out;
+}
 async function ocrBarNumberAt(page, p) {
+  const t0 = performance.now();
   const s = await layerScale(page);      // referenční px vrstvy / bod PDF
   // ⚠️ VRSTVA JE POSUNUTÁ O cropBox! `toLayerCoords()` vrací souřadnice
   // v prostoru CELÉ stránky (viewBox = cropBox), takže se do PDF bodů převádí
-  // `(p - cropBox) / s`. Bez odečtení se u OŘÍZNUTÉ stránky (rám zapnutý,
-  // okraje uříznuté — Janův sken) hledá o desítky bodů vedle a lupa nenajde
-  // žádnou číslici: „na všechny pokusy se nepodařilo přečíst“.
+  // `(p - cropBox) / s`. Který přepočet je správný, ale rozhoduje OBRAZ —
+  // viz `_barMapCandidates`.
   const cb = cropBox.value;
-  const px = (p.x - cb.x) / s, py = (p.y - cb.y) / s;   // klepnutí v bodech PDF
+  let px = p.x / s, py = p.y / s;                       // primární odhad (vrstva = stránka)
   let pw = 595, ph = 842;
   try {
     const d = await getPageWidthHeight(song, page + 1);
     if (d && d.width > 0) { pw = d.width; ph = d.height; }
   } catch (e) { /* bereme A4 */ }
   const rw = Math.min(OCR_REGION_W, pw), rh = Math.min(OCR_REGION_H, ph);
-  const crop = {
-    x: Math.min(Math.max(0, px - rw / 2), Math.max(0, pw - rw)),
-    y: Math.min(Math.max(0, py - rh / 2), Math.max(0, ph - rh)),
-    w: rw, h: rh,
-  };
   const dpr = window.devicePixelRatio || 1;
   const outW = rw * OCR_PPT / dpr;       // renderPageRegion násobí dpr sám
   const outH = rh * OCR_PPT / dpr;
-  const t0 = performance.now();
-  const cv = document.createElement('canvas');
-  await renderPageRegion(song, page + 1, cv, crop, outW, outH);
-  const tRender = performance.now() - t0;
-  const pxPerPt = cv.width / crop.w;
-  const tapPx = { x: (px - crop.x) * pxPerPt, y: (py - crop.y) * pxPerPt };
-  const t1 = performance.now();
-  let found = findDigitClusters(cv, pxPerPt, tapPx);
+
+  // Vykresli a najdi číslice pro daný bod PDF. Vrací i prázdný výsledek, aby
+  // se dal použít pro diagnostiku, když selžou všechny přepočty.
+  const regAt = async (cx, cy) => {
+    const crop = {
+      x: Math.min(Math.max(0, cx - rw / 2), Math.max(0, pw - rw)),
+      y: Math.min(Math.max(0, cy - rh / 2), Math.max(0, ph - rh)),
+      w: rw, h: rh,
+    };
+    const t0 = performance.now();
+    const cv = document.createElement('canvas');
+    await renderPageRegion(song, page + 1, cv, crop, outW, outH);
+    const tRender = performance.now() - t0;
+    const pxPerPt = cv.width / crop.w;
+    const tapPx = { x: (cx - crop.x) * pxPerPt, y: (cy - crop.y) * pxPerPt };
+    const t1 = performance.now();
+    const f = findDigitClusters(cv, pxPerPt, tapPx);
+    return { cv, crop, pxPerPt, tapPx, found: f, tRender, tFind: performance.now() - t1,
+             px: cx, py: cy };
+  };
+
+  const cands = _barMapCandidates(p, s);
+  let reg = null, mapId = cands[0].id;
+  for (const c of cands) {
+    const r = await regAt(c.px, c.py);
+    if (!reg) reg = r;                       // primární výsledek pro diagnostiku
+    if (r.found.clusters.length) {
+      reg = r; mapId = c.id;
+      if (c.id !== cands[0].id) _barPickDbg({ mapFellBack: c.id });
+      break;
+    }
+  }
+  px = reg.px; py = reg.py;
+  const { cv, crop, pxPerPt, tapPx } = reg;
+  const tRender = reg.tRender, tFind = reg.tFind;
+  let found = reg.found;
   // Prázdné plátno = pdf.js ještě nedokreslil (na tabletu se to stává, když se
   // klepne hned po otevření stránky). Jedno znovuvykreslení za 150 ms to spraví;
   // bez něj by lupa hlásila „nepodařilo se přečíst“ na každý pokus.
@@ -2095,7 +2155,7 @@ async function ocrBarNumberAt(page, p) {
     }
   }
   const clusters = found.clusters;
-  const tFind = performance.now() - t1;
+  _lastBarMap = mapId;
 
   // Když nejsou číslice ani po obnově plátna, zkus VOLNĚJŠÍ filtr výšky: skeny
   // mívají čísla taktu i 14–20 bodu vysoká (a naopak drobnější než 3 body),
@@ -2226,7 +2286,7 @@ async function ocrBarNumberAt(page, p) {
   _barPickDbg({
     ocr: { digits: best ? best.digits : '', confidence: best ? best.conf : 0,
            cluster: best ? best.cl : 0, tried, stats: foundFinal.stats,
-           choice, reads: allReads,
+           choice, reads: allReads, map: mapId,
            pdf: [Math.round(px), Math.round(py)],
            render: Math.round(tRender), find: Math.round(tFind),
            total: Math.round(performance.now() - t0) },
@@ -2237,6 +2297,7 @@ async function ocrBarNumberAt(page, p) {
   const _sq = foundFinal.stats || {};
   barPickDiag.value = (best ? 'přečteno ' + best.digits + ' (' + best.conf + ' %)'
     : (choice ? 'nejednoznačné ' + choice.join(' / ') : 'NEPŘEČTENO')) + ' · ' + (_lastBarOcc ? _lastBarOcc.pointerType : '?')
+    + (mapId ? ' · ' + mapId : '')
     + ' · p ' + (_lastBarOcc ? _lastBarOcc.layer[0] + ',' + _lastBarOcc.layer[1] : '?')
     + ' → pdf ' + Math.round(px) + ',' + Math.round(py)
     + (_lastBarOcc && _lastBarOcc.screen ? ' · obraz ' + _lastBarOcc.screen[0] + ',' + _lastBarOcc.screen[1] : '')
@@ -2273,8 +2334,7 @@ async function fillSystemAt(p) {
 async function _fillSystemAt(p) {
   const page = currentPage.value;
   const s = await layerScale(page);
-  const cb = cropBox.value;
-  const px = (p.x - cb.x) / s, py = (p.y - cb.y) / s;   // bod PDF
+  const px = p.x / s, py = p.y / s;                     // bod PDF (vrstva = stránka)
   let pw = 595, ph = 842;
   try {
     const d = await getPageWidthHeight(song, page + 1);
@@ -2325,7 +2385,7 @@ async function _fillSystemAt(p) {
   const y = Math.max(crop.y + 1, det.top - 2);
   for (let i = 0; i < det.lines.length; i++) {
     const x = det.lines[i] + 1.5;
-    addBarIndex(page, first + i, cb.x + x * s, cb.y + y * s, 'lines');
+    addBarIndex(page, first + i, x * s, y * s, 'lines');
   }
   barNext.value = Math.min(9999, first + bars);
   saveBarNext();
@@ -2358,16 +2418,16 @@ async function pickPrintedBarNumber(p, pointerType, ev) {
   _barPickDbg({ page, px: Math.round(p.x), py: Math.round(p.y), count: nums.length,
     sample: nums.slice(0, 6).map(c => ({ n: c.n, x: Math.round(c.x), y: Math.round(c.yTop) })) });
   const s = await layerScale(page);      // referenční px vrstvy / bod PDF
-  // Stejný posun jako u OCR: textová vrstva je v bodech PDF, vrstva v cropBoxu.
-  const cb = cropBox.value;
+  // Vrstva je v souřadnicích CELÉ stránky (pdf × s), cropBox je jen počátek
+  // viewBoxu — do přepočtu proto NEPATŘÍ (odečtení posunulo hledání o ořez).
   let best = null;
   for (const c of nums) {
-    const cx = cb.x + (c.x + c.w / 2) * s;
-    const cy = cb.y + (c.yTop - c.h * 0.35) * s;
+    const cx = (c.x + c.w / 2) * s;
+    const cy = (c.yTop - c.h * 0.35) * s;
     const d = Math.hypot(cx - p.x, cy - p.y);
     if (d <= BAR_PICK_RADIUS && (!best || d < best.d)) best = { ...c, d };
   }
-  if (best) { addBarIndex(page, best.n, cb.x + best.x * s, cb.y + best.yTop * s, 'text'); return; }
+  if (best) { addBarIndex(page, best.n, best.x * s, best.yTop * s, 'text'); return; }
 
   // 2) SKEN: žádná textová vrstva → čti číslo z OBRÁZKU stránky.
   if (barPickBusy.value) return;
@@ -4307,6 +4367,9 @@ async function renderCurrent() {
   const geo = pageGeometry(dim, usedFrac, ref, availW,
                           framed ? framedHeight() : 0);
   cropBox.value = geo.box;
+  // Výřez v BODECH PDF, který je právě na plátně — nezávislý zdroj pravdy pro
+  // přepočet klepnutí v lupě (`_barMapCandidates`, kandidát „plátno“).
+  _pageRender = { page, cropPt: { x: geo.cropPt.x, y: geo.cropPt.y, w: geo.cropPt.w, h: geo.cropPt.h } };
   // fitFor počítá měřítko bitmapy vůči těmhle rozměrům (referenční px).
   baseDims.value = { w: geo.box.w, h: geo.box.h };
   cssW.value = geo.w;

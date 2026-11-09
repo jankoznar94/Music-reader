@@ -23,6 +23,7 @@ m.CDP_HTTP = os.environ.get("NOTY_CDP", m.CDP_HTTP)
 PDF = ("/home/martin_fabian/.hermes/profiles/cfsb-agent/cache/documents/"
        "native-inputs/b6372852962f9d22817e7d1e99486df274129c0907a91924f0da5d2b8c47f722/"
        "doc_1bb2c499f695_Mozart-Davide penitente.pdf")
+REF_W = 760.0
 
 OK = []
 BAD = []
@@ -76,7 +77,7 @@ async def main():
         await asyncio.sleep(0.3)
         vb = [float(v) for v in (await h.ev(
             "document.querySelector('.annot-layer').getAttribute('viewBox')")).split()]
-        s = vb[2] / 595.2
+        s = REF_W / 595.2
         pt = json.loads(await h.ev("""(() => { const svg=document.querySelector('.annot-layer');
             const g=svg.getScreenCTM(); const p=new DOMPoint(%f,%f).matrixTransform(g);
             return JSON.stringify({x:p.x,y:p.y}); })()""" % (vb[0] + 67.1 * s, vb[1] + 515.2 * s)))
