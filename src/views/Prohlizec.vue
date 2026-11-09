@@ -47,7 +47,16 @@
         </button>
         <!-- Pravá skupina -->
         <div class="tb-side right">
-        <button class="tb-btn" @click="toggleAnnot" :class="{ on: annotMode }" title="Anotace / listování">✏️</button>
+        <button class="tb-btn" @click="toggleAnnot" :class="{ on: annotMode && !barnumMode }" title="Anotace / listování">✏️</button>
+        <!-- ČÍSLOVÁNÍ TAKTŮ MÁ VLASTNÍ TLAČÍTKO (Jan, Nov 2026: „číslování bychom
+             měli dát úplně mimo anotační menu — bude mít svoje vlastní tlačítko
+             na hlavní liště“). Otevírá JEN malý panel čísel (Další / Krok /
+             Velikost / lupa); velký anotační panel zůstává zavřený, takže noty
+             jsou vidět a takty se dají počítat. -->
+        <button class="tb-btn" @click="toggleBarnum" :class="{ on: barnumMode }"
+                title="Číslování taktů — vkládat čísla a číst vytištěná (lupa)">
+          <span class="tb-glyph-1">1</span>
+        </button>
         <!-- Uložení stavu a vycentrování — na HLAVNÍ LIŠTĚ, ne v panelu zoomu.
              Ukládací tlačítka měla dosud stejnou podobu jako ostatní akce panelu
              a uživatel nerozeznal, které z nich ukládá STRÁNKU a které CELOU
@@ -993,7 +1002,7 @@
 
     <!-- Plovoucí panel anotací (v anotačním režimu; při umisťování skoku schovaný,
          aby nezakrýval noty, na které se klepá) -->
-    <div v-if="annotMode && !jumpPlaceMode" class="annot-panel" data-panel="annot" :style="panelStyle('annot')">
+    <div v-if="annotMode && !barnumMode && !jumpPlaceMode" class="annot-panel" data-panel="annot" :style="panelStyle('annot')">
       <!-- Hlavička: sbalit/rozbalit -->
       <div class="ap-header">
         <span class="ap-title">Anotace</span>
@@ -1475,6 +1484,24 @@ function showToast(msg, ms = 2200) {
 }
 
 const annotMode = ref(false);
+// Režim ČÍSLOVÁNÍ TAKTŮ (vlastní tlačítko v liště): zapíná anotační vrstvu
+// (aby šel dotyk zachytit), ale NECHÁVÁ zavřený velký anotační panel — na
+// notách tak zůstane jen malé okno s číslem, krokem a lupou.
+const barnumMode = ref(false);
+function toggleBarnum() {
+  if (barnumMode.value) {
+    barnumMode.value = false;
+    annotMode.value = false;      // číslování bylo jediný důvod anotace
+    return;
+  }
+  jumpMode.value = false; bookmarkMode.value = false;
+  sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
+  pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false;
+  annotMode.value = true;         // vrstva musí přijímat dotyk
+  barnumMode.value = true;
+  tool.value = 'barnumber';
+  showTopBar();
+}
 const tool = ref('pencil');
 const activeItem = ref(null);
 
@@ -1895,9 +1922,11 @@ function toggleBarPick() {
   setTool('barpick');
   showToast('Lupa: klepni na vytištěné číslo taktu — udělá z něj skrytý index');
 }
+// Poslední diagnostika OCR — hláška o neúspěchu ji ukáže uživateli, aby se
+// „nepodařilo přečíst“ dalořešit z jednoho klepnutí (jinak se ladí naslepo).
+let _lastBarOcr = null;
 function _barPickDbg(info) {
   // Diagnostická stopa (jako __navdbg u dotyků) — bez ní je „lupa nic nenašla“
-  // nezměřitelné: nepoznáš, jestli selhalo čtení textové vrstvy, nebo okolí.
   try {
     const a = (window.__barPickDbg = window.__barPickDbg || []);
     a.push(info); if (a.length > 30) a.shift();
@@ -1970,7 +1999,22 @@ async function ocrBarNumberAt(page, p) {
   const pxPerPt = cv.width / crop.w;
   const tapPx = { x: (px - crop.x) * pxPerPt, y: (py - crop.y) * pxPerPt };
   const t1 = performance.now();
-  const found = findDigitClusters(cv, pxPerPt, tapPx);
+  let found = findDigitClusters(cv, pxPerPt, tapPx);
+  // Prázdné plátno = pdf.js ještě nedokreslil (na tabletu se to stává, když se
+  // klepne hned po otevření stránky). Jedno znovuvykreslení za 150 ms to spraví;
+  // bez něj by lupa hlásila „nepodařilo se přečíst“ na každý pokus.
+  if (!found.clusters.length) {
+    await new Promise(r => setTimeout(r, 150));
+    const cv2 = document.createElement('canvas');
+    await renderPageRegion(song, page + 1, cv2, crop, outW, outH);
+    const f2 = findDigitClusters(cv2, cv2.width / crop.w, tapPx);
+    _barPickDbg({ retried: true, clusters: f2.clusters.length });
+    if (f2.clusters.length) {
+      found = f2;
+      cv.width = cv2.width; cv.height = cv2.height;
+      cv.getContext('2d').drawImage(cv2, 0, 0);
+    }
+  }
   const clusters = found.clusters;
   const tFind = performance.now() - t1;
 
@@ -2026,6 +2070,8 @@ async function ocrBarNumberAt(page, p) {
            render: Math.round(tRender), find: Math.round(tFind),
            total: Math.round(performance.now() - t0) },
   });
+  _lastBarOcr = { digits: best ? best.digits : '', conf: best ? best.conf : 0,
+                  cluster: best ? best.cl : 0, tried };
   return best ? parseInt(best.digits, 10) : null;
 }
 const barPickBusy = ref(false);
@@ -2054,7 +2100,11 @@ async function pickPrintedBarNumber(p) {
     const n = await ocrBarNumberAt(page, p);
     if (n == null) {
       _barPickDbg({ miss: true, px: Math.round(p.x), py: Math.round(p.y) });
-      showToast('Číslo se nepodařilo přečíst — klepni přesně na číslo taktu');
+      // Čísla v hlášce = diagnostika pro Jana: z jednoho klepnutí je vidět,
+      // jestli selhalo hledání číslic (shluk 0) nebo čtení (nízká jistota).
+      const d = _lastBarOcr;
+      showToast('Číslo se nepodařilo přečíst (jistota ' + (d ? d.conf : '?')
+        + ', shluk ' + (d ? d.cluster : '?') + ') — klepni přesně na číslo taktu', 4000);
       return;
     }
     addBarIndex(page, n, p.x, p.y, 'ocr');
@@ -4832,6 +4882,9 @@ function showTopBar() {
 
 // --- Anotace ---
 function toggleAnnot() {
+  // Z režimu číslování přepíná tlačítko ✏️ rovnou do anotace (ne do vypnuto) —
+  // číslování je jen užší režim téže vrstvy.
+  if (barnumMode.value) { barnumMode.value = false; annotMode.value = true; return; }
   annotMode.value = !annotMode.value;
   if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false; } // jiné panely zavřít
   // vypnutí řeší watch na annotMode níže (pokrývá i cesty, které by na endEdit zapomněly)
@@ -4870,6 +4923,9 @@ function setTool(t) {
     else annotColor.value = to[0];
   }
   tool.value = t;
+  // Přepnutí na jiný nástroj = konec režimu číslování (jeho tlačítko v liště
+  // by jinak svítilo, i když se už čísla nevkládají).
+  if (t !== 'barnumber' && t !== 'barpick') barnumMode.value = false;
   wedgePoints.value = []; hlPoints.value = []; annotMode.value = true;
   // Nedokončené označení taktu/systému nesmí zůstat viset po přepnutí nástroje
   // (jinak by obdélník zůstal nakreslený a další tah by se choval jako drag).
@@ -7256,8 +7312,10 @@ async function deleteBookmark(b) {
   display: flex; align-items: center; justify-content: center;
   touch-action: manipulation;
 }
-.tb-btn.sm { width: calc(var(--tb, 38px) - 8px); height: calc(var(--tb, 38px) - 8px); font-size: 1rem; }
+.tb-btn.sm { width: var(--tb, 38px); height: var(--tb, 38px); font-size: 1rem; }
 .tb-btn.sm svg { width: calc(var(--tb, 38px) * 0.46); height: calc(var(--tb, 38px) * 0.46); }
+/* Glyf „1" pro tlačítko číslování taktů — stejná optická velikost jako ✏️ */
+.tb-glyph-1 { font-size: 1.15rem; font-weight: 700; line-height: 1; }
 /* Tlačítko zvětšení má místo ikony text s procenty — potřebuje víc šířky */
 .tb-btn.zoom-btn { width: auto; min-width: calc(var(--tb, 38px) + 8px); padding: 0 7px;
   font-size: clamp(0.75rem, 1.9vw, 0.9rem); font-weight: 600; border-radius: 16px;
