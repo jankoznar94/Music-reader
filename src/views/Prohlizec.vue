@@ -1002,7 +1002,7 @@
             <span>{{ barNumsHidden ? 'Čísla: skrytá' : 'Čísla: viditelná' }}</span>
           </button>
         </div>
-        <div class="ap-hint">Tažením označ takt nebo celý systém — číslo se doplní do levého horního rohu. Klepnutí položí číslo pod prst.</div>
+        <div class="ap-hint">Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do levého horního rohu označení.</div>
         <div class="ap-hint" v-if="barNumsHidden">Čísla jsou v notách skrytá — slouží jen ke skoku na takt (pro noty s vytištěnými čísly). Přepínač je zase zobrazí.</div>
       </div>
 
@@ -1651,7 +1651,10 @@ function toggleBarNumsHidden() {
 // Náhled obdélníku při označování taktu/systému (ref px vrstvy).
 const barDragRect = ref(null);
 // Meze tahu, od kterých se počítá „tažení“ (menší = klepnutí s chvěním prstu).
-const BAR_DRAG_MIN = 8;
+// Od kolika px se tah počítá jako OZNAČENÍ obdélníkem. Jan (Nov 2026) chce
+// primárně ťuknutí na roh systému, takže práh je vyšší — chvění prstu při
+// ťuknutí nesmí skončit v režimu obdélníku.
+const BAR_DRAG_MIN = 24;
 // Kde číslo v obdélníku sedí (Jan, Nov 2026: „umisťují se příliš vysoko nad
 // osnovu, dal bych je blíž“). Dřív se kreslilo účařím NA horní hranu obdélníku,
 // takže když obdélník začínal kus nad systémem, číslo viselo vysoko. Teď platí:
@@ -1666,6 +1669,11 @@ const BAR_INK_TOP = 0.72;
 // s začátkem osnovy; nahoru jen 2 px, víc ne (aby neviselo nad obdélníkem).
 const BAR_INK_LEFT = 0.35;
 const BAR_UP = 2;
+// BODOVÉ vložení (Jan, Nov 2026): „uživatel bodově ťukne na levý horní roh
+// systému a číslo se umístí nad něj — horizontálně zarovno s bodem, vertikálně
+// několik pixelů nad bod.“ Číslo tedy sedí účařím `BAR_TAP_GAP` px NAD místem
+// ťuknutí a začíná přesně na jeho x (text-anchor=start).
+const BAR_TAP_GAP = 6;
 // Číslo se nesmí dostat mimo VIDITELNOU plochu — jinak se ořízne
 // (Jan: „místo 177 je vidět jen 77“). Vrstva má viewBox = cropBox, takže když
 // je zapnutý rám (ořez okrajů), platí hranice cropBoxu, ne 0! Anotace položená
@@ -4779,7 +4787,9 @@ function onLayerDown(e) {
     // nebo systém a vloží se hotové číslo. Jan (Nov 2026): „Obdélník pro
     // označení by bylo dobré zpřístupnit i pro prst.“ Dlaň (poloměr > 50 px)
     // zůstává zablokovaná, ať se obdélník neudělá omylem opřenou rukou.
-    const barBoxByFinger = tool.value === 'barnumber' && !palm && !penWriting;
+    // U čísel taktů se nic nekreslí — prst smí ťuknout i chvíli po peru
+    // (jinak by „píšu perem, pak ťuknu prstem na roh systému“ tiše nic nedělalo).
+    const barBoxByFinger = tool.value === 'barnumber' && !palm;
     if (!grabInEdit && !barBoxByFinger) { _logEv('  down: penOnly blok'); return; }
   }
   // V ANOTACI se přes okraje LISTUJE TLAČÍTKY, ne klepnutím — kraj tedy patří
@@ -5318,7 +5328,7 @@ function onLayerUp(e) {
     const size = clampBarSize(barSize.value);
     const src = dragged
       ? { x: r.x + Math.round(size * BAR_INK_LEFT), y: r.y + Math.round(size * BAR_INK_TOP) - BAR_UP }
-      : { x: p2.x, y: p2.y };
+      : { x: p2.x, y: p2.y - BAR_TAP_GAP };   // ťuknutí: číslo NAD bodem, x zarovno
     placeBarNumber(barClampX(src.x), barClampY(src.y, size));
     return;
   }
