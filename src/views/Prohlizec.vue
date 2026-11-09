@@ -1417,7 +1417,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, toRaw
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers, readPageTextNumbers } from '../pdf.js';
-import { ocrDigitsFromCanvas, binarizeCanvas } from '../ocrDigits.js';
+import { ocrDigitsFromCanvas, binarizeCanvas, findDigitClusters, cropCanvas, inkBox, normalizeForOcr } from '../ocrDigits.js';
 import { analyzeContent } from '../contentBounds.js';
 // share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
 // leželo v hlavním bundlu a zpomalovalo start čtečky.
@@ -1464,10 +1464,14 @@ const panY = ref(0);
 // do IndexedDB (await výše), takže nemůže lhát o neuloženém stavu.
 const toast = ref('');
 let toastTimer = null;
-function showToast(msg) {
+// `ms = 0` = hláška NEZMIZÍ sama — používá se pro „pracuji…“, které se nahradí
+// výsledkem. Bez toho „Čtu číslo z obrázku…“ po 2,2 s zmizelo a uživatel koukal
+// na prázdno, i když OCR ještě běželo (Jan: „výsledek až při dalším pokusu“).
+function showToast(msg, ms = 2200) {
   toast.value = msg;
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => { toast.value = ''; }, 2200);
+  if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+  if (!ms) return;
+  toastTimer = window.setTimeout(() => { toast.value = ''; }, ms);
 }
 
 const annotMode = ref(false);
@@ -1927,39 +1931,102 @@ function addBarIndex(page, n, x, y, src) {
   _barPickDbg({ added: n, src, x: pos.x, y: pos.y });
   showToast(`${src === 'ocr' ? 'Z obrázku přečteno' : 'Nalezeno'} ${n} — skrytý index pro skok ${dup ? 'přepsán' : 'přidán'}`);
 }
-// OCR ze SKENU: vyřízne okolí klepnutí z PDF plátna ve vysokém rozlišení a nechá
-// ho přečíst lokálním tesseractem (jen číslice). Vrací číslo taktu nebo null.
+// OCR ze SKENU: vyřízne okolí klepnutí z PDF plátna ve vysokém rozlišení, najde
+// v něm SHLUK ČÍSLIC (souvislé komponenty výšky písmen) a teprve ten nechá
+// přečíst lokálním tesseractem (jen číslice). Vrací číslo taktu nebo null.
+//
+// PROČ SEGMENTACE (Jan, Nov 2026: „místo 9 to přečetlo 19“):
+// dřív se OCR pustilo na široký výřez 48×22 bodu kolem klepnutí. Jenže nalevo
+// od čísla taktu stojí svorka systému a začátek osnov — tesseract si z těch
+// svislic udělá „1“ a z devítky bylo 19 (naměřeno i „4“ s jistotou 58).
+// Komponenty výšky 3–12 bodu a šířky do 12 bodu jsou číslice; svislé taktové
+// čáry a vodorovné linky osnov tím vypadnou. Naměřeno na reálném skenu
+// (Mozart, 6 čísel): s oknem kolem nalezeného shluku 9/75, 15/96, 18/90,
+// 42/93, 47/95, 52/96 — všechna správně.
+const OCR_REGION_W = 100;   // body PDF — okolí klepnutí, kde se číslice hledají
+const OCR_REGION_H = 70;
+const OCR_PPT = 12;         // PIXELY canvasu na PDF bod (nezávisle na dpr)
 async function ocrBarNumberAt(page, p) {
-  // Čísla taktů ve skenech jsou DROBNÁ (u Mozarta ~7 bodů vysoká) a tesseract
-  // je na surovém výřezu nejistý. Proto: úzký výřez 48x22 bodů, 8× zvětšit,
-  // ZBINARIZOVAT (Otsu) s bílým okrajem a zkusit MŘÍŽKU posunů kolem klepnutí —
-  // bere se nejlepší výsledek podle jistoty (včasný konec při >= 80).
   const s = await layerScale(page);      // referenční px vrstvy / bod PDF
   const px = p.x / s, py = p.y / s;      // klepnutí v bodech PDF
-  const W = 48, H = 22, SCALE = 8;       // v bodech PDF
-  const offsets = [[0, 0], [-18, 0], [18, 0], [0, -12], [0, 12],
-                   [-18, -12], [18, -12], [-18, 12], [18, 12]];
-  let best = null;
-  for (const [dx, dy] of offsets) {
-    const crop = {
-      x: px + dx - W / 2,
-      y: Math.max(0, py + dy - H / 2),
-      w: W, h: H,
-    };
-    const cv = document.createElement('canvas');
-    await renderPageRegion(song, page + 1, cv, crop, W * SCALE, H * SCALE);
-    const res = await ocrDigitsFromCanvas(binarizeCanvas(cv));
-    const digits = String(res.digits || '');
-    _barPickDbg({ ocr: { digits, confidence: Math.round(res.confidence), dx, dy } });
-    if (/^\d{1,4}$/.test(digits) && res.confidence >= 40) {
-      if (!best || res.confidence > best.confidence) {
-        best = { n: parseInt(digits, 10), confidence: res.confidence };
-      }
-      if (res.confidence >= 80) break;
+  let pw = 595, ph = 842;
+  try {
+    const d = await getPageWidthHeight(song, page + 1);
+    if (d && d.width > 0) { pw = d.width; ph = d.height; }
+  } catch (e) { /* bereme A4 */ }
+  const rw = Math.min(OCR_REGION_W, pw), rh = Math.min(OCR_REGION_H, ph);
+  const crop = {
+    x: Math.min(Math.max(0, px - rw / 2), Math.max(0, pw - rw)),
+    y: Math.min(Math.max(0, py - rh / 2), Math.max(0, ph - rh)),
+    w: rw, h: rh,
+  };
+  const dpr = window.devicePixelRatio || 1;
+  const outW = rw * OCR_PPT / dpr;       // renderPageRegion násobí dpr sám
+  const outH = rh * OCR_PPT / dpr;
+  const t0 = performance.now();
+  const cv = document.createElement('canvas');
+  await renderPageRegion(song, page + 1, cv, crop, outW, outH);
+  const tRender = performance.now() - t0;
+  const pxPerPt = cv.width / crop.w;
+  const tapPx = { x: (px - crop.x) * pxPerPt, y: (py - crop.y) * pxPerPt };
+  const t1 = performance.now();
+  const found = findDigitClusters(cv, pxPerPt, tapPx);
+  const clusters = found.clusters;
+  const tFind = performance.now() - t1;
+
+  // Zkusí přečíst okno kolem daného shluku (nebo kolem klepnutí). Vrací
+  // {digits, conf} — levné: překresluje se jen JEDNOU, tady se jen ořezává.
+  const attempt = async (cl) => {
+    const dh = cl ? Math.max(4, Math.min(16, cl.h)) : 7;   // výška číslic (body)
+    const winW = Math.max(26, Math.min(40, 3.8 * dh));
+    const winH = Math.max(14, Math.min(26, 2.3 * dh));
+    const cx = cl ? (cl.x0 + cl.x1) / 2 : tapPx.x;
+    const cy = cl ? (cl.y0 + cl.y1) / 2 : tapPx.y;
+    const cut = cropCanvas(cv, {
+      x: cx - (winW * pxPerPt) / 2, y: cy - (winH * pxPerPt) / 2,
+      w: winW * pxPerPt, h: winH * pxPerPt,
+    }, 0);
+    // Práh z CELÉ oblasti, ne z výřezu — viz komentář v `binarizeCanvas()`.
+    const bin = binarizeCanvas(cut, 0, found.thr);
+    // Ohraničení inkoustu + okraj a NORMALIZOVANÁ VÝŠKA: bez toho tesseract
+    // „9“ četl jako „4“ (naměřeno; se 96px výškou je 5/5 správně, Ø jistota 92).
+    let ink = inkBox(bin);
+    if (!ink || ink.w > 2.5 * ink.h) ink = { x: 0, y: 0, w: bin.width, h: bin.height };
+    const prepared = normalizeForOcr(bin, ink, 0.6, 96);
+    if (window.__barPickDump) {
+      try {
+        _barPickDbg({ crop: cut.toDataURL('image/png'), prep: prepared.toDataURL('image/png'),
+                      thr: found.thr, win: [winW, winH], dh, d: cl ? cl.d : -1,
+                      ink: [ink.w, ink.h] });
+      } catch (e) { /* nevadí */ }
     }
+    const res = await ocrDigitsFromCanvas(prepared);
+    return { digits: String(res.digits || ''), conf: Math.round(res.confidence),
+             n: cl ? cl.n : 0, dh };
+  };
+
+  // Nejbližší shluk nemusí být ten správný (když se prst netrefí, může jako
+  // „číslice“ vyjít i něco jiného v okolí). Proto zkus až tři nejbližší shluky
+  // a nakonec okno přesně kolem klepnutí; bere se nejlepší jistota.
+  const tries = clusters.filter(c => c.d < 28 * pxPerPt).slice(0, 3);
+  let best = null, tried = [];
+  for (const cl of tries.concat([null])) {
+    const r = await attempt(cl);
+    tried.push({ digits: r.digits, conf: r.conf, n: r.n, d: cl ? Math.round(cl.d) : -1 });
+    const ok = /^\d{1,4}$/.test(r.digits) && r.conf >= 40
+      // počet přečtených číslic vs. počet komponent: rozpor o víc než jednu
+      // znamená, že OCR spolklo taktovou čáru (dřívější „19“ místo „9“)
+      && !(r.n && Math.abs(r.digits.length - r.n) > 1 && r.conf < 80);
+    if (ok && (!best || r.conf > best.conf)) best = { ...r, cl: cl ? cl.n : 0 };
+    if (best && best.conf >= 70) break;
   }
-  if (!best) _barPickDbg({ ocrFail: true, px: Math.round(p.x), py: Math.round(p.y) });
-  return best ? best.n : null;
+  _barPickDbg({
+    ocr: { digits: best ? best.digits : '', confidence: best ? best.conf : 0,
+           cluster: best ? best.cl : 0, tried,
+           render: Math.round(tRender), find: Math.round(tFind),
+           total: Math.round(performance.now() - t0) },
+  });
+  return best ? parseInt(best.digits, 10) : null;
 }
 const barPickBusy = ref(false);
 async function pickPrintedBarNumber(p) {
@@ -1982,7 +2049,7 @@ async function pickPrintedBarNumber(p) {
   // 2) SKEN: žádná textová vrstva → čti číslo z OBRÁZKU stránky.
   if (barPickBusy.value) return;
   barPickBusy.value = true;
-  showToast('Čtu číslo z obrázku…');
+  showToast('Čtu číslo z obrázku…', 0);   // drží, dokud nepřijde výsledek
   try {
     const n = await ocrBarNumberAt(page, p);
     if (n == null) {
