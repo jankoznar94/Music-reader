@@ -306,6 +306,77 @@ export function binarizeCanvas(cv, pad = 18, thrIn = null) {
 }
 
 /**
+ * Rozdělí připravený výřez na JEDNOTLIVÉ ČÍSLICE podle svislých mezer a vrátí
+ * jejich canvasu (normalizované na stejnou výšku). Používá se u dvouciferných
+ * čísel: tesseract v režimu „jeden řádek“ zaměňuje 5/3 (naměřeno „75“ → „73“
+ * s jistotou 83, zatímco samostatná pětka i sedmička se čtou bezpečně).
+ * @param {HTMLCanvasElement} cv zbinarizovaný, normalizovaný výřez
+ * @returns {HTMLCanvasElement[]} prázdné pole, když se rozdělit nedá
+ */
+export function splitDigitCells(cv, expected = 0) {
+  const w = cv.width, h = cv.height;
+  const d = cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+  const inkCol = new Uint16Array(w);
+  for (let x = 0; x < w; x++) {
+    let ink = 0;
+    for (let y = 0; y < h; y++) if (d[(y * w + x) * 4] < 128) ink++;
+    inkCol[x] = ink;
+  }
+  // sloupce s inkoustem → souvislé bloky (mezera aspoň 1 px)
+  const blocks = [];
+  let x0 = -1, gap = 0;
+  for (let x = 0; x < w; x++) {
+    if (inkCol[x] > 0) {
+      if (x0 < 0) x0 = x;
+      gap = 0;
+    } else if (x0 >= 0) {
+      gap++;
+      if (gap >= 1) {
+        blocks.push([x0, x - gap]);
+        x0 = -1;
+        gap = 0;
+      }
+    }
+  }
+  if (x0 >= 0) blocks.push([x0, w - 1]);
+  // Jen skutečné číslice: blok musí být aspoň 3 px široký.
+  let cells = blocks.filter(([a, b]) => b - a >= 3);
+  // Číslice se na skenu často DOTÝKAJÍ (naměřeno: „75“ i „78“ = jeden blok),
+  // takže když je bloků méně, než kolik číslic jsme přečetli celkem, rozdělí se
+  // inkoustový rozsah rovnoměrně (v notách mají číslice stejnou šířku) a řez se
+  // posune do nejužšího místa v okolí.
+  if (expected >= 2 && cells.length < expected) {
+    const a = Math.min(...cells.map(c => c[0]));
+    const b = Math.max(...cells.map(c => c[1]));
+    const span = b - a + 1;
+    const cuts = [a];
+    for (let i = 1; i < expected; i++) {
+      let best = a + Math.round((span * i) / expected);
+      let bestInk = Infinity;
+      const lo = Math.max(a + 1, best - Math.round(span * 0.15));
+      const hi = Math.min(b - 1, best + Math.round(span * 0.15));
+      for (let x = lo; x <= hi; x++) if (inkCol[x] < bestInk) { bestInk = inkCol[x]; best = x; }
+      cuts.push(best);
+    }
+    cells = cuts.map((c, i) => [c, (i + 1 < cuts.length ? cuts[i + 1] - 1 : b)]);
+  }
+  if (cells.length < 2) return [];
+  return cells.map(([a, b]) => {
+    const bw = b - a + 1;
+    const out = document.createElement('canvas');
+    out.width = Math.max(8, Math.round(bw * (96 / h)) + 8);
+    out.height = 96 + 8;
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(cv, a, 0, bw, h, 4, 4, Math.round(bw * (96 / h)), 96);
+    return out;
+  });
+}
+
+/**
  * Přečte číslice z canvasu (výřez not).
  * @param {HTMLCanvasElement} canvas
  * @returns {Promise<{digits:string, confidence:number}>}
@@ -321,4 +392,22 @@ export async function ocrDigitsFromCanvas(canvas, psm) {
     digits: String(data.text || '').replace(/[^0-9]/g, ''),
     confidence: Number(data.confidence) || 0,
   };
+}
+
+/**
+ * Přečte číslo taktu PO JEDNOTLIVÝCH ČÍSLICÍCH (psm 10) a spojí je.
+ * @param {HTMLCanvasElement} prepared zbinarizovaný, normalizovaný výřez
+ * @returns {Promise<{digits:string, confidence:number, cells:number}>}
+ */
+export async function ocrDigitsPerCell(prepared, expected = 0) {
+  const cells = splitDigitCells(prepared, expected);
+  if (!cells.length) return { digits: '', confidence: 0, cells: 0 };
+  let digits = '', conf = 0;
+  for (const c of cells) {
+    const r = await ocrDigitsFromCanvas(c, 10);
+    if (!r.digits || r.digits.length !== 1) return { digits: '', confidence: 0, cells: cells.length };
+    digits += r.digits;
+    conf += Number(r.confidence) || 0;
+  }
+  return { digits, confidence: conf / cells.length, cells: cells.length };
 }

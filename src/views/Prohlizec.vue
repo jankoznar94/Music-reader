@@ -1438,7 +1438,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, toRaw
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers, readPageTextNumbers } from '../pdf.js';
-import { ocrDigitsFromCanvas, binarizeCanvas, findDigitClusters, cropCanvas, inkBox, normalizeForOcr } from '../ocrDigits.js';
+import { ocrDigitsFromCanvas, ocrDigitsPerCell, binarizeCanvas, findDigitClusters, cropCanvas, inkBox, normalizeForOcr } from '../ocrDigits.js';
 import { detectBarlines } from '../barLines.js';
 import { analyzeContent } from '../contentBounds.js';
 // share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
@@ -2095,13 +2095,35 @@ async function ocrBarNumberAt(page, p) {
     // bezpečný. Když se rozcházejí, číslo se NEVKLÁDÁ — špatné číslo pošle
     // hudebníka na jinou stránku, to je horší než žádné.
     let alt = null;
+    let agree = false;
     if (digits.length >= 2 && conf < 90) {
-      const r2 = await ocrDigitsFromCanvas(prepared, 8);
-      const d2 = String(r2.digits || '');
-      if (d2 && d2 !== digits) alt = { digits: d2, conf: Math.round(r2.confidence) };
-      else if (d2 === digits) conf = Math.max(conf, Math.round(r2.confidence));
+      // ČTENÍ PO JEDNOTLIVÝCH ČÍSLICÍCH (psm 10 na každou zvlášť). Tohle je
+      // rozhodující pro dvojice: v režimu „jeden řádek“ tesseract zaměňuje 5/3
+      // (naměřeno „75“ → psm 7 „73“/83, psm 8 „75“/48), kdežto pětka a sedmička
+      // samostatně se čtou bezpečně.
+      const per = await ocrDigitsPerCell(prepared, digits.length);
+      if (per.digits.length >= 2) {
+        const pc = Math.round(per.confidence);
+        if (per.digits === digits) {
+          conf = Math.max(conf, pc); agree = true;
+        } else if (pc >= 70 && per.digits.length === digits.length) {
+          // Jednotlivé číslice jsou spolehlivější než celek (naměřeno „75“:
+          // celek „73“, po číslicích „75“) — věř jim, když mají jistotu.
+          digits = per.digits; conf = pc; agree = true;
+        } else {
+          const r2 = await ocrDigitsFromCanvas(prepared, 8);
+          const d2 = String(r2.digits || '');
+          if (d2 === per.digits) { digits = per.digits; conf = Math.max(pc, Math.round(r2.confidence)); agree = true; }
+          else alt = { digits: per.digits, conf: pc };
+        }
+      } else {
+        const r2 = await ocrDigitsFromCanvas(prepared, 8);
+        const d2 = String(r2.digits || '');
+        if (d2 && d2 === digits) { conf = Math.max(conf, Math.round(r2.confidence)); agree = true; }
+        else if (d2) alt = { digits: d2, conf: Math.round(r2.confidence) };
+      }
     }
-    return { digits, conf, n: cl ? cl.n : 0, dh, alt };
+    return { digits, conf, n: cl ? cl.n : 0, dh, alt, agree };
   };
 
   // Nejbližší shluk nemusí být ten správný (když se prst netrefí, může jako
@@ -2114,8 +2136,11 @@ async function ocrBarNumberAt(page, p) {
     tried.push({ digits: r.digits, conf: r.conf, n: r.n, d: cl ? Math.round(cl.d) : -1,
                  alt: r.alt ? r.alt.digits : null });
     // Práh 55: naměřené správné čtení má 67–96; odpad typu „2“ s jistotou 43
-    // vznikl na prázdném/posunutém výřezu a nesmí se vložit.
-    const ok = !r.alt && /^\d{1,4}$/.test(r.digits) && r.conf >= 55
+    // vznikl na prázdném/posunutém výřezu a nesmí se vložit. Výjimka: dvě
+    // nezávislá čtení (psm 7 + 8/10) se SHODUJÍ → správně je i 53 (naměřeno
+    // u „24“ z reálného skenu, které se dřív zbytečně odmítalo).
+    const thresh = r.agree ? 48 : 55;
+    const ok = !r.alt && /^\d{1,4}$/.test(r.digits) && r.conf >= thresh
       // počet přečtených číslic vs. počet komponent: rozpor o víc než jednu
       // znamená, že OCR spolklo taktovou čáru (dřívější „19“ místo „9“)
       && !(r.n && Math.abs(r.digits.length - r.n) > 1 && r.conf < 80);
