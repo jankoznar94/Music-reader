@@ -1914,15 +1914,17 @@ const _pageNumsCache = new Map();       // 'songId:page' → čísla z textové 
 // („u žádného čísla se nepodařilo přečíst“).
 const _layerScaleCache = new Map();
 async function layerScale(page) {
-  // ⚠️ Klíč musí obsahovat ŠÍŘKU cropBoxu: měřítko se počítá z cropBox.w, a ta
-  // se mění podle zoomu/rámu. Se starým klíčem (jen skladba+stránka) se po
-  // zoomu vrátilo zastaralé měřítko — klepnutí na číslo se pak přepočítalo
-  // úplně jinam (naměřeno u Jana: p 43,49 → pdf 13,9 místo ~34,38).
-  const key = song.id + ':s:' + page + ':' + Math.round(cropBox.value.w || 0);
+  // Měřítko = referenční px CELÉ stránky / bod PDF. NESMÍ se počítat
+  // z cropBox.w! Ta je u zapnutého RÁMU menší (výřez), takže měřítko vyšlo
+  // 655,5/595,2 = 1,101 místo skutečných 760/595,2 = 1,277 — a každé klepnutí
+  // se přepočetlo o desítky bodů vedle (naměřeno: klepnutí na číslo 9 na
+  // 67,1/515,2 → „pdf 78,597“, lupa nenašla žádnou číslici a Dočíslování
+  // hlásilo 0 čar). Bez rámu je cropBox.w = refW, proto se chyba neprojevila.
+  const key = song.id + ':s:' + page + ':' + Math.round(refW.value || 0);
   if (_layerScaleCache.has(key)) return _layerScaleCache.get(key);
   let w = 0;
   try { w = (await getPageWidthHeight(song, page + 1)).width; } catch (e) { w = 0; }
-  const s = w > 0 ? (cropBox.value.w || w) / w : 1;
+  const s = w > 0 && refW.value > 0 ? refW.value / w : 1;
   _layerScaleCache.set(key, s);
   return s;
 }
