@@ -1042,7 +1042,7 @@
       <!-- POTVRZENÍ NÁHLEDU: dočíslování systémů nic neuloží, dokud to
            uživatel nepotvrdí. Vidí čárkované čáry a čísla přímo v notách. -->
       <div class="bn-fill-preview" v-if="barFillPreview">
-        <span class="bn-fill-q">{{ barFillPreview.bars }} taktů: {{ barFillPreview.first }}–{{ barFillPreview.first + barFillPreview.bars - 1 }}</span>
+        <span class="bn-fill-q">{{ barFillPreview.bars }} čísel: {{ barFillPreview.start }}–{{ barFillPreview.start + barFillPreview.bars - 1 }} (1. takt = {{ barFillPreview.first }})</span>
         <span class="bn-fill-warn" v-if="barFillPreview.seen > barFillPreview.bars + 1">Našel {{ barFillPreview.seen }} čar — zkontroluj Krok</span>
         <button class="bn-fill-ok" @click="commitBarFill" title="Vložit čísla taktů">Vložit</button>
         <button class="bn-fill-no" @click="cancelBarFill" title="Nic nevkládat">Zrušit</button>
@@ -2369,34 +2369,43 @@ async function _fillSystemAt(p) {
     const d = await getPageWidthHeight(song, page + 1);
     if (d && d.width > 0) { pw = d.width; ph = d.height; }
   } catch (e) { /* A4 */ }
-  const bandH = 260;                                  // výška pásu (systém + rezerva)
-  const crop = { x: 0, y: Math.max(0, Math.min(py - bandH / 2, ph - bandH)), w: pw, h: bandH };
-  const cv = document.createElement('canvas');
-  // ⚠️ PLÁTNO NESMÍ RŮST S dpr. `renderPageRegion()` násobí dpr samo, takže
-  // dřívější `pw * PPT` dalo na tabletu (dpr 2,6) pás 9 000 × 4 000 px = 36 M px;
-  // `getImageData` na takovém plátně tiše selže a protože volající měl
-  // `.catch(() => {})`, nedělo se VŮBEC NIC (Jan: „dočíslování nefunguje“).
-  // Stejný trik jako u lupy: cílíme PIXELY na bod nezávisle na dpr.
-  const PPT = 6;
-  const dpr = window.devicePixelRatio || 1;
-  let outW = pw * PPT / dpr, outH = bandH * PPT / dpr;
-  const MAX_PX = 12e6;
-  const areaPx = outW * outH * dpr * dpr;
-  if (areaPx > MAX_PX) {
-    const k = Math.sqrt(MAX_PX / areaPx);
-    outW *= k; outH *= k;
-  }
-  await renderPageRegion(song, page + 1, cv, crop, outW, outH);
-  const pxPerPt = cv.width / crop.w;
+  // VÝŠKA PÁSU: 260 b je běžná rezerva, ale hustá sazba (sbor + klavírní výtah
+  // = 6 osnov) má systém ~190 b vysoký, takže při klepnutí na krajní osnovu se
+  // do pásu nevejde celý a detekce vidí jen jeho část (naměřeno na skutečné
+  // sazbě: klepnutí na spodní osnovu → „našel jsem jen 1 z 7 vnitřních čar“).
+  // Proto se zkouší 260 b, a když to nevyjde, 420 b.
   const step = Math.max(1, Math.min(64, Number(barStep.value) || 1));
-  // Detekce potřebuje KROK (počet taktů systému) a y klepnutí (který systém).
-  const det = detectBarlines(cv, pxPerPt, { krok: step, ypt: py, offsetY: crop.y });
+  const bands = [260, 420];
+  let cv = null, crop = null, pxPerPt = 0, det = null;
+  for (const bandH of bands) {
+    crop = { x: 0, y: Math.max(0, Math.min(py - bandH / 2, ph - bandH)), w: pw, h: bandH };
+    cv = document.createElement('canvas');
+    // ⚠️ PLÁTNO NESMÍ RŮST S dpr. `renderPageRegion()` násobí dpr samo, takže
+    // dřívější `pw * PPT` dalo na tabletu (dpr 2,6) pás 9 000 × 4 000 px = 36 M px;
+    // `getImageData` na takovém plátně tiše selže a protože volající měl
+    // `.catch(() => {})`, nedělo se VŮBEC NIC (Jan: „dočíslování nefunguje“).
+    // Stejný trik jako u lupy: cílíme PIXELY na bod nezávisle na dpr.
+    const PPT = 6;
+    const dpr = window.devicePixelRatio || 1;
+    let outW = pw * PPT / dpr, outH = bandH * PPT / dpr;
+    const MAX_PX = 12e6;
+    const areaPx = outW * outH * dpr * dpr;
+    if (areaPx > MAX_PX) {
+      const k = Math.sqrt(MAX_PX / areaPx);
+      outW *= k; outH *= k;
+    }
+    await renderPageRegion(song, page + 1, cv, crop, outW, outH);
+    pxPerPt = cv.width / crop.w;
+    // Detekce potřebuje KROK (počet taktů systému) a y klepnutí (který systém).
+    det = detectBarlines(cv, pxPerPt, { krok: step, ypt: py, offsetY: crop.y });
+    if (det.ok) break;
+  }
   const bars = det.bars;
   _barPickDbg({ fill: { page, pdf: [Math.round(px), Math.round(py)],
                          lines: det.lines.map(v => Math.round(v * 10) / 10),
                          bars, step, staves: det.staves, top: det.top,
                          ok: det.ok, reason: det.reason, diag: det.diag,
-                         cands: det.cands, need: det.need,
+                         cands: det.cands, dbg: det.dbg,
                          w: cv.width, h: cv.height } });
   if (!det.ok) {
     const msg = 'Nedočísleno: ' + (det.reason || 'taktové čáry nesedí na Krok')
@@ -2411,6 +2420,11 @@ async function _fillSystemAt(p) {
     return;
   }
   const first = Math.max(1, Number(barNext.value) || 1);
+  // PRVNÍ TAKT SYSTÉMU UŽ ČÍSLO MÁ (Jan, Nov 2026): sazba tiskne číslo na
+  // začátek každého systému, takže `first` je číslo 1. taktu a číslují se jen
+  // takty 2..krok — proto `det.lines` obsahuje jen VNITŘNÍ čáry a čísla jdou
+  // od `first + 1`. Dřív se čísloval i první takt a čísla se posunula o 1.
+  const startNum = first + 1;
   // Číslo patří NAD horní linku systému, na začátek taktu (kousek za čáru).
   const y = Math.max(crop.y + 1, det.top - 2);
   // NÁHLED: čísla se ještě neukládají — uživatel je uvidí a potvrdí.
@@ -2419,15 +2433,16 @@ async function _fillSystemAt(p) {
   // vidět PŘED vložením; čísla by jinak sedla na špatné takty.
   const seen = Array.isArray(det.cands) ? det.cands.length : bars;
   barFillPreview.value = {
-    page, first, seen,
+    page, first, start: startNum, seen,
     items: det.lines.map((x, i) => ({
-      text: String(first + i), x: (x + 1.5) * s, y: y * s,
+      text: String(startNum + i), x: (x + 1.5) * s, y: y * s,
     })),
     bars,
   };
-  _barPickDbg({ preview: { bars, first, y: Math.round(y) } });
-  showToast('Nalezeno ' + bars + ' taktů (' + first + '–' + (first + bars - 1)
-    + ') — klepni na Vložit, nebo to zruš', 7000);
+  _barPickDbg({ preview: { bars, first, start: startNum, y: Math.round(y) } });
+  showToast('Systém ' + (bars + 1) + ' taktů: doplním ' + bars + ' čísel ('
+    + startNum + '–' + (startNum + bars - 1) + '), 1. takt má číslo ' + first
+    + ' — klepni na Vložit, nebo to zruš', 8000);
 }
 // Potvrzení náhledu dočíslování: teprve tady se čísla uloží.
 function commitBarFill() {
@@ -2437,10 +2452,12 @@ function commitBarFill() {
   for (const it of pv.items) {
     addBarIndex(pv.page, Number(it.text), it.x, it.y, 'lines');
   }
-  barNext.value = Math.min(9999, pv.first + pv.bars);
+  // Další systém začíná taktem `first + krok` = `first + bars + 1` (bars je
+  // počet DOPLNĚNÝCH čísel, takt 1 se nečísluje).
+  barNext.value = Math.min(9999, pv.first + pv.bars + 1);
   saveBarNext();
-  showToast('Vloženo ' + pv.bars + ' čísel (' + pv.first + '–'
-    + (pv.first + pv.bars - 1) + ') — další systém začíná ' + barNext.value);
+  showToast('Vloženo ' + pv.bars + ' čísel (' + pv.start + '–'
+    + (pv.start + pv.bars - 1) + ') — další systém začíná ' + barNext.value);
 }
 function cancelBarFill() {
   if (!barFillPreview.value) return;
