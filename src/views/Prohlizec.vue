@@ -916,7 +916,39 @@
           <button class="ap-tool" @click="setTool('note')" :class="{ on: tool === 'note' }" title="Vkládání not (celá, půlová, čtvrťová, osminová, šestnáctinová a pomlky) — v dialogu lze zapnout tečkovaný rytmus">
             <span class="dyn-ico nota-ico">{{ noteGlyph('ctvrt_h').text }}</span>
           </button>
+          <!-- Čísla taktů: klepnutí nad začátek taktu vloží další číslo.
+               Záměrně nástroj, ne automatika — u skenovaných not se počet taktů
+               nedá spolehlivě spočítat, kdežto ruční číslování je přesné všude. -->
+          <button class="ap-tool" @click="setTool('barnumber')" :class="{ on: tool === 'barnumber' }"
+                  title="Čísla taktů — klepni nad začátek taktu, číslo se samo zvýší">
+            <span class="ap-glyph t-glyph">1</span>
+          </button>
         </div>
+      </div>
+
+      <!-- Kategorie: Čísla taktů (jen když je nástroj zapnutý) -->
+      <div v-if="tool === 'barnumber'" class="ap-cat">
+        <div class="ap-cat-label">Čísla taktů</div>
+        <div class="ap-row">
+          <span class="ap-op-label">Další</span>
+          <button class="ap-size" @click="bumpBarNext(-1)" title="Předchozí číslo">−</button>
+          <input
+            class="ap-bar-next"
+            type="number" min="1" step="1"
+            :value="barNext"
+            @change="setBarNext($event.target.value)"
+            @keydown.enter="$event.target.blur()"
+            title="Číslo, které vloží příští klepnutí (skladba může začínat taktem 37)"
+          />
+          <button class="ap-size" @click="bumpBarNext(1)" title="Další číslo">+</button>
+        </div>
+        <div class="ap-row">
+          <span class="ap-op-label">Velikost</span>
+          <button class="ap-size" @click="bumpBarSize(-1)" title="Menší číslo">−</button>
+          <span class="ap-bar-val">{{ barSize }}</span>
+          <button class="ap-size" @click="bumpBarSize(1)" title="Větší číslo">+</button>
+        </div>
+        <div class="ap-hint">Klepni nad začátek taktu — číslo se vloží a zvýší.</div>
       </div>
 
       <!-- Kategorie: Styl -->
@@ -1538,6 +1570,50 @@ function bumpTextSize(dir) {
   textSizeDraft.value = clampTextSize(textSizeDraft.value + dir * TEXT_SIZE_STEP);
 }
 
+// --- ČÍSLA TAKTŮ (nástroj, Nov 2026) --------------------------------------
+// Jan: „Ve spoustě not chybí čísla taktů. Číslování udělej jako nástroj pomocí
+// nového tlačítka.“ Záměrně to NENÍ automatický dopočet z osnov: ten funguje
+// jen u vektorových PDF a u skenů se nedá ověřit, kdežto ruční nástroj je
+// přesný všude a čísel je na stránce jen pár (jedno na začátek systému).
+// Číslo se ukládá jako BĚŽNÁ textová anotace s příznakem `barNum` — díky tomu
+// se s ním dá hýbat, přepsat i smazat rukou a vypálí se do PDF stejně jako text.
+const BAR_SIZE_MIN = 8, BAR_SIZE_MAX = 72, BAR_SIZE_STEP = 2;
+const barNext = ref(1);      // číslo, které vloží příští klepnutí
+const barSize = ref(16);     // velikost čísla (menší než běžný text — čísla taktů jsou drobná)
+function clampBarSize(v) {
+  const n = Math.round(Number(v) || 0);
+  return Math.min(BAR_SIZE_MAX, Math.max(BAR_SIZE_MIN, n || 16));
+}
+function loadBarStyle() {
+  try {
+    const s = Number(localStorage.getItem('noty.barSize'));
+    if (s) barSize.value = clampBarSize(s);
+    const n = Number(localStorage.getItem('noty.barNext'));
+    if (n > 0) barNext.value = Math.round(n);
+  } catch (e) { /* soukromý režim — jede se s výchozími hodnotami */ }
+}
+function saveBarStyle() {
+  try {
+    localStorage.setItem('noty.barSize', String(barSize.value));
+    localStorage.setItem('noty.barNext', String(barNext.value));
+  } catch (e) { /* viz výše */ }
+}
+function bumpBarSize(dir) {
+  barSize.value = clampBarSize(barSize.value + dir * BAR_SIZE_STEP);
+  saveBarStyle();
+}
+function bumpBarNext(dir) {
+  barNext.value = Math.max(1, barNext.value + dir);
+  saveBarStyle();
+}
+// „Další číslo“ jde i přepsat ručně (skladba začíná na stránce taktem 37).
+function setBarNext(v) {
+  const n = Math.round(Number(v) || 0);
+  barNext.value = Math.max(1, n || 1);
+  saveBarStyle();
+}
+loadBarStyle();
+
 // --- VKLÁDÁNÍ NOT: velikost noty (Jan, Oct 2026) --------------------------
 // Nota se musí trefit do velikosti osnovy V NOTÁCH — to je jiné číslo než
 // velikost textové poznámky (osnova = 1 em, poznámka ~20 px), proto má vlastní
@@ -1782,7 +1858,7 @@ function isNotationText(it) {
 // rukou, sledování prstu). JEDNO místo pro všechny sourozenecké kontroly —
 // nová rodina se přidá sem a nepropadne na pěti místech zvlášť (přesně ta vada,
 // kdy „někde to funguje a někde ne“).
-const TEXT_ANNOT_TOOLS = new Set(['text', 'dynamic', 'mark', 'note']);
+const TEXT_ANNOT_TOOLS = new Set(['text', 'dynamic', 'mark', 'note', 'barnumber']);
 // Bere i nástroj (řetězec) i hotový prvek — volá se obojím: `isTextAnnot(tool.value)`.
 function isTextAnnot(x) {
   return TEXT_ANNOT_TOOLS.has(typeof x === 'string' ? x : (x && x.tool));
@@ -2149,11 +2225,13 @@ function hlHandleAt(p) {
 }
 
 const editingTypeLabel = computed(() => {
-  const t = editingAnnot.value ? editingAnnot.value.tool : '';
+  const it = editingAnnot.value;
+  const t = it ? it.tool : '';
   if (t === 'highlighter') return 'Zvýraznění';
   if (t === 'dynamic') return 'Dynamika';
   if (t === 'mark') return 'Značka';
   if (t === 'note') return 'Nota';
+  if (it && it.barNum) return 'Číslo taktu';
   return t ? 'Text' : '';
 });
 const wedgePoints = ref([]); // body zobáčku (crescendo/decrescendo), až 3 × {x,y}
@@ -4684,6 +4762,29 @@ function onLayerDown(e) {
 
   // Text / dynamika / značka / nota: umístění na stránku (vytvoří se po uvolnění)
   if (isTextAnnot(tool.value)) {
+    // ČÍSLA TAKTŮ: nevkládá se přes dialog — klepnutí rovnou položí další číslo
+    // a počítadlo se zvýší. Číslo je textová anotace, takže s ním jde hýbat
+    // i přepsat rukou (a vypálí se do PDF jako text).
+    if (tool.value === 'barnumber') {
+      pushHistory();
+      annotations.value.items.push({
+        id: crypto.randomUUID(), page: currentPage.value,
+        tool: 'text', barNum: true,
+        text: String(barNext.value),
+        size: clampBarSize(barSize.value),
+        color: textColor.value,
+        opacity: annotOpacity.value / 100,
+        border: false,
+        x: p.x, y: p.y,
+      });
+      barNext.value += 1;
+      saveBarStyle();
+      saveAnnotations();
+      // Skutečná šířka čísla pro rámeček výběru (stejné měření jako u textu).
+      nextTick(() => measureTexts());
+      _prev = p;
+      return;
+    }
     // Nová nota začíná NEZRCADLENÁ — zrcadlení je vlastnost jedné noty, ne skladby
     // (na rozdíl od velikosti, ta se pamatuje). Drží to `noteFlipX/Y` z dialogu.
     if (tool.value === 'note') { noteFlipX.value = false; noteFlipY.value = false; noteDotDraft.value = false; }
@@ -7313,6 +7414,19 @@ async function deleteBookmark(b) {
 .ap-size span { font-size: 0.9rem; color: var(--text); line-height: 1; }
 .ap-size.on span { color: #fff; }
 .ap-size.on { border-color: var(--accent); }
+/* Čísla taktů: vstup „další číslo" a hodnota velikosti. Ploché jako zbytek
+   panelu — žádná karta, jen rámeček v barvě ostatních ovládacích prvků. */
+.ap-bar-next {
+  width: 68px; height: 34px; box-sizing: border-box; padding: 0 6px;
+  border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg-elev2); color: var(--text);
+  text-align: center; font-size: 0.9rem; font-family: inherit; line-height: 1;
+  -moz-appearance: textfield; appearance: textfield;
+}
+.ap-bar-next::-webkit-outer-spin-button,
+.ap-bar-next::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.ap-bar-val { font-size: 0.9rem; color: var(--text); min-width: 26px; text-align: center; }
+.ap-hint { font-size: 0.72rem; color: var(--text-dim); line-height: 1.35; padding: 2px 2px 0; }
 .ap-delpage { font-size: 0.55rem; font-weight: 700; margin-left: 1px; }
 
 /* Pásmo úprav vybrané textové/dynamické anotace — POD horní lištou.
