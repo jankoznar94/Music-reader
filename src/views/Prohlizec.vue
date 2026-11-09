@@ -905,6 +905,63 @@
       />
     </div>
 
+    <!-- ČÍSLA TAKTŮ — SAMOSTATNÉ malé okno (Jan, Nov 2026): „Okno, ve kterém si
+         volím číslo taktu a velikost kroku musí být separované, malé a nesmí
+         zavazet.“ Velký anotační panel je vysoký a při počítání taktů v systému
+         ho uživatel musel pořád schovávat/posouvat — a s ním zmizelo i číslo
+         a krok. Tenhle panel drží JEN číslování, je úzký, dá se odtáhnout
+         a zmizí s přepnutím nástroje. -->
+    <div v-if="annotMode && !jumpPlaceMode && tool === 'barnumber'"
+         class="barnum-panel" data-panel="barnum" :style="panelStyle('barnum')">
+      <div class="bn-head">
+        <span class="bn-title">Čísla taktů</span>
+        <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
+                @pointerdown="panelDragStart($event, 'barnum')" @pointermove="panelDragMove"
+                @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
+                @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
+                @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
+      </div>
+      <div class="bn-row">
+        <span class="bn-label">Další</span>
+        <button class="bn-btn" @click="bumpBarNext(-1)" title="Předchozí číslo">−</button>
+        <input
+          class="bn-input"
+          type="number" min="1" step="1"
+          :value="barNext"
+          @change="setBarNext($event.target.value)"
+          @keydown.enter="$event.target.blur()"
+          title="Číslo, které vloží příští ťuknutí (skladba může začínat taktem 37)"
+        />
+        <button class="bn-btn" @click="bumpBarNext(1)" title="Další číslo">+</button>
+      </div>
+      <div class="bn-row">
+        <span class="bn-label">Krok</span>
+        <button class="bn-btn" @click="bumpBarStep(-1)" title="Menší krok">−</button>
+        <input
+          class="bn-input"
+          type="number" min="1" max="64" step="1"
+          :value="barStep"
+          @change="setBarStep($event.target.value)"
+          @keydown.enter="$event.target.blur()"
+          title="O kolik se další číslo zvýší = počet taktů v systému (např. 4)"
+        />
+        <button class="bn-btn" @click="bumpBarStep(1)" title="Větší krok">+</button>
+      </div>
+      <div class="bn-row">
+        <span class="bn-label">Vel.</span>
+        <button class="bn-btn" @click="bumpBarSize(-1)" title="Menší číslo">−</button>
+        <span class="bn-val">{{ barSize }}</span>
+        <button class="bn-btn" @click="bumpBarSize(1)" title="Větší číslo">+</button>
+        <!-- U not s VYTISKNUTÝMI čísly se vložené číslo jen schová (skok na takt
+             funguje dál) — vidět a smazat je jen v režimu Ruka. -->
+        <button class="bn-toggle" @click="toggleBarNumsHidden" :class="{ on: barNumsHidden }"
+                title="Vložená čísla taktů jen pro skok na takt — v notách je nevidět (pro noty s vytištěnými čísly)">
+          {{ barNumsHidden ? 'skrytá' : 'viditelná' }}
+        </button>
+      </div>
+      <div class="bn-hint">Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do rohu označení.</div>
+    </div>
+
     <!-- Plovoucí panel anotací (v anotačním režimu; při umisťování skoku schovaný,
          aby nezakrýval noty, na které se klepá) -->
     <div v-if="annotMode && !jumpPlaceMode" class="annot-panel" data-panel="annot" :style="panelStyle('annot')">
@@ -960,51 +1017,9 @@
         </div>
       </div>
 
-      <!-- Kategorie: Čísla taktů (jen když je nástroj zapnutý)
-           „Další“ a „Krok“ jsou v JEDNOM řádku (na tabletu se vejdou, na užším
-           se zalomí) — panel jinak zakryje půl stránky not. -->
-      <div v-if="tool === 'barnumber'" class="ap-cat">
-        <div class="ap-cat-label">Čísla taktů</div>
-        <div class="ap-row">
-          <span class="ap-op-label">Další</span>
-          <button class="ap-size" @click="bumpBarNext(-1)" title="Předchozí číslo">−</button>
-          <input
-            class="ap-bar-next"
-            type="number" min="1" step="1"
-            :value="barNext"
-            @change="setBarNext($event.target.value)"
-            @keydown.enter="$event.target.blur()"
-            title="Číslo, které vloží příští klepnutí (skladba může začínat taktem 37)"
-          />
-          <button class="ap-size" @click="bumpBarNext(1)" title="Další číslo">+</button>
-          <span class="ap-op-label">Krok</span>
-          <button class="ap-size" @click="bumpBarStep(-1)" title="Menší krok">−</button>
-          <input
-            class="ap-bar-next ap-bar-step"
-            type="number" min="1" max="64" step="1"
-            :value="barStep"
-            @change="setBarStep($event.target.value)"
-            @keydown.enter="$event.target.blur()"
-            title="O kolik se další číslo zvýší = počet taktů v systému (např. 4)"
-          />
-          <button class="ap-size" @click="bumpBarStep(1)" title="Větší krok">+</button>
-        </div>
-        <div class="ap-row">
-          <span class="ap-op-label">Velikost</span>
-          <button class="ap-size" @click="bumpBarSize(-1)" title="Menší číslo">−</button>
-          <span class="ap-bar-val">{{ barSize }}</span>
-          <button class="ap-size" @click="bumpBarSize(1)" title="Větší číslo">+</button>
-          <!-- U not, kde jsou čísla taktů UŽ VYTISKnutá, se vložené číslo jen
-               schová — slouží pro skok na takt a na papíře nic nezdvojuje.
-               Vidět (a smazat) je jen v režimu Ruka. -->
-          <button class="ap-size bar-hidden" @click="toggleBarNumsHidden" :class="{ on: barNumsHidden }"
-                  title="Vložená čísla taktů jen pro skok na takt — v notách je nevidět (pro noty s vytištěnými čísly)">
-            <span>{{ barNumsHidden ? 'Čísla: skrytá' : 'Čísla: viditelná' }}</span>
-          </button>
-        </div>
-        <div class="ap-hint">Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do levého horního rohu označení.</div>
-        <div class="ap-hint" v-if="barNumsHidden">Čísla jsou v notách skrytá — slouží jen ke skoku na takt (pro noty s vytištěnými čísly). Přepínač je zase zobrazí.</div>
-      </div>
+      <!-- Kategorie „Čísla taktů“ tu ZÁMĚRNĚ NENÍ — má vlastní malé okno
+           (.barnum-panel), aby se dalo anotační okno sbalit a počítat takty v systému,
+           aniž by uživatel přišel o číslo a krok (Jan, Nov 2026). -->
 
       <!-- Kategorie: Styl -->
       <div class="ap-cat">
@@ -1673,7 +1688,9 @@ const BAR_UP = 2;
 // systému a číslo se umístí nad něj — horizontálně zarovno s bodem, vertikálně
 // několik pixelů nad bod.“ Číslo tedy sedí účařím `BAR_TAP_GAP` px NAD místem
 // ťuknutí a začíná přesně na jeho x (text-anchor=start).
-const BAR_TAP_GAP = 6;
+// Jan (Nov 2026): „Čísla taktů dáme ještě o trošičku výš vůči vybranému bodu.“
+// 6 → 10 px (při velikosti 16 je to ~čtvrtina výšky číslice, víc už by viselo).
+const BAR_TAP_GAP = 10;
 // Číslo se nesmí dostat mimo VIDITELNOU plochu — jinak se ořízne
 // (Jan: „místo 177 je vidět jen 77“). Vrstva má viewBox = cropBox, takže když
 // je zapnutý rám (ořez okrajů), platí hranice cropBoxu, ne 0! Anotace položená
@@ -4266,7 +4283,7 @@ function isControlTarget(el) {
   if (!el || !el.closest) return false;
   return !!el.closest(
     'button, input, textarea, select, a, label,' +
-    '.annot-panel, .top-bar, .zoom-panel, .jump-panel, .edit-bar, .slider-panel,' +
+    '.annot-panel, .barnum-panel, .top-bar, .zoom-panel, .jump-panel, .edit-bar, .slider-panel,' +
     '.bookmark-strip, .jump-strip, .jump-on-page, .page-go, .text-input-card,' +
     '.wedge-hint, .viewer-loading, .jp-place-hint'
   );
@@ -4486,7 +4503,7 @@ function onTap(e) {
   if (e.target.closest('button')) return;
   if (e.target.closest('input, textarea, select')) return;
   if (e.target.closest('.top-bar, .jump-panel, .slider-panel, .bookmark-strip, .page-go-backdrop')) return;
-  if (e.target.closest('.zoom-panel, .annot-panel, .edit-bar, .jp-list, .page-go')) return;
+  if (e.target.closest('.zoom-panel, .annot-panel, .barnum-panel, .edit-bar, .jp-list, .page-go')) return;
   // Ťuknutí na stránku (mimo lištu i panely) = režimy gesta končí. Dělá se to
   // PŘED listováním, aby se panel zavřel i při klepnutí v okrajové zóně.
   // Když tap jen zavírá otevřený panel, lišta se NEsundává (jinak by uživatel
@@ -6204,7 +6221,7 @@ function rescuePanelOffsets() {
   if (changed) { panelOffsets.value = out; savePanelOffsets(); }
 }
 // Otevření kteréhokoli panelu zkontroluje, že jeho úchyt je na displeji.
-watch([zoomPanelOpen, rotPanelOpen, pagesPanelOpen, jumpMode, bookmarkMode, annotMode],
+watch([zoomPanelOpen, rotPanelOpen, pagesPanelOpen, jumpMode, bookmarkMode, annotMode, tool],
   () => { nextTick(rescuePanelOffsets); });
 
 function panelDragStart(e, name) {
@@ -7766,6 +7783,51 @@ async function deleteBookmark(b) {
 .bar-hidden.on span { color: var(--accent); }
 .ap-hint { font-size: 0.72rem; color: var(--text-dim); line-height: 1.35; padding: 2px 2px 0; }
 .ap-delpage { font-size: 0.55rem; font-weight: 700; margin-left: 1px; }
+
+/* SAMOSTATNÉ malé okno čísel taktů (Jan, Nov 2026) — není součástí anotačního
+   panelu: ten je vysoký, takže se při počítání taktů v systému musel pořád
+   schovávat a s ním mizelo i „Další“ a „Krok“. Tenhle panel drží JEN číslování,
+   je úzký (jedna kolona) a výchozí místo má v pravém horním rohu, kde notám
+   nejmíň překáží. Dá se odtáhnout úchytem; posun drží --pd-x/--pd-y. */
+.barnum-panel {
+  position: absolute; top: calc(var(--topbar-h, 96px) + 8px); right: 12px; left: auto;
+  transform: translate(var(--pd-x, 0px), var(--pd-y, 0px));
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 14px;
+  padding: 8px 10px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); z-index: 27;
+  width: 214px; max-width: 92vw;
+}
+.bn-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.bn-title { font-size: 0.78rem; font-weight: 700; color: var(--text); }
+.barnum-panel .panel-grip { width: 26px; height: 26px; font-size: 0.85rem; }
+.bn-row { display: flex; align-items: center; gap: 6px; }
+.bn-label { font-size: 0.72rem; color: var(--text-dim); width: 32px; flex: 0 0 auto; }
+.bn-btn {
+  width: 30px; height: 30px; flex: 0 0 auto; padding: 0;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 1rem; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; touch-action: manipulation;
+}
+.bn-btn:active { background: var(--accent); border-color: var(--accent); color: #17130f; }
+/* Stejná plochá pole jako v anotačním panelu — žádná karta, jen rámeček. */
+.bn-input {
+  flex: 1; min-width: 0; width: 100%; height: 30px; box-sizing: border-box; padding: 0 4px;
+  border-radius: 9px; border: 1px solid var(--border);
+  background: var(--bg-elev2); color: var(--text);
+  text-align: center; font-size: 0.86rem; font-family: inherit; line-height: 1;
+  -moz-appearance: textfield; appearance: textfield;
+}
+.bn-input::-webkit-outer-spin-button,
+.bn-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.bn-val { flex: 0 0 auto; min-width: 24px; text-align: center; font-size: 0.86rem; color: var(--text); }
+.bn-toggle {
+  flex: 1; min-width: 0; height: 30px; padding: 0 6px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--bg-elev2); color: var(--text);
+  font-size: 0.76rem; font-family: inherit; line-height: 1; cursor: pointer;
+  touch-action: manipulation;
+}
+.bn-toggle.on { border-color: var(--accent); color: var(--accent); }
+.bn-hint { font-size: 0.66rem; color: var(--text-dim); line-height: 1.3; }
 
 /* Pásmo úprav vybrané textové/dynamické anotace — POD horní lištou.
    DVA ŘÁDKY: hlavní (vždy: typ, ✏️, velikost ±, ▢, ✓, 🗑) a řádek rámu (čipy).
