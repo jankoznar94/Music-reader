@@ -482,19 +482,27 @@ function gapDensity(up, lo, mask, w, h, colInk) {
  *  str. 17: hranice systému „s inkoustem 19 a 27 sloupců“).
  *  Sloupce přes celou stránku (stín/vazba) se vynechávají — jinak by „prázdno“
  *  bylo plné inkoustu. */
-function gapConn(up, lo, dark, artCol, w, xLo, xHi, outX) {
+function gapConn(up, lo, dark, artCol, w, xLo, xHi, outX, deepFrom) {
   const y0 = up[up.length - 1] + 2, y1 = lo[0] - 2;
   if (y1 <= y0) return 0;
   const need = y1 - y0 + 1;
   const a = Math.max(0, Math.round(Number.isFinite(xLo) ? xLo : 0));
   const b = Math.min(w - 1, Math.round(Number.isFinite(xHi) ? xHi : w - 1));
-  let n = 0;
+  let n = 0, deep = 0;
   for (let x = a; x <= b; x++) {
     if (artCol[x]) continue;                     // stín/vazba přes celou stránku
     let ink = 0;
     for (let y = y0; y <= y1; y++) ink += dark[y * w + x];
-    if (ink / need >= 0.8) { n++; if (outX && outX.length < 12) outX.push(x); }
+    if (ink / need >= 0.8) {
+      n++;
+      // „Hluboké" sloupce = dál od levého okraje osnov. Levá závorka systému
+      // prochází KAŽDOU mezerou (i mezi systémy), takže se do spojnice
+      // nepočítá; taktové čáry uvnitř sazby ano.
+      if (Number.isFinite(deepFrom) && x >= deepFrom) deep++;
+      if (outX && outX.length < 12) outX.push(x);
+    }
   }
+  if (outX) outX.deep = deep;
   return n;
 }
 
@@ -557,12 +565,16 @@ function systemGroups(real, mask, w, colInk, h, dark, darkColInk) {
   const xLo = L0 + 0.75 * sp0;
   const xHi = R0 - 3 * sp0;
   const gaps = [];
+  // Hranice „hluboko uvnitř" mezery: levá závorka systému stojí u okraje osnov
+  // (naměřeno Cherubini: x≈40 b při okraji 36 b), kdežto taktové čáry uvnitř
+  // sazby jsou dál. Do spojnice se proto počítají jen sloupce odsud dál.
+  const xDeep = L0 + 3 * sp0;
   for (let i = 0; i + 1 < real.length; i++) {
     const connX = [];
     gaps.push({ gap: real[i + 1][0] - real[i][real[i].length - 1],
                 ink: gapInk(real[i], real[i + 1], mask, w, colInk, h),
-                conn: dark ? gapConn(real[i], real[i + 1], dark, artCol, w, xLo, xHi, connX) : null,
-                connX,
+                conn: dark ? gapConn(real[i], real[i + 1], dark, artCol, w, xLo, xHi, connX, xDeep) : null,
+                connX, connDeep: connX.deep || 0,
                 dens: gapDensity(real[i], real[i + 1], mask, w, h, colInk) });
   }
   const sorted = gaps.map((q) => q.gap).sort((a, b) => a - b);
@@ -594,7 +606,14 @@ function systemGroups(real, mask, w, colInk, h, dark, darkColInk) {
     const prev = merged[merged.length - 1];
     const belowCount = b1 - b0 + 1;
     const aboveCount = prev ? prev[1] - prev[0] + 1 : 0;
-    if (prev && belowCount === 2 && aboveCount >= 3) {
+    // KLAVÍRNÍ DVOJICE se pozná i TÍM, že její vnitřní mezerou procházejí
+    // taktové čáry (skenované noty je vedou přes celou dvojici), kdežto mezi
+    // systémy neprochází nic. Bez toho se na stránce s jedním vokálním hlasem
+    // (Cherubini tištěná 19: systémy 4/4/3/3 osnov) klavír odtrhl, protože
+    // horní blok nemá 3 osnovy — z jednoho systému byly dva a jedoosnový
+    // „systém" si navíc spletl nožičku půlové noty s taktovou čarou.
+    const pairJoin = belowCount === 2 && gaps[b0] && gaps[b0].connDeep >= 3;
+    if (prev && belowCount === 2 && (aboveCount >= 3 || pairJoin)) {
       const gap = real[b0][0] - real[prev[1]][real[prev[1]].length - 1];
       const nextGap = k + 1 < bounds.length
         ? real[bounds[k + 1][0]][0] - real[b1][real[b1].length - 1] : Infinity;
@@ -1033,7 +1052,18 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   if (opening == null && rest.length === 1) opening = rest.pop();
   else if (opening == null && rest.length >= 2) {
     const P = medGap(rest);
-    if (P > 0 && rest[0] - staffLeft < 1.5 * P) {
+    // ⚠️ Kandidát u OKRAJE osnov (do 0,6 šířky taktu) je úvodní čára vždy.
+    // Když u okraje žádný kandidát není, rozhoduje START LINEK: úvodní čára
+    // stojí tam, kde začínají vodorovné linky osnov (naměřeno Mozart str. 2/1.
+    // systém: `staffLeft` je 15 b = závorka, ale linky začínají na 135,9 b
+    // a tam stojí i úvodní čára). Bez toho se buď úvodní čára nechala mezi
+    // vnitřními (systém dostal o takt víc), nebo se za úvodní vzala první
+    // VNITŘNÍ čára ~1,25 taktu od okraje (Cherubini tištěná 19, 3. a 4.
+    // systém: 186 b při okraji 36 b → systém dostal o takt míň).
+    const startVotes = (x) => leftEnds.filter(L => Math.abs(x - L) <= 1.2 * spacePx).length;
+    const atLineStart = startVotes(rest[0]) >= Math.max(1, Math.ceil(sysCount * 0.5))
+      && rest[0] - staffLeft < 1.6 * P;
+    if (P > 0 && (rest[0] - staffLeft < 0.6 * P || atLineStart)) {
       opening = rest.shift();
       // ⚠️ Druhou úvodní čáru (závorka + první taktová čára) ber jen tehdy,
       // když po ní v systému zůstanou aspoň DVĚ vnitřní čáry. Na systému
