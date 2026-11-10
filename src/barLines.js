@@ -176,8 +176,24 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   // Osnova = 4–6 ROVNOMĚRNÝCH linek. Nerovnoměrné skupiny (řádky textu,
   // podtržení, obloučky) se zahazují — dřív z nich vznikaly falešné „osnovy“
   // a z těch pak nesmyslný počet osnov (naměřeno `staves: 9`).
+  // Tolerance: na vybledlém skenu se jedna linka osnovy detekuje DVAKRÁT nebo
+  // se přidá řádek textu písně (naměřeno str. 7: 393,5…410,3 = 6 řádků), takže
+  // se připouštějí až 3 nepravidelné mezery. Text se pak pozná podle toho, že
+  // v něm NENÍ svislá čára přes celou výšku (skutečná osnova má aspoň 2).
+  const vStrokes = (g) => {
+    const yT = g[0], yB = g[g.length - 1], bh = Math.max(1, yB - yT);
+    let n = 0, run = 0;
+    for (let x = 0; x < w; x++) {
+      let ink = 0;
+      for (let y = yT; y <= yB; y++) ink += mask[y * w + x];
+      if (ink / bh >= 0.9) { run++; }
+      else { if (run >= 1) n++; run = 0; }
+    }
+    if (run) n++;
+    return n;
+  };
   const real = groups.filter((g) => {
-    if (g.length < 4) return false;
+    if (g.length < 4 || g.length > 8) return false;
     const gaps = [];
     for (let i = 1; i < g.length; i++) gaps.push(g[i] - g[i - 1]);
     gaps.sort((a, b) => a - b);
@@ -185,7 +201,8 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     if (med < 2) return false;
     let same = 0;
     for (const gp of gaps) if (gp >= 0.7 * med && gp <= 1.4 * med) same++;
-    return same >= g.length - 2;
+    if (same < g.length - 3) return false;
+    return vStrokes(g) >= 2;
   });
   if (!real.length) {
     return { lines: [], bars: 0, krok, staves: 0, top: 0, ok: false,
