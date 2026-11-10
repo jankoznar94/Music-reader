@@ -36,7 +36,7 @@ JS = """(async () => {
   const d = p.detectBarlines(cv, cv.width / crop.w, {ypt: py, offsetY: crop.y});
   return JSON.stringify({ok:d.ok, bars:d.bars, staves:d.staves, sysTop:d.sysTop,
     sysBot:d.sysBot, top:d.top, lines:d.lines.map(v=>+v.toFixed(1)),
-    opening:d.opening, closing:d.closing});
+    opening:d.opening, closing:d.closing, diag:d.diag});
 })()"""
 
 
@@ -55,15 +55,19 @@ async def main():
                     key = (page, round(r['sysTop'] or 0, 1))
                     if not any((row[0], round(row[1], 1)) == key for row in rows):
                         rows.append([page, r['sysTop'], r['sysBot'], r['staves'],
-                                     r['bars'], r['lines'], r['opening'], r['closing']])
+                                     r['bars'], r['lines'], r['opening'], r['closing'],
+                                     r.get('diag')])
                 y += STEP
             print("str %d hotova, systémů %d" % (page, sum(1 for r in rows if r[0] == page)))
     with open(OUT, "w") as f:
         json.dump(rows, f, indent=0)
     for r in rows:
-        print("str %d top %.1f osnov %d bars %d lines %s open %s close %s"
+        d = r[8] or {}
+        print("str %d top %.1f osnov %d bars %d lines %s open %s close %s | R %s sp %.2f dens %s tail %s barP %s"
               % (r[0], r[1], r[3], r[4], [round(v) for v in r[5]],
                  None if r[6] is None else round(r[6], 1),
-                 None if r[7] is None else round(r[7], 1)))
+                 None if r[7] is None else round(r[7], 1),
+                 d.get('staffRight'), d.get('space') or 0, d.get('closingDens'),
+                 d.get('tail'), d.get('barP')))
 
 asyncio.run(main())

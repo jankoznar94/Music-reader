@@ -21,6 +21,12 @@
 //     (str. 7, 3. systém: falešné čáry 100 a 139 b s podporou 2 ze 3). Teď se
 //     u neúplné podpory navíc vyžaduje průchod MEZEROU mezi osnovami — tam
 //     taktová čára systému prochází, nožička ne.
+//  8) Koncová čára se poznávala podle vzdálenosti od konce linek — v této sazbě
+//     ale linky přetahují ~45 b za koncovou čáru do okraje (str. 9/1. a 2.
+//     systém, str. 13/2. a 3., str. 7/2.–4.), takže zůstala mezi vnitřními a
+//     systém dostal o takt navíc. Teď rozhoduje OBSAH: za koncovou čarou je
+//     prázdno (0–1 % inkoustu), za vnitřní čarou hudba (12–34 %). Měří se se
+//     vynechanými linkami osnov a vynechanými sloupci přes celou stránku.
 //
 // SOUČASNÝ PŘÍSTUP (listopad 2026) — nic z toho nepotřebuje:
 //  * Bere se JEDINÁ osnova, do které uživatel klepl. Seskupování do systému
@@ -429,9 +435,54 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     const P = medGap(rest);
     if (P > 0 && rest[0] - staffLeft < 0.75 * P) opening = rest.shift();
   }
-  // Koncová čára je dvojitá (tlustá + tenká) a stojí pár bodů před koncem linek.
+  // Koncová čára stojí na konci not — ale LINKY OSNOV v této sazbě přetahují
+  // ~45 b do pravého okraje, takže vzdálenost od okraje nic neříká (dřív se
+  // podle ní koncová čára hledala a na str. 9/1. a 2. systém a str. 13/3.
+  // systém zůstala mezi vnitřními → systém dostal o takt navíc).
+  // Rozhoduje OBSAH: za skutečnou vnitřní čarou je hudba (12–16 % inkoustu),
+  // za koncovou čarou už jen prázdné linky (1–2 %). Linky osnov se při měření
+  // vynechávají, jinak by „prázdno“ nikdy nevyšlo.
+  const staffRowSkip = new Set();
+  for (let i = sysA; i <= sysB; i++) {
+    for (const yy of real[i]) {
+      const r = Math.round(yy);
+      for (let d = -2; d <= 2; d++) staffRowSkip.add(r + d);
+    }
+  }
+  const musicDensity = (xa, xb) => {
+    const x0 = Math.max(0, Math.round(xa)), x1 = Math.min(w - 1, Math.round(xb));
+    if (x1 <= x0) return 0;
+    const y0 = Math.round(real[sysA][0]);
+    const y1 = Math.round(real[sysB][real[sysB].length - 1]);
+    let ink = 0, n = 0;
+    for (let y = y0; y <= y1; y++) {
+      if (staffRowSkip.has(y)) continue;
+      const off = y * w;
+      for (let x = x0; x <= x1; x++) {
+        // Sloupce přes celou stránku (vazba, stín u okraje skenu) se nepočítají
+        // — jinak „prázdný“ okraj vyjde jako plný inkoustu.
+        if (isArtifact(x)) continue;
+        ink += mask[off + x];
+        n++;
+      }
+    }
+    return n ? ink / n : 0;
+  };
   let closing = null;
   while (rest.length && rest[rest.length - 1] > staffRight - 2.5 * spacePx) closing = rest.pop();
+  // …a když linky přetahují, rozhodne prázdno za poslední čarou. Pojistka:
+  // zahazuje se jen KRÁTKÝ chvost (do 0,6 šířky taktu) — koncová čára v této
+  // sazbě stojí ~45 b před koncem linek, kdežto skutečný poslední takt je
+  // široký jako ostatní, takže se nezahodí.
+  const barP = medGap(rest);
+  const tailShort = () => {
+    const t = staffRight - rest[rest.length - 1];
+    return barP > 0 ? t < 0.6 * barP : t < 8 * spacePx;
+  };
+  while (rest.length && tailShort()
+         && musicDensity(rest[rest.length - 1] + spacePx, staffRight) < 0.05) {
+    closing = rest.pop();
+  }
 
   // 5) VNITŘNÍ ČÁRY = všichni kandidáti, které vidí celý systém. Řetěz
   // pravidelnosti se používá JEN u jedoosnového systému (tam podpora nic
@@ -453,7 +504,13 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     all: real.map(g => [+(g[0] / pxPerPt).toFixed(1), +(g[g.length - 1] / pxPerPt).toFixed(1), g.length]),
   };
   const diag = { thr, osnov: real.length, system: sysCount, strokes: all.length,
-                 cov: covUsed, cands: candsX.length, chain: chain.length, krok };
+                 cov: covUsed, cands: candsX.length, chain: chain.length, krok,
+                 staffRight: +(staffRight / pxPerPt).toFixed(1),
+                 space: +(spacePx / pxPerPt).toFixed(2),
+                 closingDens: rest.length
+                   ? +(musicDensity(rest[rest.length - 1] + spacePx, staffRight)).toFixed(3) : null,
+                 tail: rest.length ? +(staffRight - rest[rest.length - 1]).toFixed(1) : null,
+                 barP: +barP.toFixed(1) };
   const cands = clusters.map(c => [+(c.xs.reduce((n, p) => n + p.x, 0) / c.xs.length / pxPerPt).toFixed(1),
                                    new Set(c.xs.map(p => p.i)).size]);
 
