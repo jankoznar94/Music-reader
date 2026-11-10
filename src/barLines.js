@@ -574,7 +574,7 @@ function systemGroups(real, mask, w, colInk, h, dark, darkColInk) {
   const sizeBoundary = (q) => gapBase > 0
     && (q.gap > 3 * gapBase
         || (q.gap > 1.5 * gapBase && q.ink < 1)
-        || (q.conn === 0 && q.gap > 1.4 * gapBase));
+        || (q.conn === 0 && q.gap > 1.25 * gapBase));
   const bounds = [];
   let a = 0;
   for (let i = 0; i < real.length; i++) {
