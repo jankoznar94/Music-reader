@@ -130,6 +130,7 @@ async def main():
             dbg = await h.ev("JSON.stringify((window.__barPickDbg||[]).filter(d=>d&&d.fill).slice(-1)[0]||{})")
             if isinstance(dbg, str): dbg = json.loads(dbg)
             f = (dbg or {}).get('fill', {})
+            print("   DIAG:", (f.get('diag') or {}))
             print("   det: staves=%s ok=%s lines=%s top=%s cands=%s" % (
                 f.get('staves'), f.get('ok'),
                 [round(v) for v in (f.get('lines') or [])], f.get('top'),

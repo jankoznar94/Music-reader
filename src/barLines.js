@@ -120,42 +120,57 @@ function barChain(xs, spacePx) {
   return best;
 }
 
-/**
- * Najde VNITŘNÍ taktové čáry systému (čáry, které začínají 2. a další takt).
- *
- * @param {HTMLCanvasElement} cv pás přes celou šířku (240–420 bodů vysoký)
- * @param {number} pxPerPt pixely canvasu na PDF bod
- * @param {{krok?:number, ypt?:number, offsetY?:number}} opt `krok` = počet taktů
- *        systému (jen kontrola, ne vstup výpočtu), `ypt` = y klepnutí v bodech PDF
- * @returns {{lines:number[], bars:number, krok:number, top:number, ok:boolean,
- *            reason?:string, opening?:number|null, closing?:number|null}}
- *          `lines` = x-ové souřadnice začátků taktů 2..N v BODECH PDF,
- *          `top` = horní linka osnovy v bodech PDF (číslo patří nad ni)
- */
-export function detectBarlines(cv, pxPerPt, opt = {}) {
+/** Šedá maska (inkoust = 1) + práh.
+ *  ⚠️ Práh se počítá po PÁSECH (64 px), ne jeden pro celý obrázek: sken je
+ *  na stránce nestejně osvětlený a jeden globální Otsu na celé stránce
+ *  ztratil světlé osnovy v dolní polovině (naměřeno str. 2: 10 osnov místo 15,
+ *  chyběly právě ty ve spodní části) — a ztracená osnova rozbije hranice
+ *  systému. V pásu (jeden systém) je pásová hodnota skoro totéž co globální,
+ *  takže se chování `detectBarlines` nemění. Práh pro LINKY OSNOV je navíc
+ *  výš než Otsu (Otsu + 35, max 235) — linky jsou na skenu šedé a při nízkém
+ *  prahu se rozpadají (naměřeno 0,46–0,64 místo > 0,85). */
+function buildMask(cv) {
   const w = cv.width, h = cv.height;
-  const krok = Math.max(0, Math.min(64, Math.round(opt.krok || 0)));
-  const offY = Number.isFinite(opt.offsetY) ? opt.offsetY : 0;
-  // ⚠️ Klepnutí (`ypt`) je v bodech PDF CELÉ STRÁNKY, ale řádky osnov se měří
-  // v PÁSU (crop), takže se musí odečíst `offsetY`. Dřív se neodečítalo a výběr
-  // osnovy u klepnutí padal o systém vedle (naměřeno: klepnutí na klavír 470 b
-  // vybralo systém pod ním).
-  const ypt = Number.isFinite(opt.ypt) ? opt.ypt - offY : null;
   const d = cv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
-  const hist = new Uint32Array(256);
   const gray = new Uint8Array(w * h);
   for (let i = 0, p = 0; p < w * h; p++, i += 4) {
-    const v = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
-    gray[p] = v;
-    hist[v | 0]++;
+    gray[p] = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
   }
-  // Práh pro LINKY OSNOV výš než Otsu celého pásu — linky jsou na skenu šedé
-  // a při nízkém prahu se rozpadají (naměřeno 0,46–0,64 místo > 0,85).
-  const thr = Math.min(235, otsu(hist, w * h) + 35);
+  const BLOCK = 64;
   const mask = new Uint8Array(w * h);
-  for (let p = 0; p < w * h; p++) mask[p] = gray[p] < thr ? 1 : 0;
+  // Počty inkoustu ve sloupcích — slouží k poznání sloupců přes celý obraz
+  // (vazba, stín u okraje skenu). Ty se nesmí počítat jako „linka osnovy“.
 
-  // 1) linky osnov = řádky s dlouhým vodorovným tahem
+  let thrGlobal = 0;
+  for (let y0 = 0; y0 < h; y0 += BLOCK) {
+    const y1 = Math.min(h, y0 + BLOCK);
+    const hist = new Uint32Array(256);
+    for (let y = y0; y < y1; y++) {
+      const off = y * w;
+      for (let x = 0; x < w; x++) hist[gray[off + x] | 0]++;
+    }
+    const thr = Math.min(235, otsu(hist, (y1 - y0) * w) + 35);
+    if (!thrGlobal) thrGlobal = thr;
+    for (let y = y0; y < y1; y++) {
+      const off = y * w;
+      for (let x = 0; x < w; x++) if (gray[off + x] < thr) mask[off + x] = 1;
+    }
+  }
+  const colInk = new Uint32Array(w);
+  for (let y = 0; y < h; y++) {
+    const off = y * w;
+    for (let x = 0; x < w; x++) if (mask[off + x]) colInk[x]++;
+  }
+  return { w, h, mask, thr: thrGlobal, colInk };
+}
+
+/** Osnovy = skupiny 4–6 ROVNOMĚRNÝCH řádků s dlouhým vodorovným tahem.
+ *  Nerovnoměrné skupiny (text písně, podtržení, obloučky) se zahazují — dřív
+ *  z nich vznikaly falešné „osnovy“ a z těch nesmyslný počet osnov
+ *  (naměřeno `staves: 9`). Tahle funkce je JEDINÉ místo, kde se osnovy hledají,
+ *  aby se stránka a jeden systém nemohly rozejít. */
+function staffGroups(mask, w, h, pxPerPt) {
+  const longest = (off) => longestRun(mask, off, w);
   const centres = [];
   let runStart = -1;
   for (let y = 0; y <= h; y++) {
@@ -165,7 +180,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
       let ink = 0;
       for (let x = 0; x < w; x++) ink += mask[off + x];
       const frac = ink / w;
-      on = frac >= 0.30 || longestRun(mask, off, w) / w >= 0.45;
+      on = frac >= 0.30 || longest(off) / w >= 0.45;
     }
     if (on && runStart < 0) runStart = y;
     if (!on && runStart >= 0) {
@@ -181,16 +196,50 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     else cs.push(c);
   }
   const gapMax = Math.max(12, Math.round(pxPerPt * 8));
+  // ⚠️ Linka osnovy se na skenu občas detekuje DVAKRÁT (dvojitý tah / přerušená
+  // linka) a z osnovy se pak stane „skupina o 8–9 linkách“, kterou filtr 4–8
+  // zahodí → osnova ZMIZÍ a rozpadne se hranice systému (naměřeno str. 2:
+  // 5 osnov ztraceno a systémům chyběl kus). Slijeme proto centra blíž než
+  // 0,6 typické mezery mezi linkami — ta se MĚŘÍ z dat, ne z pxPerPt.
+  const ds = [];
+  for (let i = 1; i < cs.length; i++) {
+    const d = cs[i] - cs[i - 1];
+    if (d < 10 * pxPerPt) ds.push(d);
+  }
+  ds.sort((a, b) => a - b);
+  const lineSpace = ds.length ? ds[Math.floor(ds.length / 2)] : 4 * pxPerPt;
+  const mergeSep = Math.max(2, 0.6 * lineSpace);
+  const cs2 = [];
+  for (const c of cs) {
+    if (cs2.length && c - cs2[cs2.length - 1] <= mergeSep) {
+      cs2[cs2.length - 1] = Math.round((cs2[cs2.length - 1] + c) / 2);
+    } else cs2.push(c);
+  }
   const groups = [];
   let cur = [];
-  for (const c of cs) {
+  for (const c of cs2) {
     if (cur.length && c - cur[cur.length - 1] < gapMax) cur.push(c);
     else { if (cur.length) groups.push(cur); cur = [c]; }
   }
   if (cur.length) groups.push(cur);
-  // Osnova = 4–6 ROVNOMĚRNÝCH linek. Nerovnoměrné skupiny (řádky textu,
-  // podtržení, obloučky) se zahazují — dřív z nich vznikaly falešné „osnovy“
-  // a z těch pak nesmyslný počet osnov (naměřeno `staves: 9`).
+  // Skupina delší než 6 linek = dvě osnovy slepené (na skenu mezi ně občas
+  // spadne řádek textu nebo trylek). Rozdělí se v NEJVĚTŠÍ mezeře, takže
+  // z jedné „osnovy“ o 7 linkách vzniknou dvě — jinak z ní vyjde systém
+  // s nesmyslným počtem osnov a hranice systému se posunou.
+  const splitBig = (g) => {
+    if (g.length <= 6) return [g];
+    const gaps = [];
+    for (let i = 1; i < g.length; i++) gaps.push(g[i] - g[i - 1]);
+    const med = gaps.slice().sort((a, b) => a - b)[Math.floor(gaps.length / 2)];
+    let cut = 0, cutAt = -1;
+    for (let i = 0; i < gaps.length; i++) {
+      if (gaps[i] > med * 1.5 && gaps[i] > cut) { cut = gaps[i]; cutAt = i; }
+    }
+    if (cutAt < 0) return [g];
+    return splitBig(g.slice(0, cutAt + 1)).concat(splitBig(g.slice(cutAt + 1)));
+  };
+  const groupsSplit = [];
+  for (const g of groups) groupsSplit.push(...splitBig(g));
   // Tolerance: na vybledlém skenu se jedna linka osnovy detekuje DVAKRÁT nebo
   // se přidá řádek textu písně (naměřeno str. 7: 393,5…410,3 = 6 řádků), takže
   // se připouštějí až 3 nepravidelné mezery. Text se pak pozná podle toho, že
@@ -207,7 +256,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     if (run) n++;
     return n;
   };
-  const real = groups.filter((g) => {
+  const real = groupsSplit.filter((g) => {
     if (g.length < 4 || g.length > 8) return false;
     const gaps = [];
     for (let i = 1; i < g.length; i++) gaps.push(g[i] - g[i - 1]);
@@ -217,11 +266,175 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     let same = 0;
     for (const gp of gaps) if (gp >= 0.7 * med && gp <= 1.4 * med) same++;
     if (same < g.length - 3) return false;
+    // Čtyřlinková „osnova“ je skoro vždy řádek TEXTU (patička, tiráž), který
+    // má linky nestejně daleko. Skutečná osnova se 4 linkami (sken ztratil
+    // jednu) drží rozestup těsně, takže se pozná podle rovnoměrnosti.
+    if (g.length === 4 && same < 3) return false;
     return vStrokes(g) >= 2;
   });
+  return { real, lines: cs.length,
+           raw: groups.map((g) => [g[0], g[g.length - 1], g.length]) };
+}
+
+/** Levý a pravý konec OSNOVY: sloupec, kde je nakreslená VĚTŠINA linek osnovy
+ *  (4 z 5 — sken občas jednu ztratí). Slouží pro okraje a pro měření hustoty;
+ *  úvodní čára systému se z něj NEODVOZUJE (okraj může být posunutý textem
+ *  nebo závorkou na kraji sazby — naměřeno str. 2/1. systém: 15 b místo 136 b).
+ */
+function staffSpan(g, mask, w) {
+  const need = Math.max(2, g.length - 1);
+  let first = -1, last = -1;
+  for (let x = 0; x < w; x++) {
+    let c = 0;
+    for (const yy of g) if (mask[Math.round(yy) * w + x]) c++;
+    if (c >= need) { if (first < 0) first = x; last = x; }
+  }
+  return [first < 0 ? 0 : first, last < 0 ? w - 1 : last];
+}
+
+/** Kolik svislých sloupců v mezeře mezi dvěma osnovami je plných (spojnice). */
+function gapInk(up, lo, mask, w, colInk, h) {
+  const y0 = up[up.length - 1] + 2, y1 = lo[0] - 2;
+  if (y1 <= y0) return 0;
+  const [L, R] = staffSpan(up, mask, w);
+  const sp = Math.max(2, (up[up.length - 1] - up[0]) / 4);
+  const x0 = Math.max(0, Math.round(L + 2 * sp));
+  const x1 = Math.min(w - 1, Math.round(R - 2 * sp));
+  const need = y1 - y0 + 1;
+  let cols = 0;
+  for (let x = x0; x <= x1; x++) {
+    let ink = 0;
+    for (let y = y0; y <= y1; y++) ink += mask[y * w + x];
+    if (ink / need >= 0.9) cols++;
+  }
+  return cols;
+}
+
+/** Rozdělí osnovy do SYSTÉMŮ. Jedno místo pravdy pro celou stránku i pro
+ *  klepnutí do jednoho systému — dřív si to každé volání počítalo samo z jiného
+ *  výřezu, takže pásky vycházely jinak a jeden systém se očísloval dvakrát.
+ *  SYSTÉM = souvislý pás osnov. Rozhoduje MEZERA + SPOJNICE:
+ *  * mezera větší než 1,5 × NEJMENŠÍ typická mezera (25. percentil) a BEZ
+ *    spojnice = hranice systému; na skenu Carus jsou uvnitř systému mezery
+ *    18–38 b, mezi systémy 37–45 b, takže samotná velikost nestačí a rozhoduje
+ *    spojnice (závorka / taktová čára přes mezeru),
+ *  * extrémní mezera (> 3 × typická) je hranice vždy — tam spojnice nepatří.
+ *  ⚠️ Základ se bere z 25. percentilu, ne z mediánu: v pásu, kde je jen jeden
+ *  systém, převažují velké mezery sbor→klavír a medián je nad hranicí systému
+ *  (naměřeno: 11 osnov slitých do jednoho systému na str. 8). */
+function systemGroups(real, mask, w, colInk, h) {
+  const gaps = [];
+  for (let i = 0; i + 1 < real.length; i++) {
+    gaps.push({ gap: real[i + 1][0] - real[i][real[i].length - 1],
+                ink: gapInk(real[i], real[i + 1], mask, w, colInk, h) });
+  }
+  const sorted = gaps.map((q) => q.gap).sort((a, b) => a - b);
+  const gapBase = sorted.length ? sorted[Math.floor((sorted.length - 1) * 0.25)] : 0;
+  const boundary = (q) => gapBase > 0
+    && (q.gap > 3 * gapBase || (q.gap > 1.5 * gapBase && q.ink < 1));
+  const conn = gaps.map((q) => !boundary(q));
+  const bounds = [];
+  let a = 0;
+  for (let i = 0; i < real.length; i++) {
+    if (i + 1 < real.length && conn[i]) continue;
+    bounds.push([a, i]);
+    a = i + 1;
+  }
+  return { gaps, gapBase, conn, bounds };
+}
+
+/**
+ * Najde VŠECHNY systémy stránky naráz. Osnovy i hranice systémů se počítají
+ * jednou pro celou stránku (proto se systémy nemůžou sejít dvakrát ani slit dva
+ * dohromady), každý systém se pak změří stejným `detectBarlines` jako při
+ * klepnutí — jen na vlastním výřezu stránky.
+ * @returns {{ok:boolean, systems:Array, staves:number, reason?:string}}
+ */
+export function detectPageSystems(cv, pxPerPt, opt = {}) {
+  const krok = Math.max(0, Math.min(64, Math.round(opt.krok || 0)));
+  const { w, h, mask, colInk } = buildMask(cv);
+  const staff = staffGroups(mask, w, h, pxPerPt);
+  const real = staff.real;
+  if (!real.length) {
+    return { ok: false, systems: [], staves: 0,
+             reason: 'nenašel jsem linky osnov (' + staff.lines + ' linek)' };
+  }
+  const grp = systemGroups(real, mask, w, colInk, h);
+  const topPxOf = (i) => real[i][0];
+  const botPxOf = (i) => real[i][real[i].length - 1];
+  const systems = [];
+  for (let k = 0; k < grp.bounds.length; k++) {
+    const [a, b] = grp.bounds[k];
+    const topPx = topPxOf(a), botPx = botPxOf(b);
+    // Výřez sahá do POLOVINY mezery k sousednímu systému — víc by přitáhlo cizí
+    // osnovy a seskupení uvnitř výřezu by je slilo do tohohle systému.
+    const prevBot = k > 0 ? botPxOf(grp.bounds[k - 1][1]) : -Infinity;
+    const nextTop = k + 1 < grp.bounds.length ? topPxOf(grp.bounds[k + 1][0]) : Infinity;
+    const pad = 14 * pxPerPt;
+    const y0 = Math.max(0, Math.floor(Math.max(topPx - pad, (prevBot + topPx) / 2)));
+    const y1 = Math.min(h, Math.ceil(Math.min(botPx + pad, (botPx + nextTop) / 2)));
+    const bh = Math.max(4, y1 - y0);
+    const band = document.createElement('canvas');
+    band.width = w;
+    band.height = bh;
+    band.getContext('2d').drawImage(cv, 0, y0, w, bh, 0, 0, w, bh);
+    const offY = y0 / pxPerPt;
+    const midPt = (topPx + botPx) / 2 / pxPerPt;
+    // ⚠️ `ypt` se předává v bodech CELÉ stránky a `detectBarlines` od něj odečte
+    // `offsetY` — proto tady NEPŘIČÍTÁME `offY` (dřív se přičetlo a klepnutí
+    // uvnitř výřezu padlo mimo něj → vybrala se špatná osnova a z výřezu čtyř
+    // taktů vyšlo jedenáct čar).
+    const det = detectBarlines(band, pxPerPt, {
+      krok, ypt: midPt, offsetY: offY,
+      rows: [Math.round(topPx) - y0, Math.round(botPx) - y0],
+    });
+    // Kontrola, že výřez opravdu obsahuje PRÁVĚ tenhle systém: když se hrany
+    // rozejdou, výřez něco uřízl a detekci nesmíme věřit.
+    const spanOk = Number.isFinite(det.sysTop) && Number.isFinite(det.sysBot)
+      && Math.abs(det.sysTop - topPx / pxPerPt) <= 3
+      && Math.abs(det.sysBot - botPx / pxPerPt) <= 3;
+    systems.push({ ...det, spanOk, sysA: a, sysB: b, stavesFound: det.staves,
+                   stavesExpected: b - a + 1 });
+  }
+  const inkTop = [];
+  for (let x = 0; x < w; x++) if (colInk[x] > 0.25 * h) inkTop.push([Math.round(x / pxPerPt), colInk[x], h]);
+  return { ok: systems.some((d) => d.ok), systems, staves: real.length, tallCols: inkTop.slice(0, 12),
+           rawGroupsPt: staff.raw.map((g) => [+(g[0] / pxPerPt).toFixed(1),
+                                             +(g[1] / pxPerPt).toFixed(1), g[2]]),
+           gapBasePt: +(grp.gapBase / pxPerPt).toFixed(1),
+           gapsPt: grp.gaps.map((q) => [+(q.gap / pxPerPt).toFixed(1), q.ink]),
+           rowsPt: real.map((g) => [+(g[0] / pxPerPt).toFixed(1),
+                                   +(g[g.length - 1] / pxPerPt).toFixed(1), g.length]) };
+}
+
+/**
+ * Najde VNITŘNÍ taktové čáry systému (čáry, které začínají 2. a další takt).
+ *
+ * @param {HTMLCanvasElement} cv pás přes celou šířku (240–420 bodů vysoký)
+ * @param {number} pxPerPt pixely canvasu na PDF bod
+ * @param {{krok?:number, ypt?:number, offsetY?:number}} opt `krok` = počet taktů
+ *        systému (jen kontrola, ne vstup výpočtu), `ypt` = y klepnutí v bodech PDF
+ * @returns {{lines:number[], bars:number, krok:number, top:number, ok:boolean,
+ *            reason?:string, opening?:number|null, closing?:number|null}}
+ *          `lines` = x-ové souřadnice začátků taktů 2..N v BODECH PDF,
+ *          `top` = horní linka osnovy v bodech PDF (číslo patří nad ni)
+ */
+export function detectBarlines(cv, pxPerPt, opt = {}) {
+  const krok = Math.max(0, Math.min(64, Math.round(opt.krok || 0)));
+  const offY = Number.isFinite(opt.offsetY) ? opt.offsetY : 0;
+  // ⚠️ Klepnutí (`ypt`) je v bodech PDF CELÉ STRÁNKY, ale řádky osnov se měří
+  // v PÁSU (crop), takže se musí odečíst `offsetY`. Dřív se neodečítalo a výběr
+  // osnovy u klepnutí padal o systém vedle (naměřeno: klepnutí na klavír 470 b
+  // vybralo systém pod ním).
+  const ypt = Number.isFinite(opt.ypt) ? opt.ypt - offY : null;
+  const { w, h, mask, thr, colInk } = buildMask(cv);
+
+  // 1) linky osnov = řádky s dlouhým vodorovným tahem, seskupené do osnov
+  const staff = staffGroups(mask, w, h, pxPerPt);
+  const real = staff.real;
   if (!real.length) {
     return { lines: [], bars: 0, krok, staves: 0, top: 0, ok: false,
-             reason: 'nenašel jsem linky osnov (' + cs.length + ' linek)' };
+             reason: 'nenašel jsem linky osnov (' + staff.lines + ' linek)' };
   }
 
   // 2) SYSTÉM kolem klepnutí = sousední osnovy, mezi kterými PROCHÁZÍ taktová
@@ -245,51 +458,32 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   const staffH = Math.max(2, yBot - yTop);
   const spacePx = Math.max(2, staffH / 4);
 
-  // Okraje osnovy (první a poslední inkoust na horní lince) — kvůli testu spojení.
-  const staffEdges = (g) => {
-    const yr = Math.round(g[0]) * w;
-    let a = -1, b = -1;
-    for (let x = 0; x < w; x++) if (mask[yr + x]) { if (a < 0) a = x; b = x; }
-    return [a < 0 ? 0 : a, b < 0 ? w - 1 : b];
-  };
-  // Kolik svislých sloupců v mezeře mezi dvěma osnovami je plných (taktová čára).
-  const gapInk = (up, lo) => {
-    const y0 = up[up.length - 1] + 2, y1 = lo[0] - 2;
-    if (y1 <= y0) return 0;
-    const [L, R] = staffEdges(up);
-    const sp = Math.max(2, (up[up.length - 1] - up[0]) / 4);
-    const x0 = Math.max(0, Math.round(L + 2 * sp));
-    const x1 = Math.min(w - 1, Math.round(R - 2 * sp));
-    const need = y1 - y0 + 1;
-    let cols = 0;
-    for (let x = x0; x <= x1; x++) {
-      let ink = 0;
-      for (let y = y0; y <= y1; y++) ink += mask[y * w + x];
-      if (ink / need >= 0.9) cols++;
-    }
-    return cols;
-  };
-  const gapList = [];
-  for (let i = 0; i + 1 < real.length; i++) {
-    gapList.push({ gap: real[i + 1][0] - real[i][real[i].length - 1], ink: gapInk(real[i], real[i + 1]) });
-  }
-  // SYSTÉM = souvislý pás osnov. Rozhoduje MEZERA + SPOJNICE:
-  //  * mezera větší než 1,5 × NEJMENŠÍ typická mezera (25. percentil) a BEZ
-  //    spojnice = hranice systému; na skenu Carus jsou uvnitř systému mezery
-  //    18–38 b, mezi systémy 37–45 b, takže samotná velikost nestačí a rozhoduje
-  //    spojnice (závorka / taktová čára přes mezeru),
-  //  * extrémní mezera (> 3 × typická) je hranice vždy — tam spojnice nepatří.
-  // ⚠️ Základ se bere z 25. percentilu, ne z mediánu: v pásu, kde je jen jeden
-  // systém, převažují velké mezery sbor→klavír a medián je nad hranicí systému
-  // (naměřeno: 11 osnov slitých do jednoho systému na str. 8).
-  const gapSorted = gapList.map((q) => q.gap).sort((a, b) => a - b);
-  const gapBase = gapSorted.length ? gapSorted[Math.floor((gapSorted.length - 1) * 0.25)] : 0;
-  const boundary = (q) => gapBase > 0
-    && (q.gap > 3 * gapBase || (q.gap > 1.5 * gapBase && q.ink < 1));
-  const conn = gapList.map((q) => !boundary(q));
+  // Okraje systému a jeho hranice řeší `systemGroups` (jedno místo pravdy pro
+  // celou stránku i pro klepnutí) — tady se jen vybere pás, do kterého se kleplo.
   let sysA = nearIdx, sysB = nearIdx;
-  while (sysA > 0 && conn[sysA - 1]) sysA--;
-  while (sysB < real.length - 1 && conn[sysB]) sysB++;
+  // Když volá celou stránku `detectPageSystems`, hranice systému UŽ ZNÁ (počítaly
+  // se jednou pro celou stránku) a předává je v `rows` (px pásu). Uvnitř výřezu
+  // se nesmí počítat znovu: pás má jiné statistiky mezer, takže si šestiosnový
+  // systém sám rozdělil na 4 + 2 a čísla vyšla doprostřed (naměřeno str. 4).
+  if (Array.isArray(opt.rows)) {
+    const near0 = (y, useTop) => {
+      let best = -1, bd = Infinity;
+      for (let i = 0; i < real.length; i++) {
+        const v = useTop ? real[i][0] : real[i][real[i].length - 1];
+        const d = Math.abs(v - y);
+        if (d < bd) { bd = d; best = i; }
+      }
+      return best;
+    };
+    sysA = near0(opt.rows[0], true);
+    sysB = near0(opt.rows[1], false);
+    if (sysA < 0) sysA = nearIdx;
+    if (sysB < 0 || sysB < sysA) sysB = sysA;
+  } else {
+    for (const [a, b] of systemGroups(real, mask, w, colInk, h).bounds) {
+      if (nearIdx >= a && nearIdx <= b) { sysA = a; sysB = b; break; }
+    }
+  }
   const sysTopPx = real[sysA][0];
   const sysBotPx = real[sysB][real[sysB].length - 1];
   const top = offY + sysTopPx / pxPerPt;
@@ -343,18 +537,22 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   // Rozdíl: skutečná taktová čára SYSTÉMU prochází i MEZEROU mezi osnovami,
   // nožička zůstane uvnitř své osnovy. Když je podpora plná (čára ve všech
   // osnovách), mezera se nevyžaduje — sken ji občas ztratí.
-  const gapCols = [];
+  const gapColsPer = [];
   for (let i = sysA; i < sysB; i++) {
     const y0 = real[i][real[i].length - 1] + 2, y1 = real[i + 1][0] - 2;
     if (y1 <= y0) continue;
     const needRows = y1 - y0 + 1;
+    const cols = [];
     for (let x = 0; x < w; x++) {
       let ink = 0;
       for (let y = y0; y <= y1; y++) ink += mask[y * w + x];
-      if (ink / needRows >= 0.9) gapCols.push(x);
+      if (ink / needRows >= 0.9) cols.push(x);
     }
+    gapColsPer.push(cols);
   }
-  const crossesGap = (x) => gapCols.some(g => Math.abs(g - x) <= xTol);
+  const crossesGap = (x) => gapColsPer.some(cols => cols.some(g => Math.abs(g - x) <= xTol));
+  const gapSupport = (x) => gapColsPer.reduce((n, cols) =>
+    n + (cols.some(g => Math.abs(g - x) <= xTol) ? 1 : 0), 0);
   const clusterize = (staffCols) => {
     const all = [];
     for (const sc of staffCols) for (const x of sc.out) all.push({ x, i: sc.i });
@@ -368,11 +566,25 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
       }
       clusters.push({ xs: [p] });
     }
-    const candsX = [];
+    const accepted = [];
     for (const c of clusters) {
       const support = new Set(c.xs.map(p => p.i)).size;
       const x = c.xs.reduce((n, p) => n + p.x, 0) / c.xs.length;
-      if (support >= need && (support >= sysCount || sysCount < 2 || crossesGap(x))) candsX.push(x);
+      if (support >= need) accepted.push({ x, support, gs: gapSupport(x) });
+    }
+    // ⚠️ NOŽIČKY ZAROVNANÝCH AKORDŮ. Když jsou dvě osnovy (klavír, sbor), mají
+    // noty obou rukou/hlasů stejný rytmus, takže sloupce nožiček projdou jako
+    // „plné ve všech osnovách“ a 4taktový systém dostane 11 čar (naměřeno
+    // str. 2: kandidáti 259/266/312/354/418/474/508 se podporou 2). Skutečná
+    // taktová čára SYSTÉMU ale prochází MEZEROU mezi osnovami; nožička ne.
+    // Mezera se proto vyžaduje, jakmile ji v systému vůbec něco proťalo (jinak
+    // by vypadly skutečné čáry na skenu, kde se spojnice ztratila).
+    const useGap = sysCount >= 2 && accepted.filter(a => a.gs >= 1).length >= 3;
+    const candsX = [];
+    for (const a of accepted) {
+      const passes = useGap ? a.gs >= 1
+        : (a.support >= sysCount || sysCount < 2 || a.gs >= 1);
+      if (passes) candsX.push(a.x);
     }
     return { clusters, candsX, all };
   };
@@ -387,19 +599,10 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   }
   const { clusters, candsX, all } = cl;
 
-  // 4) okraje systému. Bere se první a poslední inkoust na linkách VŠECH osnov
-  // systému, ale sloupce protínající celou stránku se ignorují — na kraji skenu
-  // je svislá linka (vazba), která by okraj posunula o desítky bodů doleva.
-  const colInk = new Uint32Array(w);
-  for (let y = 0; y < h; y++) {
-    const off = y * w;
-    for (let x = 0; x < w; x++) if (mask[off + x]) colInk[x]++;
-  }
-  const isArtifact = (x) => colInk[x] > 0.5 * h || x < 0.02 * w;
-  // ⚠️ Okraj se bere jako MEDIÁN konců linek, ne jako maximum: na str. 7 táhne
-  // pravý okraj o 13 b doprava jediná zatoulaná značka (trylek přes linku),
-  // a pak už koncová taktová čára nevypadá „blízko okraje“ → zůstane mezi
-  // vnitřními a systém dostane o takt navíc.
+  // 4) okraje systému. Bere se NEJDELŠÍ SOUVISLÝ ÚSEK linky (viz `staffEdges`),
+  // ne první/poslední inkoust — na kraji skenu je vazba a stín a ty posunuly
+  // levý okraj o desítky bodů doleva (naměřeno „okraj 15 b“ místo 60 b), takže
+  // se úvodní čára systému přestala poznávat a číslovalo se o takt víc.
   const medOf = (arr) => {
     if (!arr.length) return 0;
     const s = arr.slice().sort((a, b) => a - b);
@@ -407,15 +610,16 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   };
   const leftEnds = [], rightEnds = [];
   for (let i = sysA; i <= sysB; i++) {
-    for (const yy of real[i]) {
-      const yr = Math.round(yy) * w;
-      for (let x = 0; x < w; x++) if (mask[yr + x] && !isArtifact(x)) { leftEnds.push(x); break; }
-      for (let x = w - 1; x >= 0; x--) if (mask[yr + x] && !isArtifact(x)) { rightEnds.push(x); break; }
-    }
+    const [L, R] = staffSpan(real[i], mask, w);
+    leftEnds.push(L);
+    rightEnds.push(R);
   }
   let staffLeft = medOf(leftEnds);
   let staffRight = medOf(rightEnds);
   if (!rightEnds.length || staffLeft > staffRight) { staffLeft = 0; staffRight = w - 1; }
+  // Sloupce protínající celý pás (vazba, stín u okraje skenu) se do hustoty
+  // inkoustu nepočítají — jinak „prázdný“ okraj vyjde jako plný inkoustu.
+  const isArtifact = (x) => colInk[x] > 0.5 * h || x < 0.02 * w;
 
   const medGap = (arr) => {
     const d = [];
@@ -423,8 +627,12 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     d.sort((a, b) => a - b);
     return d.length ? d[Math.floor(d.length / 2)] : 0;
   };
+  // Do kandidátů patří i ÚVODNÍ čára systému — v této sazbě stojí přesně na
+  // začátku linek (staffLeft), takže filtr „až za okrajem + 0,6 mezery“ ji
+  // zahodil a systém dostal o takt MÍŇ (naměřeno str. 2, 2. systém: 3 čáry
+  // místo 4). Odebrání úvodní čáry řeší až test níž.
   let rest = candsX.slice().sort((a, b) => a - b)
-    .filter(x => x > staffLeft + 0.6 * spacePx);
+    .filter(x => x >= staffLeft - pxPerPt);
   let holeDbg = null;   // diagnostika doplněných čar (jen pro panel/sondu)
   // 4b) ZTRACENÁ ČÁRA UPROSTŘED SYSTÉMU. Na vybledlém skenu se jedna čára
   // nedetekuje (v jedné osnově má krytí jen 76 %, práh je 95 %), a protože
@@ -494,15 +702,25 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
                   add: add.map(v => +(v / pxPerPt).toFixed(1)) };
     }
   }
-  // Úvodní čára systému se nečísluje. Je to první kandidát za okrajem, ale jen
-  // když stojí blíž než 0,75 šířky taktu — jinak je to skutečná vnitřní čára
-  // a úvodní se nedetekovala (naměřeno: str. 6 — závorka v 14 b, úvodní čára
-  // v 68 b, takty 94 b; str. 4 — úvodní hned u okraje).
+  // Úvodní čára (první takt) systému se nečísluje — jeho číslo je VYTIŠTĚNÉ.
+  // ⚠️ Na začátku systému jsou obvykle DVA plné svislé tahy: hrana/závorka
+  // sazby a hned za ní PRVNÍ TAKTOVÁ ČÁRA, nad kterou stojí vytištěné číslo
+  // (naměřeno str. 6: závorka 14 b, první čára 68 b, vytištěné „42“ nad 68).
+  // Proto se první kandidát bere jako úvodní VŽDY (je to hrana systému) a když
+  // je hned za ním druhý blíž než 0,75 šířky taktu, je úvodní i ten (první
+  // takt). Podmínka `rest[0] - staffLeft` se tu NEPOUŽÍVÁ: okraj osnovy může
+  // být posunutý textem/závorkou (str. 2/1. systém: okraj 15 b, skutečný
+  // začátek linek 136 b) a pak se úvodní čára nepoznala a systém dostal
+  // o takt navíc (19/21 v regresi). Pojistka proti „úvodní se nedetekovala“:
+  // zahodit se smí jen kandidát blíž než 1,5 šířky taktu od okraje.
   let opening = null;
   if (rest.length === 1) opening = rest.pop();
   else if (rest.length >= 2) {
     const P = medGap(rest);
-    if (P > 0 && rest[0] - staffLeft < 0.75 * P) opening = rest.shift();
+    if (P > 0 && rest[0] - staffLeft < 1.5 * P) {
+      opening = rest.shift();
+      if (rest.length >= 2 && rest[0] - opening < 0.75 * P) opening = rest.shift();
+    }
   }
   // Koncová čára stojí na konci not — ale LINKY OSNOV v této sazbě přetahují
   // ~45 b do pravého okraje, takže vzdálenost od okraje nic neříká (dřív se
@@ -548,8 +766,15 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     const t = staffRight - rest[rest.length - 1];
     return barP > 0 ? t < 0.6 * barP : t < 8 * spacePx;
   };
-  while (rest.length && tailShort()
-         && musicDensity(rest[rest.length - 1] + spacePx, staffRight) < 0.05) {
+  // Hustota se měří v ÚZKÉM okně hned za kandidátem (ne až po pravý okraj
+  // linek): za koncovou čarou je prázdno, ale dál k okraji můžou být zatoulané
+  // značky a ty dřív „nafoukly“ prázdno na 14–20 % (naměřeno str. 5 a 7), takže
+  // se koncová čára nechala mezi vnitřními a systém dostal o takt navíc.
+  const afterLast = () => {
+    const x = rest[rest.length - 1];
+    return musicDensity(x + spacePx, Math.min(staffRight, x + 6 * spacePx));
+  };
+  while (rest.length && tailShort() && afterLast() < 0.05) {
     closing = rest.pop();
   }
 
@@ -580,8 +805,11 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
                    ? +(musicDensity(rest[rest.length - 1] + spacePx, staffRight)).toFixed(3) : null,
                  tail: rest.length ? +(staffRight - rest[rest.length - 1]).toFixed(1) : null,
                  barP: +barP.toFixed(1), hole: holeDbg };
-  const cands = clusters.map(c => [+(c.xs.reduce((n, p) => n + p.x, 0) / c.xs.length / pxPerPt).toFixed(1),
-                                   new Set(c.xs.map(p => p.i)).size]);
+  const startsPt = candsX.map(x => +(x / pxPerPt).toFixed(1));
+  const cands = clusters.map(c => {
+    const mean = c.xs.reduce((n, p) => n + p.x, 0) / c.xs.length;
+    return [+(mean / pxPerPt).toFixed(1), new Set(c.xs.map(p => p.i)).size, gapSupport(mean)];
+  });
 
   if (!chain.length) {
     return { lines: [], bars: 0, krok, staves: sysCount, top, ok: false, opening, closing,
@@ -595,7 +823,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   return { lines: linesPt, bars, krok, krokBars, staves: sysCount, top, ok: true, thr,
            sysTop: offY + real[sysA][0] / pxPerPt, sysBot: offY + real[sysB][real[sysB].length - 1] / pxPerPt,
            spacePt: spacePx / pxPerPt,
-           opening, closing, diag, dbg, mode: 'systém', cands,
+           opening, closing, diag, dbg, mode: 'systém', cands, startsPt,
            openingPt: opening == null ? null : offY * 0 + opening / pxPerPt,
            staffLeftPt: staffLeft / pxPerPt };
 }
