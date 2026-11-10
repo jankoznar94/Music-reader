@@ -504,7 +504,7 @@
              Nic z toho ještě není uložené — uživatel to potvrdí nebo zruší. -->
         <g v-if="barFillPreview && barFillPreview.page === currentPage" class="barfill-preview">
           <line v-for="(it, i) in barFillPreview.items" :key="'bl' + i"
-                :x1="it.x" :y1="it.y - 26" :x2="it.x" :y2="it.y + 120"
+                :x1="it.x" :y1="it.y1 != null ? it.y1 : it.y - 26" :x2="it.x" :y2="it.y2 != null ? it.y2 : it.y + 120"
                 stroke="var(--accent,#d8a657)" stroke-width="2" stroke-dasharray="6 5" />
           <text v-for="(it, i) in barFillPreview.items" :key="'bt' + i"
                 :x="it.x" :y="it.y" :font-size="barSize" text-anchor="start"
@@ -1042,7 +1042,7 @@
       <!-- POTVRZENÍ NÁHLEDU: dočíslování systémů nic neuloží, dokud to
            uživatel nepotvrdí. Vidí čárkované čáry a čísla přímo v notách. -->
       <div class="bn-fill-preview" v-if="barFillPreview">
-        <span class="bn-fill-q">{{ barFillPreview.bars }} čísel: {{ barFillPreview.start }}–{{ barFillPreview.start + barFillPreview.bars - 1 }} (1. takt = {{ barFillPreview.first }})</span>
+        <span class="bn-fill-q">{{ barFillPreview.bars }} čísel: {{ barFillPreview.start }}–{{ barFillPreview.start + barFillPreview.bars - 1 }} (1. takt = {{ barFillPreview.first }}{{ barFillPreview.firstSrc === 'next' ? ' z pole Další' : ' z indexu systému' }})</span>
         <span class="bn-fill-warn" v-if="barFillPreview.mismatch">Krok {{ barFillPreview.krokBars + 1 }} nesedí na {{ barFillPreview.bars }} čar — platí čáry</span>
         <button class="bn-fill-ok" @click="commitBarFill" title="Vložit čísla taktů">Vložit</button>
         <button class="bn-fill-no" @click="cancelBarFill" title="Nic nevkládat">Zrušit</button>
@@ -2366,16 +2366,16 @@ async function _fillSystemAt(p) {
     const d = await getPageWidthHeight(song, page + 1);
     if (d && d.width > 0) { pw = d.width; ph = d.height; }
   } catch (e) { /* A4 */ }
-  // VÝŠKA PÁSU: 260 b je běžná rezerva, ale hustá sazba (sbor + klavírní výtah
-  // = 6 osnov) má systém ~190 b vysoký, takže při klepnutí na krajní osnovu se
-  // do pásu nevejde celý a detekce vidí jen jeho část (naměřeno na skutečné
-  // sazbě: klepnutí na spodní osnovu → „našel jsem jen 1 z 7 vnitřních čar“).
-  // Proto se zkouší 260 b, a když to nevyjde, 420 b.
+  // VÝŠKA PÁSU: musí pojmout CELÝ systém, ne jen okolí klepnutí. Dřív se začínalo
+  // na 260 b, ale systém sbor+klavír je ~220 b vysoký, takže klepnutí do spodní
+  // osnovy uřízlo horní osnovy a čísla pak vyšla nad klavír (Jan, listopad 2026).
+  // 520 b je pro 6osnový systém bezpečné; 700 b pro husté sazby.
   const step = Math.max(1, Math.min(64, Number(barStep.value) || 1));
-  const bands = [260, 420];
+  const bands = [520, 700];
   let cv = null, crop = null, pxPerPt = 0, det = null;
-  for (const bandH of bands) {
-    crop = { x: 0, y: Math.max(0, Math.min(py - bandH / 2, ph - bandH)), w: pw, h: bandH };
+  for (let bi = 0; bi < bands.length; bi++) {
+    const bandH = bands[bi];
+    crop = { x: 0, y: Math.max(0, Math.min(py - bandH / 2, ph - bandH)), w: pw, h: Math.min(bandH, ph) };
     cv = document.createElement('canvas');
     // ⚠️ PLÁTNO NESMÍ RŮST S dpr. `renderPageRegion()` násobí dpr samo, takže
     // dřívější `pw * PPT` dalo na tabletu (dpr 2,6) pás 9 000 × 4 000 px = 36 M px;
@@ -2384,7 +2384,7 @@ async function _fillSystemAt(p) {
     // Stejný trik jako u lupy: cílíme PIXELY na bod nezávisle na dpr.
     const PPT = 6;
     const dpr = window.devicePixelRatio || 1;
-    let outW = pw * PPT / dpr, outH = bandH * PPT / dpr;
+    let outW = pw * PPT / dpr, outH = crop.h * PPT / dpr;
     const MAX_PX = 12e6;
     const areaPx = outW * outH * dpr * dpr;
     if (areaPx > MAX_PX) {
@@ -2393,9 +2393,14 @@ async function _fillSystemAt(p) {
     }
     await renderPageRegion(song, page + 1, cv, crop, outW, outH);
     pxPerPt = cv.width / crop.w;
-    // Detekce potřebuje KROK (počet taktů systému) a y klepnutí (který systém).
+    // Detekce potřebuje y klepnutí (který systém) a offset pásu. „Krok“ je jen
+    // kontrola, do výpočtu nevstupuje.
     det = detectBarlines(cv, pxPerPt, { krok: step, ypt: py, offsetY: crop.y });
-    if (det.ok) break;
+    // Systém se nesmí dotýkat horního okraje pásu — to znamená, že je uříznutý
+    // a horní osnova chybí. Pak se zkusí vyšší pás (až do konce seznamu).
+    const clippedTop = det.ok && (det.sysTop - crop.y) < 1.5;
+    if (det.ok && !clippedTop) break;
+    if (bi === bands.length - 1) break;
   }
   const bars = det.bars;
   _barPickDbg({ fill: { page, pdf: [Math.round(px), Math.round(py)],
@@ -2416,32 +2421,60 @@ async function _fillSystemAt(p) {
     showToast(msg + ' — klepni přesně do osnovy systému (na noty, ne mezi systémy)', 9000);
     return;
   }
-  const first = Math.max(1, Number(barNext.value) || 1);
-  // PRVNÍ TAKT SYSTÉMU UŽ ČÍSLO MÁ (Jan, Nov 2026): sazba tiskne číslo na
-  // začátek každého systému, takže `first` je číslo 1. taktu a číslují se jen
-  // takty 2..krok — proto `det.lines` obsahuje jen VNITŘNÍ čáry a čísla jdou
-  // od `first + 1`. Dřív se čísloval i první takt a čísla se posunula o 1.
+  // ČÍSLO 1. TAKTU SYSTÉMU SE BERE Z TOHO SYSTÉMU (Jan, listopad 2026).
+  // Vytištěné číslo začátku systému uživatel vytahem lupou uloží jako
+  // neviditelný index (`barNum` + `hidden`) — a z něj se dopočítá zbytek.
+  // Pole „Další“/„Krok“ do výpočtu NEVSTUPUJÍ: „Další“ je jen záložní hodnota,
+  // když v systému žádné číslo není, a „Krok“ je jen kontrola.
+  const spPt = Number.isFinite(det.spacePt) ? det.spacePt : 4;
+  // Vytištěné číslo stojí ~2–4 mezery NAD horní linkou systému, proto se pás pro
+  // hledání indexu bere 5 mezer nahoru (3 mezery byly málo — index na mezi
+  // vypadl a appka počítala z pole „Další“).
+  const bandTop = det.sysTop - 5 * spPt, bandBot = det.sysBot + 2 * spPt;
+  const inSys = (annotations.value.items || [])
+    .filter(it => it && it.barNum && it.page === page && it.y != null)
+    .map(it => ({ it, yPdf: it.y / s }))
+    .filter(o => o.yPdf >= bandTop && o.yPdf <= bandBot)
+    .sort((a, b) => a.it.x - b.it.x);
+  let first = null, firstSrc = 'index';
+  if (inSys.length) {
+    const n = parseInt(String(inSys[0].it.text).trim(), 10);
+    if (Number.isFinite(n) && n > 0) first = n;
+  }
+  if (first == null) {
+    first = Math.max(1, Number(barNext.value) || 1);
+    firstSrc = 'next';
+  }
+  // PRVNÍ TAKT SYSTÉMU UŽ ČÍSLO MÁ (sazba tiskne číslo na začátek systému),
+  // takže `det.lines` obsahuje jen VNITŘNÍ čáry a čísla jdou od `first + 1`.
   const startNum = first + 1;
-  // Číslo patří NAD horní linku systému, na začátek taktu (kousek za čáru).
+  // Číslo patří NAD horní linku CELÉHO SYSTÉMU (ne nad osnovu, do které se
+  // kleplo — u sboru + klavíru to bylo doprostřed systému).
   const y = Math.max(crop.y + 1, det.top - 2);
   // NÁHLED: čísla se ještě neukládají — uživatel je uvidí a potvrdí.
-  // Kolik čar detekce vůbec vidí (může být víc než Krok — koncová čára,
-  // ozdoby). Když je o dost víc, je Krok nejspíš špatný a uživatel to musí
-  // vidět PŘED vložením; čísla by jinak sedla na špatné takty.
   // „Krok“ je jen kontrola: appka takty spočítá sama z čar. Když se to s Krokem
-  // rozchází, řekneme to — ale čísla se řídí NALEZENÝMI čarami (Jan: „já
-  // nevěděl, že má vliv, co zadám do Další a Krok“ — nemá).
+  // rozchází, řekneme to — ale čísla se řídí NALEZENÝMI čarami.
   const krokBars = Number.isFinite(det.krokBars) ? det.krokBars : null;
   const mismatch = krokBars != null && krokBars !== bars;
   const seen = Array.isArray(det.cands) ? det.cands.length : bars;
   barFillPreview.value = {
-    page, first, start: startNum, seen, bars, mismatch, krokBars,
+    page, first, firstSrc, start: startNum, seen, bars, mismatch, krokBars,
     items: det.lines.map((x, i) => ({
       text: String(startNum + i), x: (x + 1.5) * s, y: y * s,
+      y1: y * s - 10, y2: (det.sysBot || y) * s + 4,
     })),
   };
-  _barPickDbg({ preview: { bars, first, start: startNum, krokBars, y: Math.round(y) } });
-  showToast((mismatch
+  _barPickDbg({ preview: { bars, first, firstSrc, start: startNum, krokBars,
+                           sys: [det.sysTop, det.sysBot], staves: det.staves,
+                           band: [Math.round(crop.y), Math.round(crop.y + crop.h)],
+                           idx: inSys.length, idxPages: (annotations.value.items || [])
+                             .filter(it => it && it.barNum).map(it => it.page),
+                           y: Math.round(y) } });
+  showToast((firstSrc === 'next'
+      ? 'V systému není číslo 1. taktu — počítám od pole Další (' + first
+        + '). Klepni na vytištěné číslo lupou. '
+      : '')
+    + (mismatch
       ? 'Našel jsem ' + bars + ' vnitřních čar (takty 2–' + (bars + 1)
         + '), Krok ' + (krokBars + 1) + ' nesedí — řídím se čarami. '
       : 'Systém ' + (bars + 1) + ' taktů: ')

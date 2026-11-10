@@ -83,9 +83,15 @@ async def main():
             now = json.loads(await h.ev(BARS_IN_DB % (page - 1), await_promise=True) or "[]")
             print("str %d y %d: náhled=%s tlačítko=%r | v DB před %d po %d"
                   % (page, py, pv, btns, len(before), len(now)))
-            # 1) náhled musí existovat a nic neuložit
+            # POZOR: od listopadu 2026 se číslo 1. taktu bere z INDEXU systému,
+            # ne z pole „Další“; tady index záměrně není, takže se použije
+            # záložní „Další“ a číslují se takty 2..N (tedy `first + 1 …`).
+            # 1) náhled musí existovat, čísla musí jít po sobě od first+1
+            #    a nic se nesmí uložit
             nums = json.loads(pv) if pv else None
-            c1 = nums == [str(first + i) for i in range(krok)] and len(now) == len(before)
+            seq = nums is not None and len(nums) >= 1 and nums == [
+                str(first + 1 + i) for i in range(len(nums))]
+            c1 = seq and len(now) == len(before)
 
             # 2) Zrušit
             await h.ev("(() => { const b=document.querySelector('.bn-fill-no'); if(b) b.click(); return !!b; })()")
@@ -101,10 +107,12 @@ async def main():
             await h.ev("(() => { const b=document.querySelector('.bn-fill-ok'); if(b) b.click(); return !!b; })()")
             await asyncio.sleep(1.5)
             after_ok = json.loads(await h.ev(BARS_IN_DB % (page - 1), await_promise=True) or "[]")
-            expect = [str(first + i) for i in range(krok)]
-            got = [str(r[0]) for r in after_ok]
-            xs = [r[1] for r in after_ok]
-            c3 = got == sorted(expect) and len(set(xs)) == krok
+            n = len(nums) if nums else 0
+            expect = [str(first + 1 + i) for i in range(n)]
+            before_nums = [str(r[0]) for r in before]
+            got = [str(r[0]) for r in after_ok if str(r[0]) not in before_nums]
+            xs = [r[1] for r in after_ok if str(r[0]) not in before_nums]
+            c3 = sorted(got) == sorted(expect) and len(set(xs)) == n
             print("   1 náhled: %s | 2 zrušit: %s | 3 vložit: %s (čísla %s, x %s)"
                   % (c1, c2, c3, got, xs))
             ok += c1 + c2 + c3
