@@ -425,6 +425,75 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   };
   let rest = candsX.slice().sort((a, b) => a - b)
     .filter(x => x > staffLeft + 0.6 * spacePx);
+  let holeDbg = null;   // diagnostika doplněných čar (jen pro panel/sondu)
+  // 4b) ZTRACENÁ ČÁRA UPROSTŘED SYSTÉMU. Na vybledlém skenu se jedna čára
+  // nedetekuje (v jedné osnově má krytí jen 76 %, práh je 95 %), a protože
+  // zbylé čáry drží krok, systém dostane o takt MÍŇ — číslo pak přeskočí
+  // (naměřeno str. 15/3. systém: čára na 159 b chybí a takt 58 se nevyčíslí).
+  // Pozná se to podle DVOJNÁSOBNÉ mezery: takty jsou stejně široké, takže
+  // mezera ~2× delší než medián = chybí právě jedna čára. Doplní se kandidát
+  // z volnějšího prahu (72 %) nejblíž očekávané poloze, a jen když ho vidí
+  // aspoň polovina osnov systému (nožička ne).
+  if (rest.length >= 1 && rest.length <= 40) {
+    // Do mezer se počítá i LEVÝ OKRAJ systému — chybějící čára často stojí
+    // hned za úvodní čarou (ta se z kandidátů vyhodí, takže by mezera nevznikla).
+    const seq = [staffLeft].concat(rest);
+    const P0 = medGap(seq);
+    const holes = [];
+    for (let i = 1; i < seq.length; i++) {
+      const g = seq[i] - seq[i - 1];
+      if (!(P0 > 0) || g <= 1.7 * P0) continue;
+      // Mezera musí být SKORO PŘESNĚ k-násobkem kroku — jinak jsou takty
+      // nestejně široké a dopočítávat se nic nemá (naměřeno str. 9/3. systém:
+      // mezera 1,8× kroku, ale na 2× chybí 20 %, a doplněná „čára“ byla nožička).
+      const kk = Math.round(g / P0);
+      if (kk < 2 || kk > 6 || Math.abs(g - kk * P0) > 0.25 * P0) continue;
+      holes.push([seq[i - 1], seq[i], g]);
+    }
+    if (holes.length) {
+      const loose = new Map();
+      for (const sc of staffColsAt(0.72)) for (const x of sc.out) {
+        const hit = [...loose.keys()].find(k => Math.abs(k - x) <= xTol);
+        if (hit == null) loose.set(x, new Set([sc.i]));
+        else loose.get(hit).add(sc.i);
+      }
+      const supAt = (x) => {
+        let s = 0;
+        for (const [k, sup] of loose) if (Math.abs(k - x) <= xTol) s = Math.max(s, sup.size);
+        return s;
+      };
+      // Práh podpory se bere z TOHO, co v systému už uznané čáry mají — když
+      // systém detekce slepí z víc osnov (naměřeno str. 67: osnov 11), nemůže
+      // se chtít plná podpora.
+      const refSups = rest.map(supAt).filter(v => v > 0);
+      const refMax = refSups.length ? Math.max(...refSups) : sysCount;
+      // Doplní se jen čára, kterou vidí skoro tolik osnov jako tu nejsilnější
+      // uznanou (nožička zarovnaných akordů má o osnovu méně — str. 9/3. systém).
+      const minSup = Math.min(6, Math.max(2, Math.ceil(0.9 * refMax)));
+      const wantSup = minSup;
+      const add = [];
+      for (const [a, b, g] of holes) {
+        const k = Math.round(g / P0);
+        if (k < 2 || k > 6) continue;
+        const step = g / k;
+        for (let j = 1; j < k; j++) {
+          const want = a + j * step;
+          let best = null;
+          for (const [x, sup] of loose) {
+            if (sup.size < wantSup) continue;
+            if (Math.abs(x - want) > 0.45 * step) continue;
+            if (!best || Math.abs(x - want) < Math.abs(best - want)) best = x;
+          }
+          if (best != null) add.push(best);
+        }
+      }
+      if (add.length) rest = rest.concat(add).sort((x, y) => x - y);
+      holeDbg = { holes: holes.map(h => [Math.round(h[0] / pxPerPt), Math.round(h[1] / pxPerPt),
+                                          Math.round(h[2] / pxPerPt)]),
+                  loose: loose.size, minSup, refSups: refSups.slice().sort((a, b) => a - b),
+                  add: add.map(v => +(v / pxPerPt).toFixed(1)) };
+    }
+  }
   // Úvodní čára systému se nečísluje. Je to první kandidát za okrajem, ale jen
   // když stojí blíž než 0,75 šířky taktu — jinak je to skutečná vnitřní čára
   // a úvodní se nedetekovala (naměřeno: str. 6 — závorka v 14 b, úvodní čára
@@ -510,7 +579,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
                  closingDens: rest.length
                    ? +(musicDensity(rest[rest.length - 1] + spacePx, staffRight)).toFixed(3) : null,
                  tail: rest.length ? +(staffRight - rest[rest.length - 1]).toFixed(1) : null,
-                 barP: +barP.toFixed(1) };
+                 barP: +barP.toFixed(1), hole: holeDbg };
   const cands = clusters.map(c => [+(c.xs.reduce((n, p) => n + p.x, 0) / c.xs.length / pxPerPt).toFixed(1),
                                    new Set(c.xs.map(p => p.i)).size]);
 
@@ -526,5 +595,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   return { lines: linesPt, bars, krok, krokBars, staves: sysCount, top, ok: true, thr,
            sysTop: offY + real[sysA][0] / pxPerPt, sysBot: offY + real[sysB][real[sysB].length - 1] / pxPerPt,
            spacePt: spacePx / pxPerPt,
-           opening, closing, diag, dbg, mode: 'systém', cands };
+           opening, closing, diag, dbg, mode: 'systém', cands,
+           openingPt: opening == null ? null : offY * 0 + opening / pxPerPt,
+           staffLeftPt: staffLeft / pxPerPt };
 }
