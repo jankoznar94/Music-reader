@@ -2427,10 +2427,11 @@ async function _fillSystemAt(p) {
   // Pole „Další“/„Krok“ do výpočtu NEVSTUPUJÍ: „Další“ je jen záložní hodnota,
   // když v systému žádné číslo není, a „Krok“ je jen kontrola.
   const spPt = Number.isFinite(det.spacePt) ? det.spacePt : 4;
-  // Vytištěné číslo stojí ~2–4 mezery NAD horní linkou systému, proto se pás pro
-  // hledání indexu bere 5 mezer nahoru (3 mezery byly málo — index na mezi
-  // vypadl a appka počítala z pole „Další“).
-  const bandTop = det.sysTop - 5 * spPt, bandBot = det.sysBot + 2 * spPt;
+  // Číslo 1. taktu je VYTIŠTĚNÉ nad HORNÍ linkou systému (2–4 mezery). Hledá se
+  // proto jen v pásu nad horní linkou — ne v celém systému: mezi doplněnými
+  // čísly uvnitř systému i indexem systému sousedního se jinak vybíralo špatné
+  // číslo (Jan, listopad 2026: „na levou polovinu to střílí 32 nebo 62“).
+  const bandTop = det.sysTop - 6 * spPt, bandBot = det.sysTop + 1 * spPt;
   const inSys = (annotations.value.items || [])
     .filter(it => it && it.barNum && it.page === page && it.y != null)
     .map(it => ({ it, yPdf: it.y / s }))

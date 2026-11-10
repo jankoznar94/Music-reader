@@ -295,10 +295,15 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
 
   // 3b) TAKTOVÁ ČÁRA JE VE VŠECH OSNOVÁCH SYSTÉMU na stejném x, kdežto nožička
   // noty nebo klíč jen v jedné. Dřív se hlasovalo „aspoň jeden soused“, takže
-  // prošly dvě ze čtyř čar a občas i nožička (Jan, listopad 2026). Teď kandidát
-  // musí být aspoň v 60 % osnov systému.
-  const xTol = Math.max(2, 0.6 * spacePx);
-  const need = Math.max(1, Math.ceil(0.6 * sysCount));
+  // prošly dvě ze čtyř čar a občas i nožička (Jan, listopad 2026).
+  // ⚠️ Toleranci shlukování drž na 1,2 mezery: sken je mírně křivý a táž čára
+  // vychází v různých osnovách až o 4 b jinde (naměřeno na str. 10: 70 vs 74 b).
+  // Při 0,6 mezery se čára rozdělila na dva shluky s půlkovou podporou a zmizela.
+  const xTol = Math.max(2, 1.2 * spacePx);
+  // Podpora: toleruje JEDNU osnovu, kde sken čáru ztratil (jinak vypadávaly
+  // skutečné čáry — Jan: „ignoruje poslední takt“), ale ne dvě (to už je nožička
+  // v husté klavírní osnově: naměřeno 4/6 na str. 4).
+  const need = sysCount >= 2 ? Math.max(2, sysCount - 1) : 1;
   const clusterize = (staffCols) => {
     const all = [];
     for (const sc of staffCols) for (const x of sc.out) all.push({ x, i: sc.i });
@@ -306,8 +311,11 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     const clusters = [];
     for (const p of all) {
       const c = clusters[clusters.length - 1];
-      if (c && p.x - c.hi <= xTol) { c.xs.push(p); c.hi = p.x; }
-      else clusters.push({ xs: [p], hi: p.x });
+      if (c) {
+        const mean = c.xs.reduce((n, q) => n + q.x, 0) / c.xs.length;
+        if (Math.abs(p.x - mean) <= xTol) { c.xs.push(p); continue; }
+      }
+      clusters.push({ xs: [p] });
     }
     const candsX = [];
     for (const c of clusters) {
@@ -328,59 +336,57 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   }
   const { clusters, candsX, all } = cl;
 
-  // 4) okraje systému — úvodní ani koncová čára takt nezačínají. Bere se UNION
-  // přes VŠECHNY osnovy systému (top linka jedné osnovy bývá na skenu vyšisovaná,
-  // takže sama o sobě končí o pár bodů dřív a koncová čára pak prošla jako
-  // vnitřní — naměřeno: číslo 9 navíc na konci systému). Měří se jen SOUVISLÝ
-  // TAH linky (≥ 35 % šířky), ne první inkoust v řádku — na kraji skenu je
-  // svislá linka, která by jinak posunula levý okraj o desítky bodů doleva.
-  const rowSpan = (yr) => {
-    let best = -1, bs = 0, be = -1, run = -1;
-    const minRun = Math.max(8, Math.round(0.35 * w));
-    for (let x = 0; x <= w; x++) {
-      const on = x < w && mask[yr + x];
-      if (on) { if (run < 0) run = x; }
-      else if (run >= 0) {
-        if (x - run > best) { best = x - run; bs = run; be = x - 1; }
-        run = -1;
-      }
-    }
-    return best >= minRun ? [bs, be] : null;
-  };
+  // 4) okraje systému. Bere se první a poslední inkoust na linkách VŠECH osnov
+  // systému, ale sloupce protínající celou stránku se ignorují — na kraji skenu
+  // je svislá linka (vazba), která by okraj posunula o desítky bodů doleva.
+  const colInk = new Uint32Array(w);
+  for (let y = 0; y < h; y++) {
+    const off = y * w;
+    for (let x = 0; x < w; x++) if (mask[off + x]) colInk[x]++;
+  }
+  const isArtifact = (x) => colInk[x] > 0.5 * h || x < 0.02 * w;
   let staffLeft = w, staffRight = 0;
   for (let i = sysA; i <= sysB; i++) {
     for (const yy of real[i]) {
-      const sp = rowSpan(Math.round(yy) * w);
-      if (!sp) continue;
-      if (sp[0] < staffLeft) staffLeft = sp[0];
-      if (sp[1] > staffRight) staffRight = sp[1];
+      const yr = Math.round(yy) * w;
+      for (let x = 0; x < w; x++) if (mask[yr + x] && !isArtifact(x)) { if (x < staffLeft) staffLeft = x; break; }
+      for (let x = w - 1; x >= 0; x--) if (mask[yr + x] && !isArtifact(x)) { if (x > staffRight) staffRight = x; break; }
     }
   }
   if (staffLeft > staffRight) { staffLeft = 0; staffRight = w - 1; }
 
-  const xsAll = candsX;
-  // Koncová čára je dvojitá (tlustá + tenká) a stojí pár bodů před koncem linek,
-  // proto se neuplatňuje úzká tolerance 0,8 mezery, ale 2,5 mezery.
-  const inner = xsAll.filter(x => x > staffLeft + 0.6 * spacePx && x < staffRight - 2.5 * spacePx);
-  const opening = xsAll.find(x => x <= staffLeft + 0.6 * spacePx);
-  const closing = xsAll.find(x => x >= staffRight - 2.5 * spacePx);
-
-  // 5) pravidelný řetěz = taktové čáry (nožičky na něj nesednou)
-  let chain = barChain(inner, spacePx);
-  // 5c) Klíč stojí hned za úvodní čarou a v každé osnově je na stejném x
-  // (proto ho hlasy neodliší). Takt je ale širší: první taktová čára nemůže
-  // být blíž než ~0,45 šířky taktu od okraje osnovy — naměřeno na skenu Carus
-  // prošel klíč v x=71, správná první čára je 132 (krok 60).
-  if (chain.length >= 3) {
+  const medGap = (arr) => {
     const d = [];
-    for (let i = 1; i < chain.length; i++) d.push(chain[i] - chain[i - 1]);
+    for (let i = 1; i < arr.length; i++) d.push(arr[i] - arr[i - 1]);
     d.sort((a, b) => a - b);
-    const P = d[Math.floor(d.length / 2)];
-    if (P > 0) {
-      const kept = chain.filter(x => x >= staffLeft + 0.45 * P);
-      if (kept.length >= 2) chain = kept;
-    }
+    return d.length ? d[Math.floor(d.length / 2)] : 0;
+  };
+  let rest = candsX.slice().sort((a, b) => a - b)
+    .filter(x => x > staffLeft + 0.6 * spacePx);
+  // Úvodní čára systému se nečísluje. Je to první kandidát za okrajem, ale jen
+  // když stojí blíž než 0,75 šířky taktu — jinak je to skutečná vnitřní čára
+  // a úvodní se nedetekovala (naměřeno: str. 6 — závorka v 14 b, úvodní čára
+  // v 68 b, takty 94 b; str. 4 — úvodní hned u okraje).
+  let opening = null;
+  if (rest.length === 1) opening = rest.pop();
+  else if (rest.length >= 2) {
+    const P = medGap(rest);
+    if (P > 0 && rest[0] - staffLeft < 0.75 * P) opening = rest.shift();
   }
+  // Koncová čára je dvojitá (tlustá + tenká) a stojí pár bodů před koncem linek.
+  let closing = null;
+  while (rest.length && rest[rest.length - 1] > staffRight - 2.5 * spacePx) closing = rest.pop();
+
+  // 5) VNITŘNÍ ČÁRY = všichni kandidáti, které vidí celý systém. Řetěz
+  // pravidelnosti se používá JEN u jedoosnového systému (tam podpora nic
+  // nefiltruje) — jinak zahazoval skutečné čáry, protože takty v sazbě nejsou
+  // stejně široké (naměřeno str. 6: čáry 198/292/391/485, řetěz vzal jen dvě).
+  let inner = rest;
+  if (sysCount === 1) {
+    const ch = barChain(inner, spacePx);
+    if (ch.length >= 2) inner = ch;
+  }
+  const chain = inner;
   const linesPt = chain.map(x => x / pxPerPt);
   const bars = linesPt.length;                    // čísel = takty 2..N
   const dbg = {
