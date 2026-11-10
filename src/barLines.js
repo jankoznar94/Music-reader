@@ -179,6 +179,7 @@ function staffGroups(mask, w, h, pxPerPt) {
   // trámce takhle dlouhý SOUVISLÝ tah nemají, takže falešné linky nepřidá.
   const rowFrac = new Float32Array(h);
   const rowLong = new Float32Array(h);
+  const blobStaffs = [];
   for (let y = 0; y < h; y++) {
     const off = y * w;
     let ink = 0;
@@ -196,7 +197,20 @@ function staffGroups(mask, w, h, pxPerPt) {
     }
     if (on && runStart < 0) runStart = y;
     if (!on && runStart >= 0) {
-      centres.push(Math.round((runStart + y - 1) / 2));
+      const bh = (y - runStart) / pxPerPt;      // výška pásu v bodech
+      // ⚠️ HUSTÝ KLAVÍRNÍ DOPROVOD: celá osnova je jeden tmavý pás (noty,
+      // trámce a linky splývají), takže se z jejích pěti linek stane JEDNO
+      // centrum a osnova zmizí (naměřeno Cherubini tištěná str. 9: ze šesti
+      // osnov systému se našly čtyři). Pás vysoký jako osnova (10–22 b) se
+      // proto bere jako CELÁ osnova — vyrobí se pět pseudo-linek, aby na něj
+      // seděly okraje, spojnice i měření čar.
+      if (bh >= 10 && bh <= 22) {
+        const top = runStart, bot = y - 1;
+        blobStaffs.push([top, Math.round(top + (bot - top) * 0.25), Math.round((top + bot) / 2),
+                         Math.round(top + (bot - top) * 0.75), bot]);
+      } else {
+        centres.push(Math.round((runStart + y - 1) / 2));
+      }
       runStart = -1;
     }
   }
@@ -282,8 +296,28 @@ function staffGroups(mask, w, h, pxPerPt) {
     // má linky nestejně daleko. Skutečná osnova se 4 linkami (sken ztratil
     // jednu) drží rozestup těsně, takže se pozná podle rovnoměrnosti.
     if (g.length === 4 && same < 3) return false;
+    // ⚠️ Rozestup linek jedné osnovy je ~4 b. Skupina s rozestupem 20+ b není
+    // osnova, ale SLEPENÉ CELÉ OSNOVY: v hustém klavírním doprovodu je celá
+    // osnova jeden tmavý pás, takže se z jejích pěti linek stane jedno
+    // „centrum“ a z pěti osnov jedna falešná „osnova“ o pěti linkách
+    // (naměřeno Cherubini tištěná str. 9: ze 6 osnov zbyly 4). Zahodit.
+    if (med > 9 * pxPerPt) return false;
     return vStrokes(g) >= 2;
   });
+  // Osnovy z hustých pásů (viz `blobStaffs`) se přidají mezi „normální“ osnovy;
+  // projít musí stejným testem svislic (text žádné nemá).
+  for (const b of blobStaffs) {
+    const yT = b[0], yB = b[b.length - 1], bh = Math.max(1, yB - yT);
+    let n = 0, run = 0;
+    for (let x = 0; x < w; x++) {
+      let ink = 0;
+      for (let yy = yT; yy <= yB; yy++) ink += mask[yy * w + x];
+      if (ink / bh >= 0.9) { run++; } else { if (run >= 1) n++; run = 0; }
+    }
+    if (run) n++;
+    if (n >= 2) real.push(b);
+  }
+  real.sort((a, b) => a[0] - b[0]);
   return { real, lines: cs.length,
            raw: groups.map((g) => [g[0], g[g.length - 1], g.length]) };
 }
@@ -451,6 +485,7 @@ export function detectPageSystems(cv, pxPerPt, opt = {}) {
     // taktů vyšlo jedenáct čar).
     const det = detectBarlines(band, pxPerPt, {
       krok, ypt: midPt, offsetY: offY, numXs: opt.numXs,
+      staffRows: real.slice(a, b + 1).map((g) => g.map((v) => v - y0)),
       rows: [Math.round(topPx) - y0, Math.round(botPx) - y0],
     });
     // Kontrola, že výřez opravdu obsahuje PRÁVĚ tenhle systém: když se hrany
@@ -494,8 +529,14 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   const ypt = Number.isFinite(opt.ypt) ? opt.ypt - offY : null;
   const { w, h, mask, thr, colInk } = buildMask(cv);
 
-  // 1) linky osnov = řádky s dlouhým vodorovným tahem, seskupené do osnov
-  const staff = staffGroups(mask, w, h, pxPerPt);
+  // 1) linky osnov = řádky s dlouhým vodorovným tahem, seskupené do osnov.
+  // ⚠️ Když osnovy už našel `detectPageSystems` pro CELOU stránku, použijí se
+  // TY — výřez pásu má jiné prahy (adaptivní Otsu po blocích) a osnovy v něm
+  // vycházejí jinak: naměřeno Cherubini tištěná str. 9, kde pás ztratil dvě
+  // osnovy, `sysTop` se posunul o 65 b a celý systém se odmítl jako uříznutý.
+  const staff = Array.isArray(opt.staffRows) && opt.staffRows.length
+    ? { real: opt.staffRows, lines: opt.staffRows.length }
+    : staffGroups(mask, w, h, pxPerPt);
   const real = staff.real;
   if (!real.length) {
     return { lines: [], bars: 0, krok, staves: 0, top: 0, ok: false,
@@ -662,14 +703,20 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     }
     return { clusters, candsX, all };
   };
-  let staffCols = staffColsAt(0.95);
-  let cl = clusterize(staffCols);
-  let covUsed = 0.95;
-  if (cl.candsX.length < 2) {
-    // slabý/šedý sken: zkusit volnější práh, ať se systém nevyhodnotí jako prázdný
-    covUsed = 0.85;
-    staffCols = staffColsAt(covUsed);
+  // Práh krytí 0,90 (dřív 0,95): na vybledlém skenu má skutečná taktová čára
+  // v některé osnově 90–94 % (linka je přerušená), takže při 0,95 vypadla
+  // a podpora spadla pod `need` — naměřeno Cherubini tištěná str. 14:
+  // 3. systém vrátil jedinou čáru. Nožičky se sem nedostanou: ty nemívají
+  // 90 % výšky osnovy a navíc musí projít mezerou mezi osnovami.
+  // Když i tak nevyjde ani jedna čára, zkusí se 0,85 a 0,78 — jinak systém
+  // skončí jako „nenašel pravidelný sled“ a stránka se celá odmítne
+  // (naměřeno Cherubini str. 28, 31, 34, 51).
+  let staffCols = null, cl = null, covUsed = 0.90;
+  for (const cov of [0.90, 0.85, 0.78]) {
+    covUsed = cov;
+    staffCols = staffColsAt(cov);
     cl = clusterize(staffCols);
+    if (cl.candsX.length >= 2) break;
   }
   const { clusters, candsX, all } = cl;
 
@@ -820,7 +867,11 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     const P = medGap(rest);
     if (P > 0 && rest[0] - staffLeft < 1.5 * P) {
       opening = rest.shift();
-      if (rest.length >= 2 && rest[0] - opening < 0.75 * P) opening = rest.shift();
+      // ⚠️ Druhou úvodní čáru (závorka + první taktová čára) ber jen tehdy,
+      // když po ní v systému zůstanou aspoň DVĚ vnitřní čáry. Na systému
+      // s málo detekovanými čarami (Cherubini str. 28: jen 3 kandidáti) se
+      // jinak sežraly obě a systém zůstal bez čar → celá stránka se odmítla.
+      if (rest.length >= 3 && rest[0] - opening < 0.75 * P) opening = rest.shift();
     }
   }
   // Koncová čára stojí na konci not — ale LINKY OSNOV v této sazbě přetahují
@@ -857,7 +908,16 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     return n ? ink / n : 0;
   };
   let closing = null;
-  while (rest.length && rest[rest.length - 1] > staffRight - 2.5 * spacePx) closing = rest.pop();
+  // ⚠️ Koncová čára je JEDNA (max. dvojitá). Bez počítadla se smyčka „za
+  // koncovou čarou je prázdno“ na systému, kde jsou na konci pomlky, zakously
+  // do VŠECH kandidátů a systém zůstal bez čar (naměřeno Cherubini str. 28,
+  // 31, 34, 51: bars 0 → celá stránka se odmítla).
+  let closingPops = 0;
+  while (rest.length > 1 && closingPops < 2
+         && rest[rest.length - 1] > staffRight - 2.5 * spacePx) {
+    closing = rest.pop();
+    closingPops++;
+  }
   // …a když linky přetahují, rozhodne prázdno za poslední čarou. Pojistka:
   // zahazuje se jen KRÁTKÝ chvost (do 0,6 šířky taktu) — koncová čára v této
   // sazbě stojí ~45 b před koncem linek, kdežto skutečný poslední takt je
@@ -875,8 +935,9 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     const x = rest[rest.length - 1];
     return musicDensity(x + spacePx, Math.min(staffRight, x + 6 * spacePx));
   };
-  while (rest.length && tailShort() && afterLast() < 0.05) {
+  while (rest.length > 1 && closingPops < 2 && tailShort() && afterLast() < 0.05) {
     closing = rest.pop();
+    closingPops++;
   }
 
   // 5) VNITŘNÍ ČÁRY = všichni kandidáti, které vidí celý systém. Řetěz
