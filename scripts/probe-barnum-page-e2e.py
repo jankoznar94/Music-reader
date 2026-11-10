@@ -20,7 +20,6 @@ m.CDP_HTTP = os.environ.get("NOTY_CDP", m.CDP_HTTP)
 PDF = os.environ.get(
     "NOTY_PDF",
     "/home/martin_fabian/.hermes/profiles/cfsb-agent/cache/documents/"
-    "native-inputs/b6372852962f9d22817e7d1e99486df274129c0907a91924f0da5d2b8c47f722/"
     "doc_1bb2c499f695_Mozart-Davide penitente.pdf")
 
 CHECKS = []

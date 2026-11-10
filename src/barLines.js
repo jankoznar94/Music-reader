@@ -138,6 +138,12 @@ function buildMask(cv) {
   }
   const BLOCK = 64;
   const mask = new Uint8Array(w * h);
+  // DRUHÁ maska — jen VELMI tmavý inkoust sazby (tahy, závorky), ne šum skenu.
+  // Slouží k jedinému účelu: rozhodnout, jestli mezi dvěma osnovami něco
+  // PROCHÁZÍ (závorka systému, taktová čára přes mezeru) — viz `gapConn`.
+  // Šedé skeny mají v mezerách stíny a vazbu, které `mask` (Otsu + 35) bere
+  // jako inkoust, takže se podle ní hranice systému poznat nedá.
+  const dark = new Uint8Array(w * h);
   // Počty inkoustu ve sloupcích — slouží k poznání sloupců přes celý obraz
   // (vazba, stín u okraje skenu). Ty se nesmí počítat jako „linka osnovy“.
 
@@ -150,18 +156,65 @@ function buildMask(cv) {
       for (let x = 0; x < w; x++) hist[gray[off + x] | 0]++;
     }
     const thr = Math.min(235, otsu(hist, (y1 - y0) * w) + 35);
+    // Práh pro „tmavý inkoust“: pod Otsuem, aby šum papíru a stíny vypadly
+    // (naměřeno: závorka systému má < 100, skenový stín u okraje 150–200).
+    const dthr = Math.max(70, Math.min(150, thr - 45));
     if (!thrGlobal) thrGlobal = thr;
     for (let y = y0; y < y1; y++) {
       const off = y * w;
-      for (let x = 0; x < w; x++) if (gray[off + x] < thr) mask[off + x] = 1;
+      for (let x = 0; x < w; x++) {
+        const g = gray[off + x];
+        if (g < thr) mask[off + x] = 1;
+        if (g < dthr) dark[off + x] = 1;
+      }
     }
   }
   const colInk = new Uint32Array(w);
+  const darkColInk = new Uint32Array(w);
   for (let y = 0; y < h; y++) {
     const off = y * w;
-    for (let x = 0; x < w; x++) if (mask[off + x]) colInk[x]++;
+    for (let x = 0; x < w; x++) {
+      if (mask[off + x]) colInk[x]++;
+      if (dark[off + x]) darkColInk[x]++;
+    }
   }
-  return { w, h, mask, thr: thrGlobal, colInk };
+  return { w, h, mask, dark, darkColInk, thr: thrGlobal, colInk };
+}
+
+/** Vytáhne ze skupiny řádků PRAVIDELNOU OSNOVU. Na horším skenu (nižší
+ *  rozlišení, text písně, dynamika) se k pěti linkám přidá šestý až osmý řádek
+ *  a skupina pak neprojde testem rovnoměrnosti → osnova ZMIZNE a systém se
+ *  rozpadne (naměřeno Mozart str. 7 při 4,9 px/bod: osnovy na 443–466 a
+ *  721–747 vypadly a stránka se očíslovala jako 5 systémů místo 4).
+ *  Řešení: najdi nejdelší řetěz řádků s krokem = medián mezery (< 8 b) a ten
+ *  ber jako osnovu. Text/dynamika stojí mimo krok, takže do řetězu nesedne. */
+function repairStaff(g, pxPerPt, sp) {
+  if (g.length <= 5) return g;
+  const step = sp > 0 ? sp : 4 * pxPerPt;
+  let best = [];
+  for (let s = 0; s < g.length; s++) {
+    const o = g[s];
+    const pts = [o];
+    for (let k = 1; k < 6; k++) {
+      const want = o + k * step;
+      let hit = null, bd = Infinity;
+      for (const v of g) {
+        const d = Math.abs(v - want);
+        if (d < bd) { bd = d; hit = v; }
+      }
+      if (hit == null || bd > 0.45 * step) break;
+      pts.push(hit);
+    }
+    // Řetěz musí být ROVNOMĚRNÝ, jinak je to náhodná posloupnost řádků
+    // (naměřeno Mozart str. 3: „osnova“ 307,7/311,6/313,4/319,8/321,6/324,9
+    // s mezerami 3,9/1,8/6,4/1,8/3,3 — rozhodně to není pět linek osnovy).
+    const cg = [];
+    for (let i = 1; i < pts.length; i++) cg.push(pts[i] - pts[i - 1]);
+    const mn = Math.min(...cg), mx = Math.max(...cg);
+    const regular = cg.length ? mx <= 1.5 * mn : false;
+    if (regular && pts.length > best.length) best = pts;
+  }
+  return best.length >= 4 ? best : g;
 }
 
 /** Osnovy = skupiny 4–6 ROVNOMĚRNÝCH řádků s dlouhým vodorovným tahem.
@@ -226,15 +279,20 @@ function staffGroups(mask, w, h, pxPerPt) {
   // linka) a z osnovy se pak stane „skupina o 8–9 linkách“, kterou filtr 4–8
   // zahodí → osnova ZMIZÍ a rozpadne se hranice systému (naměřeno str. 2:
   // 5 osnov ztraceno a systémům chyběl kus). Slijeme proto centra blíž než
-  // 0,6 typické mezery mezi linkami — ta se MĚŘÍ z dat, ne z pxPerPt.
+  // 0,55 typické mezery mezi linkami — ta se MĚŘÍ z dat, ne z pxPerPt.
+  // ⚠️ Do měření meziprostoru NESMÍ vstoupit zdvojené linky samotné: na
+  // vybledlém skenu (Mozart str. 3) dá každá linka dva řádky 1,5 b od sebe,
+  // takže medián VŠECH mezer vyjde 1,5 b, `mergeSep` 0,9 b a zdvojení se
+  // neslijí → osnova má 9–10 „linek“ a rozpadne se na dvě. Proto se berou jen
+  // mezery, které odpovídají skutečnému rozestupu linek osnovy (2,5–6 b).
   const ds = [];
   for (let i = 1; i < cs.length; i++) {
     const d = cs[i] - cs[i - 1];
-    if (d < 10 * pxPerPt) ds.push(d);
+    if (d >= 2.5 * pxPerPt && d <= 6 * pxPerPt) ds.push(d);
   }
   ds.sort((a, b) => a - b);
-  const lineSpace = ds.length ? ds[Math.floor(ds.length / 2)] : 4 * pxPerPt;
-  const mergeSep = Math.max(2, 0.6 * lineSpace);
+  const lineSpace = ds.length ? ds[Math.floor(ds.length / 2)] : 3.8 * pxPerPt;
+  const mergeSep = Math.max(2, 0.45 * lineSpace);
   const cs2 = [];
   for (const c of cs) {
     if (cs2.length && c - cs2[cs2.length - 1] <= mergeSep) {
@@ -265,7 +323,11 @@ function staffGroups(mask, w, h, pxPerPt) {
     return splitBig(g.slice(0, cutAt + 1)).concat(splitBig(g.slice(cutAt + 1)));
   };
   const groupsSplit = [];
-  for (const g of groups) groupsSplit.push(...splitBig(g));
+  const preOf = new Map();
+  for (const g of groups) {
+    const rp = repairStaff(g, pxPerPt, lineSpace);
+    for (const part of splitBig(rp)) { preOf.set(part, g); groupsSplit.push(part); }
+  }
   // Tolerance: na vybledlém skenu se jedna linka osnovy detekuje DVAKRÁT nebo
   // se přidá řádek textu písně (naměřeno str. 7: 393,5…410,3 = 6 řádků), takže
   // se připouštějí až 3 nepravidelné mezery. Text se pak pozná podle toho, že
@@ -282,27 +344,42 @@ function staffGroups(mask, w, h, pxPerPt) {
     if (run) n++;
     return n;
   };
+  const dbg = [];
   const real = groupsSplit.filter((g) => {
-    if (g.length < 4 || g.length > 8) return false;
+    const why = (r) => {
+      dbg.push([+(g[0] / pxPerPt).toFixed(1), +(g[g.length - 1] / pxPerPt).toFixed(1),
+                g.length, r, g.map((v) => +(v / pxPerPt).toFixed(1)),
+                (preOf.get(g) || []).map((v) => +(v / pxPerPt).toFixed(1))]);
+      return r === 'ok';
+    };
+    if (g.length < 4 || g.length > 8) return why('linek ' + g.length);
     const gaps = [];
     for (let i = 1; i < g.length; i++) gaps.push(g[i] - g[i - 1]);
     gaps.sort((a, b) => a - b);
     const med = gaps[Math.floor(gaps.length / 2)];
-    if (med < 2) return false;
+    if (med < 2) return why('krok ' + med.toFixed(1));
     let same = 0;
     for (const gp of gaps) if (gp >= 0.7 * med && gp <= 1.4 * med) same++;
-    if (same < g.length - 3) return false;
+    if (same < g.length - 3) return why('nepravidelné ' + same + '/' + gaps.length);
     // Čtyřlinková „osnova“ je skoro vždy řádek TEXTU (patička, tiráž), který
     // má linky nestejně daleko. Skutečná osnova se 4 linkami (sken ztratil
     // jednu) drží rozestup těsně, takže se pozná podle rovnoměrnosti.
-    if (g.length === 4 && same < 3) return false;
+    // ⚠️ Sken ale umí poslední linku posunout o pár desetin bodu (naměřeno
+    // Mozart str. 17: mezery 6,3 / 6,4 / 4,4 b = 22 px vs. mez 0,7 × 31,5 =
+    // 22,05 px) — pravidlo `same < 3` pak zahodí SKUTEČNOU osnovu a systém
+    // ztratí jednu osnovu. Rozhoduje proto POMĚR mezer, ne absolutní mez.
+    if (g.length === 4) {
+      const mn = gaps[0], mx = gaps[gaps.length - 1];
+      if (same < 3 && !(mn > 0 && mx <= 1.75 * mn)) return why('4 linky nepravidelné');
+    }
     // ⚠️ Rozestup linek jedné osnovy je ~4 b. Skupina s rozestupem 20+ b není
     // osnova, ale SLEPENÉ CELÉ OSNOVY: v hustém klavírním doprovodu je celá
     // osnova jeden tmavý pás, takže se z jejích pěti linek stane jedno
     // „centrum“ a z pěti osnov jedna falešná „osnova“ o pěti linkách
     // (naměřeno Cherubini tištěná str. 9: ze 6 osnov zbyly 4). Zahodit.
-    if (med > 9 * pxPerPt) return false;
-    return vStrokes(g) >= 2;
+    if (med > 9 * pxPerPt) return why('krok ' + (med / pxPerPt).toFixed(1) + ' b');
+    if (vStrokes(g) < 2) return why('bez svislic');
+    return why('ok');
   });
   // Osnovy z hustých pásů (viz `blobStaffs`) se přidají mezi „normální“ osnovy;
   // projít musí stejným testem svislic (text žádné nemá).
@@ -318,7 +395,20 @@ function staffGroups(mask, w, h, pxPerPt) {
     if (n >= 2) real.push(b);
   }
   real.sort((a, b) => a[0] - b[0]);
-  return { real, lines: cs.length,
+  // DVA ÚLOMKY JEDNÉ OSNOVY. Když se z osnovy ztratí linka (sken) nebo ji
+  // `repairStaff` uřízne, vzniknou dvě „osnovy“ 3–5 b od sebe a systém pak
+  // dostane o osnovu víc (naměřeno Mozart str. 3: 453,2–463,8 + 468,5–476,7).
+  // Mezera mezi DVĚMA osnovami je vždy větší (naměřeno 13–33 b), takže se
+  // úlomky smí spojit, jen když jsou blíž než 6 b.
+  const mergedReal = [];
+  for (const g of real) {
+    const prev = mergedReal[mergedReal.length - 1];
+    if (prev && g[0] - prev[prev.length - 1] < 6 * pxPerPt) {
+      prev.push(...g);
+      prev.sort((a, b) => a - b);
+    } else mergedReal.push(g.slice());
+  }
+  return { real: mergedReal, lines: cs.length, dbg,
            raw: groups.map((g) => [g[0], g[g.length - 1], g.length]) };
 }
 
@@ -383,6 +473,55 @@ function gapDensity(up, lo, mask, w, h, colInk) {
   return n ? ink / n : 0;
 }
 
+/** Kolik SLOUPCŮ prochází mezerou mezi dvěma osnovami v masce TMAVÉHO inkoustu.
+ *  To je jediné spolehlivé vodítko, jestli dvě osnovy patří do JEDNOHO systému:
+ *  závorka systému (a taktové čáry vedené přes mezeru) jsou černé a procházejí
+ *  celou mezerou, kdežto mezi DVĚMA systémy je prázdno. Šedé skeny mají v
+ *  mezerách stíny, vazbu a linku u okraje — ty `mask` (Otsu + 35) bere jako
+ *  inkoust, takže podle ní se hranice systému poznat nedala (naměřeno Mozart
+ *  str. 17: hranice systému „s inkoustem 19 a 27 sloupců“).
+ *  Sloupce přes celou stránku (stín/vazba) se vynechávají — jinak by „prázdno“
+ *  bylo plné inkoustu. */
+function gapConn(up, lo, dark, artCol, w, xLo, xHi, outX) {
+  const y0 = up[up.length - 1] + 2, y1 = lo[0] - 2;
+  if (y1 <= y0) return 0;
+  const need = y1 - y0 + 1;
+  const a = Math.max(0, Math.round(Number.isFinite(xLo) ? xLo : 0));
+  const b = Math.min(w - 1, Math.round(Number.isFinite(xHi) ? xHi : w - 1));
+  let n = 0;
+  for (let x = a; x <= b; x++) {
+    if (artCol[x]) continue;                     // stín/vazba přes celou stránku
+    let ink = 0;
+    for (let y = y0; y <= y1; y++) ink += dark[y * w + x];
+    if (ink / need >= 0.8) { n++; if (outX && outX.length < 12) outX.push(x); }
+  }
+  return n;
+}
+
+/** Sloupce, které jsou tmavé I V OKRAJÍCH stránky (nad prvním a pod posledním
+ *  systémem) = skenový stín, vazba, okraj předlohy. Závorka systému tam NENÍ
+ *  (existuje jen uvnitř systému), takže tohle je bezpečné vodítko, jak artefakt
+ *  odlišit od skutečné spojnice — na rozdíl od „sloupec tmavý přes celou
+ *  stránku“ (závorky všech systémů leží ve stejném x a jejich inkoust se
+ *  nasčítá, naměřeno Cherubini str. 3: 0,71 výšky stránky). */
+function artifactCols(real, dark, w, h) {
+  const art = new Uint8Array(w);
+  const firstTop = real[0][0];
+  const lastBot = real[real.length - 1][real[real.length - 1].length - 1];
+  const m = Math.max(6, Math.round(0.01 * h));
+  const rows = [];
+  for (let y = 0; y < h; y++) {
+    if (y < firstTop - m || y > lastBot + m) rows.push(y);
+  }
+  if (rows.length < 8) return art;
+  const need = Math.ceil(0.5 * rows.length);
+  for (let x = 0; x < w; x++) {
+    let c = 0;
+    for (const y of rows) { if (dark[y * w + x]) { c++; if (c >= need) { art[x] = 1; break; } } }
+  }
+  return art;
+}
+
 /** Rozdělí osnovy do SYSTÉMŮ. Jedno místo pravdy pro celou stránku i pro
  *  klepnutí do jednoho systému — dřív si to každé volání počítalo samo z jiného
  *  výřezu, takže pásky vycházely jinak a jeden systém se očísloval dvakrát.
@@ -391,24 +530,51 @@ function gapDensity(up, lo, mask, w, h, colInk) {
  *    spojnice = hranice systému; na skenu Carus jsou uvnitř systému mezery
  *    18–38 b, mezi systémy 37–45 b, takže samotná velikost nestačí a rozhoduje
  *    spojnice (závorka / taktová čára přes mezeru),
+ *  * mezera > 1,4 × typická, kterou NEPROCHÁZÍ ani jeden tmavý sloupec, je
+ *    hranice taky — tohle zachrání sazbu, kde je v mezerách text/dynamika a
+ *    staré pravidlo `ink < 1` je odmítlo (naměřeno Mozart str. 17: hranice
+ *    48,4 b s „inkoustem“ 19).
  *  * extrémní mezera (> 3 × typická) je hranice vždy — tam spojnice nepatří.
  *  ⚠️ Základ se bere z 25. percentilu, ne z mediánu: v pásu, kde je jen jeden
  *  systém, převažují velké mezery sbor→klavír a medián je nad hranicí systému
  *  (naměřeno: 11 osnov slitých do jednoho systému na str. 8). */
-function systemGroups(real, mask, w, colInk, h) {
+function systemGroups(real, mask, w, colInk, h, dark, darkColInk) {
+  const artCol = dark ? artifactCols(real, dark, w, h) : null;
+  // Rozsah x, ve kterém se hledají SPOJNICE. Vnější kousek se vynechává:
+  // na okrajích skenu je stín a vazba, které procházejí celou stránkou
+  // (naměřeno Mozart str. 17: tmavý pruh na x≈565–568 a 9–13 b prochází
+  // i mezerami MEZI systémy). Závorku systému to nechá být — ta stojí
+  // u levého okraje osnov (Cherubini: x≈16 b), tedy až za touhle hranicí.
+  const medOfA = (arr) => { const s = arr.slice().sort((x, y) => x - y); return s[Math.floor((s.length - 1) / 2)]; };
+  const lefts = [], rights = [], heights = [];
+  for (const g of real) {
+    const [L, R] = staffSpan(g, mask, w);
+    lefts.push(L); rights.push(R); heights.push(g[g.length - 1] - g[0]);
+  }
+  const L0 = lefts.length ? medOfA(lefts) : 0;
+  const R0 = rights.length ? medOfA(rights) : w - 1;
+  const sp0 = Math.max(2, (heights.length ? medOfA(heights) : 16) / 4);
+  const xLo = L0 + 0.75 * sp0;
+  const xHi = R0 - 3 * sp0;
   const gaps = [];
   for (let i = 0; i + 1 < real.length; i++) {
+    const connX = [];
     gaps.push({ gap: real[i + 1][0] - real[i][real[i].length - 1],
                 ink: gapInk(real[i], real[i + 1], mask, w, colInk, h),
+                conn: dark ? gapConn(real[i], real[i + 1], dark, artCol, w, xLo, xHi, connX) : null,
+                connX,
                 dens: gapDensity(real[i], real[i + 1], mask, w, h, colInk) });
   }
   const sorted = gaps.map((q) => q.gap).sort((a, b) => a - b);
   const gapBase = sorted.length ? sorted[Math.floor((sorted.length - 1) * 0.25)] : 0;
-  // Hranice systému: obrovská mezera, nebo mezera nad 1,5× typickou bez spojnice.
+  // Hranice systému: obrovská mezera, nebo mezera nad 1,5× typickou bez spojnice,
+  // nebo (nově) mezera nad 1,4× typickou, kterou neprochází žádný tmavý sloupec.
   // Hustota inkoustu v mezeře se počítá jen do diagnostiky — sama nerozhoduje:
   // text písně je i mezi skutečnými systémy (naměřeno Cherubini tištěná str. 5).
   const sizeBoundary = (q) => gapBase > 0
-    && (q.gap > 3 * gapBase || (q.gap > 1.5 * gapBase && q.ink < 1));
+    && (q.gap > 3 * gapBase
+        || (q.gap > 1.5 * gapBase && q.ink < 1)
+        || (q.conn === 0 && q.gap > 1.4 * gapBase));
   const bounds = [];
   let a = 0;
   for (let i = 0; i < real.length; i++) {
@@ -451,14 +617,14 @@ function systemGroups(real, mask, w, colInk, h) {
  */
 export function detectPageSystems(cv, pxPerPt, opt = {}) {
   const krok = Math.max(0, Math.min(64, Math.round(opt.krok || 0)));
-  const { w, h, mask, colInk } = buildMask(cv);
+  const { w, h, mask, colInk, dark, darkColInk } = buildMask(cv);
   const staff = staffGroups(mask, w, h, pxPerPt);
   const real = staff.real;
   if (!real.length) {
     return { ok: false, systems: [], staves: 0,
              reason: 'nenašel jsem linky osnov (' + staff.lines + ' linek)' };
   }
-  const grp = systemGroups(real, mask, w, colInk, h);
+  const grp = systemGroups(real, mask, w, colInk, h, dark, darkColInk);
   const topPxOf = (i) => real[i][0];
   const botPxOf = (i) => real[i][real[i].length - 1];
   const systems = [];
@@ -499,10 +665,12 @@ export function detectPageSystems(cv, pxPerPt, opt = {}) {
   const inkTop = [];
   for (let x = 0; x < w; x++) if (colInk[x] > 0.25 * h) inkTop.push([Math.round(x / pxPerPt), colInk[x], h]);
   return { ok: systems.some((d) => d.ok), systems, staves: real.length, tallCols: inkTop.slice(0, 12),
+           staffDbg: (staff.dbg || []).map((r) => [r[0], r[1], r[2], r[3], r[4], r[5]]),
            rawGroupsPt: staff.raw.map((g) => [+(g[0] / pxPerPt).toFixed(1),
                                              +(g[1] / pxPerPt).toFixed(1), g[2]]),
            gapBasePt: +(grp.gapBase / pxPerPt).toFixed(1),
-           gapsPt: grp.gaps.map((q) => [+(q.gap / pxPerPt).toFixed(1), q.ink]),
+           gapsPt: grp.gaps.map((q) => [+(q.gap / pxPerPt).toFixed(1), q.ink, q.conn,
+                                        (q.connX || []).map(v => +(v / pxPerPt).toFixed(1))]),
            rowsPt: real.map((g) => [+(g[0] / pxPerPt).toFixed(1),
                                    +(g[g.length - 1] / pxPerPt).toFixed(1), g.length]) };
 }
@@ -527,7 +695,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   // osnovy u klepnutí padal o systém vedle (naměřeno: klepnutí na klavír 470 b
   // vybralo systém pod ním).
   const ypt = Number.isFinite(opt.ypt) ? opt.ypt - offY : null;
-  const { w, h, mask, thr, colInk } = buildMask(cv);
+  const { w, h, mask, thr, colInk, dark, darkColInk } = buildMask(cv);
 
   // 1) linky osnov = řádky s dlouhým vodorovným tahem, seskupené do osnov.
   // ⚠️ Když osnovy už našel `detectPageSystems` pro CELOU stránku, použijí se
@@ -586,7 +754,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     if (sysA < 0) sysA = nearIdx;
     if (sysB < 0 || sysB < sysA) sysB = sysA;
   } else {
-    for (const [a, b] of systemGroups(real, mask, w, colInk, h).bounds) {
+    for (const [a, b] of systemGroups(real, mask, w, colInk, h, dark, darkColInk).bounds) {
       if (nearIdx >= a && nearIdx <= b) { sysA = a; sysB = b; break; }
     }
   }

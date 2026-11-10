@@ -1064,7 +1064,7 @@
            uživatel nepotvrdí. Vidí čárkované čáry a čísla přímo v notách. -->
       <div class="bn-fill-preview" v-if="barFillPreview">
         <span class="bn-fill-q" v-if="barFillPreview.pageMode">Celá stránka: {{ barFillPreview.systems }} systémů → {{ barFillPreview.bars }} čísel ({{ barFillPreview.start }}–{{ barFillPreview.start + barFillPreview.bars - 1 }}), {{ barFillPreview.withFirst }} prvních taktů dopočteno</span>
-        <span class="bn-fill-q" v-else>{{ barFillPreview.bars }} čísel: {{ barFillPreview.start }}–{{ barFillPreview.start + barFillPreview.bars - 1 }} (1. takt = {{ barFillPreview.first }}{{ barFillPreview.firstSrc === 'next' ? ' z pole Další' : ' z indexu systému' }})</span>
+        <span class="bn-fill-q" v-else>{{ barFillPreview.bars }} čísel: {{ barFillPreview.start }}–{{ barFillPreview.start + barFillPreview.bars - 1 }} (1. takt = {{ barFillPreview.first }}{{ barFillPreview.firstSrc === 'next' ? ' z pole Další' : (barFillPreview.firstSrc === 'prevPage' ? ' z posledního indexu' : ' z indexu systému') }})</span>
         <span class="bn-fill-warn" v-if="barFillPreview.mismatch">Krok {{ barFillPreview.krokBars + 1 }} nesedí na {{ barFillPreview.bars }} čar — platí čáry</span>
         <button class="bn-fill-ok" @click="commitBarFill" title="Vložit čísla taktů">Vložit</button>
         <button class="bn-fill-no" @click="cancelBarFill" title="Nic nevkládat">Zrušit</button>
@@ -2488,7 +2488,20 @@ async function _fillSystemAt(p) {
   // proto jen v pásu nad horní linkou — ne v celém systému: mezi doplněnými
   // čísly uvnitř systému i indexem systému sousedního se jinak vybíralo špatné
   // číslo (Jan, listopad 2026: „na levou polovinu to střílí 32 nebo 62“).
-  const bandTop = det.sysTop - 6 * spPt, bandBot = det.sysTop + 1 * spPt;
+  // ⚠️ Pás musí být shovívavější: na vybledlém skenu (Mozart str. 3) sedí
+  // vytištěné číslo i 8 mezer nad osnovou a `sysTop` se navíc může posunout
+  // o pár bodů — s pásem −6…+1 mezery se index nenašel a appka sáhla po poli
+  // „Další“, i když index existoval (Jan: „používá čísla z pole Další, jak
+  // kdyby systém neměl index“). Šíře pásu je proto −10…+2 mezery, ale jen
+  // do POLOVINY mezery k sousednímu systému, aby se nepřitáhl jeho index.
+  const halfUp = (() => {
+    const prevSys = (dpg.systems || [])
+      .filter(o => o.sysBot <= det.sysTop + 1)
+      .sort((a, b) => b.sysBot - a.sysBot)[0];
+    return prevSys ? (det.sysTop - prevSys.sysBot) / 2 : Infinity;
+  })();
+  const bandTop = Math.max(det.sysTop - 10 * spPt, det.sysTop - halfUp);
+  const bandBot = det.sysTop + 2 * spPt;
   const inSys = (annotations.value.items || [])
     .filter(it => it && it.barNum && it.page === page && it.y != null)
     .map(it => ({ it, yPdf: it.y / s }))
@@ -2500,8 +2513,13 @@ async function _fillSystemAt(p) {
     if (Number.isFinite(n) && n > 0) first = n;
   }
   if (first == null) {
-    first = Math.max(1, Number(barNext.value) || 1);
-    firstSrc = 'next';
+    // Žádný index nad systémem: navazuj na POSLEDNÍ ZNÁMÝ INDEX PŘED touto
+    // stránkou (Jan, listopad 2026: „ne podle pole Další, ale podle
+    // posledního indexu předchozí stránky“). Pole „Další“ je až poslední
+    // záloha, když o předchozích taktech nevíme nic.
+    const prevN = lastBarIndexBefore(page);
+    if (prevN != null) { first = prevN + 1; firstSrc = 'prevPage'; }
+    else { first = Math.max(1, Number(barNext.value) || 1); firstSrc = 'next'; }
   }
   // PRVNÍ TAKT SYSTÉMU: když má vytištěné číslo (index), nečísluje se znovu —
   // `det.lines` obsahuje jen VNITŘNÍ čáry a čísla jdou od `first + 1`.
@@ -2539,7 +2557,9 @@ async function _fillSystemAt(p) {
                            y: Math.round(y) } });
   showToast((firstSrc === 'next'
       ? 'V systému není číslo 1. taktu — čísluji i první takt od pole Další (' + first + '). '
-      : '')
+      : firstSrc === 'prevPage'
+        ? 'V systému není číslo 1. taktu — navazuji na poslední index předchozí stránky (' + first + '). '
+        : '')
     + (mismatch
       ? 'Našel jsem ' + bars + ' vnitřních čar, Krok ' + (krokBars + 1) + ' nesedí — řídím se čarami. '
       : 'Systém ' + (bars + (withFirstBar ? 1 : 0)) + ' taktů: ')
@@ -2661,7 +2681,11 @@ async function _fillPageAt() {
     .filter(o => Number.isFinite(o.n) && o.n > 0)
     .sort((a, b) => a.yPdf - b.yPdf);
   const items = [];
-  let prevLast = null;
+  // Odkud navazuje číslování: poslední známý index PŘED stránkou (ne pole
+  // „Další“) — Jan, listopad 2026: „první systém začalo číslovat podle pole
+  // Další a ne podle posledního indexu předchozí stránky“.
+  const prevPageIdx = lastBarIndexBefore(page);
+  let prevLast = prevPageIdx != null ? prevPageIdx : null;
   let withFirst = 0, fromIndex = 0, resync = 0, mismatch = 0;
   for (const d of systems) {
     const sp = Number.isFinite(d.spacePt) ? d.spacePt : 4;
@@ -7582,6 +7606,20 @@ const barIndex = computed(() => {
   out.sort((a, b) => (a.page - b.page) || (a.y - b.y) || (a.x || 0) - (b.x || 0));
   return out;
 });
+// Poslední známý index taktu PŘED danou stránkou = odkud má navazovat
+// číslování, když systém sám vytištěné číslo nemá (Jan, listopad 2026:
+// „ne podle pole Další, ale podle posledního indexu předchozí stránky“).
+// Bere se v pořadí, v jakém jde hudba (stránka → y → x), takže poslední
+// záznam je skutečně poslední takt před touhle stránkou.
+function lastBarIndexBefore(page) {
+  let best = null;
+  for (const e of barIndex.value) {
+    if (!e || !(e.page < page)) continue;
+    if (!best || e.page > best.page
+        || (e.page === best.page && (e.y > best.y || (e.y === best.y && e.x > best.x)))) best = e;
+  }
+  return best ? best.n : null;
+}
 // Známé takty jen v části, kde právě stojíme (část = od záložky k záložce).
 // Bez záložek nebo mimo ně = celá skladba.
 function barScope() {
