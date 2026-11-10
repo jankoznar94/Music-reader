@@ -171,16 +171,28 @@ function buildMask(cv) {
  *  aby se stránka a jeden systém nemohly rozejít. */
 function staffGroups(mask, w, h, pxPerPt) {
   const longest = (off) => longestRun(mask, off, w);
+  // ⚠️ Řádek linky osnovy se na vybledlém skenu nedetekuje, když je linka
+  // PŘERUŠENÁ (naměřeno Cherubini str. 9: podíl inkoustu 0,24–0,39 a nejdelší
+  // tah jen 21–25 % šířky, takže obě původní podmínky selhaly a z celého
+  // systému zbyly 2 osnovy). Druhá, mírnější podmínka bere řádky s dlouhým
+  // tahem (>= 16 % šířky) i při menším podílu inkoustu — text písně ani
+  // trámce takhle dlouhý SOUVISLÝ tah nemají, takže falešné linky nepřidá.
+  const rowFrac = new Float32Array(h);
+  const rowLong = new Float32Array(h);
+  for (let y = 0; y < h; y++) {
+    const off = y * w;
+    let ink = 0;
+    for (let x = 0; x < w; x++) ink += mask[off + x];
+    rowFrac[y] = ink / w;
+    rowLong[y] = longest(off) / w;
+  }
   const centres = [];
   let runStart = -1;
   for (let y = 0; y <= h; y++) {
     let on = false;
     if (y < h) {
-      const off = y * w;
-      let ink = 0;
-      for (let x = 0; x < w; x++) ink += mask[off + x];
-      const frac = ink / w;
-      on = frac >= 0.30 || longest(off) / w >= 0.45;
+      on = rowFrac[y] >= 0.30 || rowLong[y] >= 0.45
+        || (rowLong[y] >= 0.16 && rowFrac[y] >= 0.15);
     }
     if (on && runStart < 0) runStart = y;
     if (!on && runStart >= 0) {
@@ -310,6 +322,33 @@ function gapInk(up, lo, mask, w, colInk, h) {
   return cols;
 }
 
+/** Hustota inkoustu v mezeře mezi dvěma osnovami (podíl tmavých pixelů).
+ *  Rozhoduje u mezery, která je velká jako hranice systému, ale leží UVNITŘ
+ *  systému: mezi sborem a klavírem je text písně a dynamika (naměřeno 8–17 %
+ *  inkoustu), kdežto mezi dvěma systémy je prázdno (2–5 %). Prahy velikosti
+ *  to nerozliší — naměřeno Mozart str. 5: mezera sbor→klavír 34,7 b, skutečná
+ *  hranice systému 37,2 b (rozdíl 2,5 b). */
+function gapDensity(up, lo, mask, w, h, colInk) {
+  const y0 = up[up.length - 1] + 2, y1 = lo[0] - 2;
+  if (y1 <= y0) return 0;
+  const [L, R] = staffSpan(up, mask, w);
+  const sp = Math.max(2, (up[up.length - 1] - up[0]) / 4);
+  const x0 = Math.max(0, Math.round(L + sp));
+  const x1 = Math.min(w - 1, Math.round(R - sp));
+  if (x1 <= x0) return 0;
+  let ink = 0, n = 0;
+  for (let y = y0; y <= y1; y++) {
+    const off = y * w;
+    for (let x = x0; x <= x1; x++) {
+      // sloupce přes celou stránku (vazba, stín) se nepočítají
+      if (colInk[x] > 0.5 * h) continue;
+      ink += mask[off + x];
+      n++;
+    }
+  }
+  return n ? ink / n : 0;
+}
+
 /** Rozdělí osnovy do SYSTÉMŮ. Jedno místo pravdy pro celou stránku i pro
  *  klepnutí do jednoho systému — dřív si to každé volání počítalo samo z jiného
  *  výřezu, takže pásky vycházely jinak a jeden systém se očísloval dvakrát.
@@ -326,21 +365,47 @@ function systemGroups(real, mask, w, colInk, h) {
   const gaps = [];
   for (let i = 0; i + 1 < real.length; i++) {
     gaps.push({ gap: real[i + 1][0] - real[i][real[i].length - 1],
-                ink: gapInk(real[i], real[i + 1], mask, w, colInk, h) });
+                ink: gapInk(real[i], real[i + 1], mask, w, colInk, h),
+                dens: gapDensity(real[i], real[i + 1], mask, w, h, colInk) });
   }
   const sorted = gaps.map((q) => q.gap).sort((a, b) => a - b);
   const gapBase = sorted.length ? sorted[Math.floor((sorted.length - 1) * 0.25)] : 0;
-  const boundary = (q) => gapBase > 0
+  // Hranice systému: obrovská mezera, nebo mezera nad 1,5× typickou bez spojnice.
+  // Hustota inkoustu v mezeře se počítá jen do diagnostiky — sama nerozhoduje:
+  // text písně je i mezi skutečnými systémy (naměřeno Cherubini tištěná str. 5).
+  const sizeBoundary = (q) => gapBase > 0
     && (q.gap > 3 * gapBase || (q.gap > 1.5 * gapBase && q.ink < 1));
-  const conn = gaps.map((q) => !boundary(q));
   const bounds = [];
   let a = 0;
   for (let i = 0; i < real.length; i++) {
-    if (i + 1 < real.length && conn[i]) continue;
+    if (i + 1 < real.length && !sizeBoundary(gaps[i])) continue;
     bounds.push([a, i]);
     a = i + 1;
   }
-  return { gaps, gapBase, conn, bounds };
+  // KLAVÍRNÍ DVOJICE PATŘÍ K SYSTÉMU NAD SEBOU. Sbor + klavír má mezi sebou
+  // mezeru bez spojnice, velkou jako hranice systému (naměřeno Mozart str. 5:
+  // 34,7 b uvnitř systému vs 37,2 b mezi systémy), takže podle velikosti se to
+  // oddělit nedá. Rozhoduje tvar: blok o DVOU osnovách, pod nímž ani nad ním
+  // není větší mezera, je klavír systému výš — a klavírní dvojice je v systému
+  // vždy jen jedna.
+  const merged = [];
+  for (let k = 0; k < bounds.length; k++) {
+    const [b0, b1] = bounds[k];
+    const prev = merged[merged.length - 1];
+    const belowCount = b1 - b0 + 1;
+    const aboveCount = prev ? prev[1] - prev[0] + 1 : 0;
+    if (prev && belowCount === 2 && aboveCount >= 3) {
+      const gap = real[b0][0] - real[prev[1]][real[prev[1]].length - 1];
+      const nextGap = k + 1 < bounds.length
+        ? real[bounds[k + 1][0]][0] - real[b1][real[b1].length - 1] : Infinity;
+      if (gapBase > 0 && gap <= 2.4 * gapBase && gap < 1.15 * nextGap) {
+        prev[1] = b1;
+        continue;
+      }
+    }
+    merged.push([b0, b1]);
+  }
+  return { gaps, gapBase, bounds: merged };
 }
 
 /**
@@ -385,7 +450,7 @@ export function detectPageSystems(cv, pxPerPt, opt = {}) {
     // uvnitř výřezu padlo mimo něj → vybrala se špatná osnova a z výřezu čtyř
     // taktů vyšlo jedenáct čar).
     const det = detectBarlines(band, pxPerPt, {
-      krok, ypt: midPt, offsetY: offY,
+      krok, ypt: midPt, offsetY: offY, numXs: opt.numXs,
       rows: [Math.round(topPx) - y0, Math.round(botPx) - y0],
     });
     // Kontrola, že výřez opravdu obsahuje PRÁVĚ tenhle systém: když se hrany
@@ -570,7 +635,16 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     for (const c of clusters) {
       const support = new Set(c.xs.map(p => p.i)).size;
       const x = c.xs.reduce((n, p) => n + p.x, 0) / c.xs.length;
-      if (support >= need) accepted.push({ x, support, gs: gapSupport(x) });
+      // Tolerance JEDNA osnova nestačí: na vybledlém skenu vypadne čára i ve
+      // DVOU osnovách (naměřeno Cherubini 7osnový systém, čára na 160 b měla
+      // podporu 5 — systém pak dostal o takt míň a číslo se přeskočilo).
+      // Když kandidát navíc prochází MEZEROU mezi osnovami, je to taktová čára
+      // systému, ne nožička (nožička zůstává uvnitř své osnovy) — proto se mu
+      // povolí podpora o dvě osnovy nižší.
+      if (support >= need
+          || (support >= Math.max(2, sysCount - 2) && gapSupport(x) >= 1)) {
+        accepted.push({ x, support, gs: gapSupport(x) });
+      }
     }
     // ⚠️ NOŽIČKY ZAROVNANÝCH AKORDŮ. Když jsou dvě osnovy (klavír, sbor), mají
     // noty obou rukou/hlasů stejný rytmus, takže sloupce nožiček projdou jako
@@ -714,8 +788,35 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   // o takt navíc (19/21 v regresi). Pojistka proti „úvodní se nedetekovala“:
   // zahodit se smí jen kandidát blíž než 1,5 šířky taktu od okraje.
   let opening = null;
-  if (rest.length === 1) opening = rest.pop();
-  else if (rest.length >= 2) {
+  // 1) Nejpřesnější je VYTIŠTĚNÉ ČÍSLO: stojí nad PRVNÍ taktovou čarou systému
+  //    (Jan ho lupou ukládá jako index `barNum`). Kandidát nejblíž jeho x je
+  //    úvodní čára; všechno vlevo od něj je hrana/závorka sazby. Bez toho se
+  //    u sazby se DVĚMA tahy na začátku (závorka + čára) vybírala závorka
+  //    a systém dostal o takt navíc — a podle rozlišení renderu se to
+  //    Přepínalo mezi dvěma výsledky (naměřeno Mozart str. 6: na 5 px/bod
+  //    začínal systém číslem 53 místo 52).
+  if (Array.isArray(opt.numXs) && opt.numXs.length) {
+    const topPt = offY + real[sysA][0] / pxPerPt;
+    const spPt = spacePx / pxPerPt;
+    const inBand = opt.numXs
+      .filter(o => o && Number.isFinite(o.x)
+        && o.y >= topPt - 6 * spPt && o.y <= topPt + 1.2 * spPt)
+      .sort((a, b) => a.x - b.x);
+    if (inBand.length) {
+      const anchor = inBand[0].x * pxPerPt;
+      let best = null, bd = Infinity;
+      for (const x of rest) {
+        const dd = Math.abs(x - anchor);
+        if (dd < bd) { bd = dd; best = x; }
+      }
+      if (best != null && bd <= 2.5 * spacePx) {
+        opening = best;
+        rest = rest.filter(x => x > best + 0.5 * spacePx);
+      }
+    }
+  }
+  if (opening == null && rest.length === 1) opening = rest.pop();
+  else if (opening == null && rest.length >= 2) {
     const P = medGap(rest);
     if (P > 0 && rest[0] - staffLeft < 1.5 * P) {
       opening = rest.shift();

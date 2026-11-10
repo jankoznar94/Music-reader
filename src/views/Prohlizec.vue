@@ -2419,47 +2419,46 @@ async function _fillSystemAt(p) {
   const page = currentPage.value;
   const s = await layerScale(page);
   const px = p.x / s, py = p.y / s;                     // bod PDF (vrstva = stránka)
+  // Vytištěná čísla taktů (indexy) na TÉTO stránce v bodech PDF: detekce podle
+  // nich pozná první taktovou čáru systému (číslo stojí přesně nad ní), takže
+  // se úvodní čára neplete se závorkou sazby.
+  const numIdx = (annotations.value.items || [])
+    .filter(it => it && it.barNum && it.page === page && it.x != null && it.y != null)
+    .map(it => ({ x: it.x / s, y: it.y / s }));
   let pw = 595, ph = 842;
   try {
     const d = await getPageWidthHeight(song, page + 1);
     if (d && d.width > 0) { pw = d.width; ph = d.height; }
   } catch (e) { /* A4 */ }
-  // VÝŠKA PÁSU: musí pojmout CELÝ systém, ne jen okolí klepnutí. Dřív se začínalo
-  // na 260 b, ale systém sbor+klavír je ~220 b vysoký, takže klepnutí do spodní
-  // osnovy uřízlo horní osnovy a čísla pak vyšla nad klavír (Jan, listopad 2026).
-  // 520 b je pro 6osnový systém bezpečné; 700 b pro husté sazby.
+  // ⚠️ SYSTÉM SE HLEDÁ NA CELÉ STRÁNCE, stejně jako u dočíslování stránky.
+  // Dřív se vyřezával pás kolem klepnutí a osnovy se v něm seskupovaly ZNOVU —
+  // pás má jiné statistiky mezer, takže se šestiosnový systém rozpadl na
+  // 4 + 2 nebo přišel o horní osnovu (naměřeno: klepnutí do prostředního
+  // systému Mozartovy str. 5 vrátilo 6 osnov z 7 a čísla se posunula o takt).
+  // Jedno místo pravdy = `detectPageSystems`; tady se jen vybere systém,
+  // do kterého se kleplo, a očísluje se stejnou logikou jako klepnutí.
   const step = Math.max(1, Math.min(64, Number(barStep.value) || 1));
-  const bands = [520, 700];
-  let cv = null, crop = null, pxPerPt = 0, det = null;
-  for (let bi = 0; bi < bands.length; bi++) {
-    const bandH = bands[bi];
-    crop = { x: 0, y: Math.max(0, Math.min(py - bandH / 2, ph - bandH)), w: pw, h: Math.min(bandH, ph) };
-    cv = document.createElement('canvas');
-    // ⚠️ PLÁTNO NESMÍ RŮST S dpr. `renderPageRegion()` násobí dpr samo, takže
-    // dřívější `pw * PPT` dalo na tabletu (dpr 2,6) pás 9 000 × 4 000 px = 36 M px;
-    // `getImageData` na takovém plátně tiše selže a protože volající měl
-    // `.catch(() => {})`, nedělo se VŮBEC NIC (Jan: „dočíslování nefunguje“).
-    // Stejný trik jako u lupy: cílíme PIXELY na bod nezávisle na dpr.
-    const PPT = 6;
-    const dpr = window.devicePixelRatio || 1;
-    let outW = pw * PPT / dpr, outH = crop.h * PPT / dpr;
-    const MAX_PX = 12e6;
-    const areaPx = outW * outH * dpr * dpr;
-    if (areaPx > MAX_PX) {
-      const k = Math.sqrt(MAX_PX / areaPx);
-      outW *= k; outH *= k;
-    }
-    await renderPageRegion(song, page + 1, cv, crop, outW, outH);
-    pxPerPt = cv.width / crop.w;
-    // Detekce potřebuje y klepnutí (který systém) a offset pásu. „Krok“ je jen
-    // kontrola, do výpočtu nevstupuje.
-    det = detectBarlines(cv, pxPerPt, { krok: step, ypt: py, offsetY: crop.y });
-    // Systém se nesmí dotýkat horního okraje pásu — to znamená, že je uříznutý
-    // a horní osnova chybí. Pak se zkusí vyšší pás (až do konce seznamu).
-    const clippedTop = det.ok && (det.sysTop - crop.y) < 1.5;
-    if (det.ok && !clippedTop) break;
-    if (bi === bands.length - 1) break;
+  const PPT = 5;
+  const dpr = window.devicePixelRatio || 1;
+  let outW = pw * PPT / dpr, outH = ph * PPT / dpr;
+  const MAX_PX = 12e6;
+  const areaPx = outW * outH * dpr * dpr;
+  if (areaPx > MAX_PX) { const k = Math.sqrt(MAX_PX / areaPx); outW *= k; outH *= k; }
+  const cv = document.createElement('canvas');
+  await renderPageRegion(song, page + 1, cv, { x: 0, y: 0, w: pw, h: ph }, outW, outH);
+  const pxPerPt = cv.width / pw;
+  const dpg = detectPageSystems(cv, pxPerPt, { krok: step, numXs: numIdx });
+  // Vybraný systém = ten, který obsahuje klepnutí; jinak nejbližší.
+  let det = null;
+  for (const d of dpg.systems || []) {
+    if (py >= d.sysTop - 2 && py <= d.sysBot + 2) { det = d; break; }
   }
+  if (!det && dpg.systems && dpg.systems.length) {
+    det = dpg.systems.slice().sort((a, b) =>
+      Math.min(Math.abs(py - a.sysTop), Math.abs(py - a.sysBot))
+      - Math.min(Math.abs(py - b.sysTop), Math.abs(py - b.sysBot)))[0];
+  }
+  if (!det) det = { ok: false, reason: dpg.reason || 'nenašel jsem systémy', lines: [], bars: 0 };
   const bars = det.bars;
   _barPickDbg({ fill: { page, pdf: [Math.round(px), Math.round(py)],
                          lines: det.lines.map(v => Math.round(v * 10) / 10),
@@ -2512,7 +2511,7 @@ async function _fillSystemAt(p) {
   const startNum = withFirstBar ? first : first + 1;
   // Číslo patří NAD horní linku CELÉHO SYSTÉMU (ne nad osnovu, do které se
   // kleplo — u sboru + klavíru to bylo doprostřed systému).
-  const y = Math.max(crop.y + 1, det.top - 2);
+  const y = Math.max(1, det.top - 2);
   // x pro číslo 1. taktu = levá hrana systému (úvodní čára, jinak okraj osnov).
   const firstX = Number.isFinite(det.openingPt) ? det.openingPt
     : (Number.isFinite(det.staffLeftPt) ? det.staffLeftPt + 2 * spPt : det.lines[0] - 40);
@@ -2533,7 +2532,7 @@ async function _fillSystemAt(p) {
   };
   _barPickDbg({ preview: { bars: count, first, firstSrc, start: startNum, krokBars,
                            sys: [det.sysTop, det.sysBot], staves: det.staves,
-                           band: [Math.round(crop.y), Math.round(crop.y + crop.h)],
+                           band: [0, Math.round(cv.height / pxPerPt)],
                            idx: inSys.length, firstX: Math.round(firstX),
                            idxPages: (annotations.value.items || [])
                              .filter(it => it && it.barNum).map(it => it.page),
@@ -2568,6 +2567,11 @@ async function _fillPageAt() {
     if (d && d.width > 0) { pw = d.width; ph = d.height; }
   } catch (e) { /* A4 */ }
   const step = Math.max(1, Math.min(64, Number(barStep.value) || 1));
+  // Vytištěná čísla (indexy) na stránce v bodech PDF — detekce podle nich
+  // pozná první taktovou čáru každého systému.
+  const numIdx = (annotations.value.items || [])
+    .filter(it => it && it.barNum && it.page === page && it.x != null && it.y != null)
+    .map(it => ({ x: it.x / s, y: it.y / s }));
   // JEDNO vykreslení celé stránky (bez dpr, viz poznámka u pásu výš). Osnovy
   // i hranice systémů se hledají JEDNOU pro celou stránku — dřív se stránka
   // proskenovávala po 14 bodech a každé kolo si osnovy seskupilo jinak, takže
@@ -2617,7 +2621,7 @@ async function _fillPageAt() {
     while (need > 0 && xs.some((x) => dens(x, need) > 0.07)) need -= 2;
     return need;
   };
-  const dpg = detectPageSystems(cv, pxPerPt, { krok: step });
+  const dpg = detectPageSystems(cv, pxPerPt, { krok: step, numXs: numIdx });
   _barPickDbg({ pageFillScan: {
     staves: dpg.staves, reason: dpg.reason,
     sys: (dpg.systems || []).map(d => ({
