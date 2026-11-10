@@ -12,6 +12,15 @@
 //     0,0 b, takže neprošla ANI JEDNA čára (`overshoot: 0` v diagnostice).
 //  5) Seskupování osnov do systému se slévalo přes dva systémy (`staves: 9`
 //     místo 6) a pak se hledaly čáry, které neexistují.
+//  6) Pravý okraj osnov se bral jako MAXIMUM inkoustu na linkách — jediná
+//     zatoulaná značka (trylek přes linku, str. 7: o 13 b) pak odsunula okraj a
+//     koncová taktová čára přestala být „blízko okraje“ → systém dostal o takt
+//     navíc. Teď MEDIÁN konců linek.
+//  7) Nožička dlouhého akordu (tři noty nad sebou, jedna nožička) prošla testem
+//     „je ve víc osnovách“ — ve sboru jsou akordy hlasů svisle zarovnané
+//     (str. 7, 3. systém: falešné čáry 100 a 139 b s podporou 2 ze 3). Teď se
+//     u neúplné podpory navíc vyžaduje průchod MEZEROU mezi osnovami — tam
+//     taktová čára systému prochází, nožička ne.
 //
 // SOUČASNÝ PŘÍSTUP (listopad 2026) — nic z toho nepotřebuje:
 //  * Bere se JEDINÁ osnova, do které uživatel klepl. Seskupování do systému
@@ -321,6 +330,25 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   // skutečné čáry — Jan: „ignoruje poslední takt“), ale ne dvě (to už je nožička
   // v husté klavírní osnově: naměřeno 4/6 na str. 4).
   const need = sysCount >= 2 ? Math.max(2, sysCount - 1) : 1;
+  // 3c) NOŽIČKA AKORDU NAPŘÍČ OSNOVAMI. Ve sborech jsou akordy jednotlivých
+  // hlasů svisle zarovnané, takže dlouhá nožička tří not nad sebou projde
+  // „v tolika osnovách“ jako taktová čára a systém pak dostane o takt víc
+  // (naměřeno str. 7, 3. systém: falešné čáry na 100 a 139 b se podporou 2 ze 3).
+  // Rozdíl: skutečná taktová čára SYSTÉMU prochází i MEZEROU mezi osnovami,
+  // nožička zůstane uvnitř své osnovy. Když je podpora plná (čára ve všech
+  // osnovách), mezera se nevyžaduje — sken ji občas ztratí.
+  const gapCols = [];
+  for (let i = sysA; i < sysB; i++) {
+    const y0 = real[i][real[i].length - 1] + 2, y1 = real[i + 1][0] - 2;
+    if (y1 <= y0) continue;
+    const needRows = y1 - y0 + 1;
+    for (let x = 0; x < w; x++) {
+      let ink = 0;
+      for (let y = y0; y <= y1; y++) ink += mask[y * w + x];
+      if (ink / needRows >= 0.9) gapCols.push(x);
+    }
+  }
+  const crossesGap = (x) => gapCols.some(g => Math.abs(g - x) <= xTol);
   const clusterize = (staffCols) => {
     const all = [];
     for (const sc of staffCols) for (const x of sc.out) all.push({ x, i: sc.i });
@@ -338,7 +366,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     for (const c of clusters) {
       const support = new Set(c.xs.map(p => p.i)).size;
       const x = c.xs.reduce((n, p) => n + p.x, 0) / c.xs.length;
-      if (support >= need) candsX.push(x);
+      if (support >= need && (support >= sysCount || sysCount < 2 || crossesGap(x))) candsX.push(x);
     }
     return { clusters, candsX, all };
   };
@@ -362,15 +390,26 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     for (let x = 0; x < w; x++) if (mask[off + x]) colInk[x]++;
   }
   const isArtifact = (x) => colInk[x] > 0.5 * h || x < 0.02 * w;
-  let staffLeft = w, staffRight = 0;
+  // ⚠️ Okraj se bere jako MEDIÁN konců linek, ne jako maximum: na str. 7 táhne
+  // pravý okraj o 13 b doprava jediná zatoulaná značka (trylek přes linku),
+  // a pak už koncová taktová čára nevypadá „blízko okraje“ → zůstane mezi
+  // vnitřními a systém dostane o takt navíc.
+  const medOf = (arr) => {
+    if (!arr.length) return 0;
+    const s = arr.slice().sort((a, b) => a - b);
+    return s[Math.floor((s.length - 1) / 2)];
+  };
+  const leftEnds = [], rightEnds = [];
   for (let i = sysA; i <= sysB; i++) {
     for (const yy of real[i]) {
       const yr = Math.round(yy) * w;
-      for (let x = 0; x < w; x++) if (mask[yr + x] && !isArtifact(x)) { if (x < staffLeft) staffLeft = x; break; }
-      for (let x = w - 1; x >= 0; x--) if (mask[yr + x] && !isArtifact(x)) { if (x > staffRight) staffRight = x; break; }
+      for (let x = 0; x < w; x++) if (mask[yr + x] && !isArtifact(x)) { leftEnds.push(x); break; }
+      for (let x = w - 1; x >= 0; x--) if (mask[yr + x] && !isArtifact(x)) { rightEnds.push(x); break; }
     }
   }
-  if (staffLeft > staffRight) { staffLeft = 0; staffRight = w - 1; }
+  let staffLeft = medOf(leftEnds);
+  let staffRight = medOf(rightEnds);
+  if (!rightEnds.length || staffLeft > staffRight) { staffLeft = 0; staffRight = w - 1; }
 
   const medGap = (arr) => {
     const d = [];
