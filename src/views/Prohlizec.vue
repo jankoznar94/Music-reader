@@ -1051,6 +1051,26 @@
         </svg>
         <span>Dočíslovat celou stránku</span>
       </button>
+      <!-- OINDEXOVÁNÍ CELÉHO PDF: projde všechny stránky, najde VYTIŠTĚNÁ
+           čísla taktů nad prvními taktovými čarami systémů a udělá z nich
+           skryté indexy (skok na takt, opora pro Dočíslování). Nic nedomýšlí. -->
+      <button class="bn-page" :class="{ on: !!barIndexScan || !!barIndexPreview }" @click="toggleBarIndexAll"
+              :title="barIndexScan ? 'Skenování běží — klepni pro zastavení'
+                : (barIndexPreview ? 'Náhled indexů — klepni pro zrušení'
+                : 'Oindexovat celé PDF: najdu vytištěná čísla taktů (jedno na systém) a udělám z nich skryté indexy pro skok')">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h16M4 12h16M4 18h16"/>
+          <circle cx="7" cy="6" r="2.2"/><circle cx="14" cy="12" r="2.2"/><circle cx="9" cy="18" r="2.2"/>
+        </svg>
+        <span>{{ barIndexScan ? 'Skenuji… ' + barIndexScan.done + '/' + barIndexScan.total
+                : (barIndexPreview ? 'Zrušit náhled indexů' : 'Oindexovat celé PDF') }}</span>
+      </button>
+      <div class="bn-fill-preview" v-if="barIndexPreview">
+        <span class="bn-fill-q">{{ barIndexPreview.items.length }} vytištěných čísel ({{ barIndexPreview.first }}–{{ barIndexPreview.last }}) na {{ barIndexPreview.pages }} stránkách<template v-if="barIndexPreview.skipped"> · {{ barIndexPreview.skipped }} vynecháno (nerostlo)</template></span>
+        <button class="bn-fill-ok" @click="commitBarIndexAll" title="Vložit skryté indexy">Vložit</button>
+        <button class="bn-fill-no" @click="toggleBarIndexAll" title="Nic nevkládat">Zrušit</button>
+      </div>
       <!-- NEJEDNOZNAČNÉ ČTENÍ: lupa našla dvě různá čísla (např. 15 vs. 153).
            Většinou je jedno z nich správné, takže uživatel jen ťukne — žádné
            opisování. Tlačítka drží i místo klepnutí, index se vloží tam. -->
@@ -1496,7 +1516,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, toRaw
 import { useRouter } from 'vue-router';
 import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup, dbGetAllSongs, dbGetJumps, dbSaveJumps, dbGetBookmarks, dbSaveBookmarks, dbGetSongView, dbSaveSongView, dbDeleteSongView, dbSavePageView, dbGetPageView, dbGetAllPageViews, dbDeletePageView, dbDeleteAllPageViews } from '../db.js';
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers, readPageTextNumbers } from '../pdf.js';
-import { ocrDigitsFromCanvas, ocrDigitsPerCell, binarizeCanvas, findDigitClusters, cropCanvas, inkBox, normalizeForOcr } from '../ocrDigits.js';
+import { ocrDigitsFromCanvas, ocrDigitsPerCell, binarizeCanvas, findDigitClusters, cropCanvas, inkBox, normalizeForOcr, warmOcr } from '../ocrDigits.js';
 import { detectBarlines, detectPageSystems } from '../barLines.js';
 
 import { analyzeContent } from '../contentBounds.js';
@@ -1565,6 +1585,11 @@ function toggleBarnum() {
     barnumMode.value = false;
     annotMode.value = false;      // číslování bylo jediný důvod anotace
     tool.value = 'pencil';        // ať se okno číslování neobjeví v anotaci
+    // Jednorázové režimy okna číslování skončily s ním (jinak by po návratu
+    // do číslování zůstala zapnutá lupa/Výběr indexu a kreslení by nic nedělalo).
+    barSelArmed.value = false; barFillArmed.value = false; barFillPageArmed.value = false;
+    barIndexPreview.value = null;
+    if (barIndexScan.value) barIndexScan.value.cancel = true;
     showTopBar();                 // zavření číslování vrací horní lištu
     return;
   }
@@ -2026,6 +2051,9 @@ function toggleBarPick() {
     showToast('Lupa vypnuta — zase vkládáš čísla taktů');
     return;
   }
+  // Lupa, Výběr indexu a obě Dočíslování jsou VZÁJEMNĚ VÝLUČNÉ — jinak zůstane
+  // svítit víc tlačítek a dotyk dělá něco jiného, než uživatel čeká.
+  barSelArmed.value = false; barFillArmed.value = false; barFillPageArmed.value = false;
   setTool('barpick');
   showToast('Lupa: klepni na vytištěné číslo taktu — udělá z něj skrytý index');
 }
@@ -2385,6 +2413,10 @@ function toggleBarSelect() {
   if (barSelArmed.value) {
     barFillArmed.value = false;
     barFillPageArmed.value = false;
+    // Výběr indexu není lupa: přepni nástroj, ať lupa (a její svítící tlačítko)
+    // nezůstane zapnutá — v obsluze dotyku má přednost a číslo by se přečetlo
+    // znovu místo vybrání.
+    if (tool.value === 'barpick') tool.value = 'barnumber';
     showToast('Klepni na číslo taktu — vyberu ho (lišta se Smazat)', 5000);
   } else {
     showToast('Výběr indexu vypnut');
@@ -2394,6 +2426,8 @@ function armBarFillPage() {
   if (barFillPageArmed.value) { barFillPageArmed.value = false; showToast('Dočíslování stránky zrušeno'); return; }
   syncBarFieldsFromDom();
   barFillArmed.value = false;
+  barSelArmed.value = false;
+  if (tool.value === 'barpick') tool.value = 'barnumber';
   barFillPageArmed.value = true;
   showToast('Klepni kamkoli na stránku — očísluji všechny systémy popořadě', 6000);
 }
@@ -2401,6 +2435,8 @@ function armBarFill() {
   if (barFillArmed.value) { barFillArmed.value = false; showToast('Dočíslování zrušeno'); return; }
   syncBarFieldsFromDom();
   barFillPageArmed.value = false;
+  barSelArmed.value = false;
+  if (tool.value === 'barpick') tool.value = 'barnumber';
   barFillArmed.value = true;
   showToast('Klepni kamkoli do systému — doplním čísla podle taktových čar', 5000);
 }
@@ -2749,6 +2785,150 @@ async function _fillPageAt() {
     + ' čísel (' + items[0].text + '–' + items[items.length - 1].text + ')'
     + (warn.length ? ' · ' + warn.join(', ') : '')
     + ' — Vložit, nebo Zrušit', 9000);
+}
+// --- OINDEXOVÁNÍ CELÉHO PDF VYTIŠTĚNÝMI ČÍSLY TAKTŮ (listopad 2026) -------
+// Jan: „jen oindexuje celé PDF na základě vytištěných taktů — nebude domýšlet
+// netištěná čísla, jen najde ta vytištěná a tam udělá indexy.“ Slouží k tomu,
+// aby uživatel nemusel na každé číslo v celém PDF ťukat lupou.
+// Bere se JEN číslo taktu, které stojí nad PRVNÍ taktovou čarou systému:
+//  - leží v pásu nad horní osnovou systému (ne v záhlaví stránky),
+//  - je vodorovně u první taktové čáry (±45 b),
+//  - je menšího písma než 3,5 × mezera osnovy (čísla stránek jsou větší),
+//  - a POSLOUPNOST musí po celém PDF RŮST, skok 1–64 taktů. Tím vypadnou
+//    čísla stránek, data narození autorů i čísla částí skladby — ta nikdy
+//    netvoří rostoucí řadu navazující na čísla taktů.
+const barIndexScan = ref(null);      // { done, total, cancel } — průběh skenování
+const barIndexPreview = ref(null);   // { items:[{page,n,x,y}], first, last, pages }
+function toggleBarIndexAll() {
+  if (barIndexScan.value) { barIndexScan.value.cancel = true; showToast('Skenování zastaveno'); return; }
+  if (barIndexPreview.value) { barIndexPreview.value = null; showToast('Náhled indexů zrušen'); return; }
+  barSelArmed.value = false; barFillArmed.value = false; barFillPageArmed.value = false;
+  if (tool.value === 'barpick') tool.value = 'barnumber';
+  indexAllPdf().catch((e) => {
+    barIndexScan.value = null;
+    showToast('Oindexování selhalo: ' + (e && e.message ? e.message : e), 8000);
+  });
+}
+// Čísla taktů VYTIŠTĚNÁ na jedné stránce — jedno číslo na systém.
+async function findPrintedBarNumbersOnPage(page) {
+  const s = await layerScale(page);
+  let pw = 595, ph = 842;
+  try {
+    const d = await getPageWidthHeight(song, page + 1);
+    if (d && d.width > 0) { pw = d.width; ph = d.height; }
+  } catch (e) { /* A4 */ }
+  // Jedno vykreslení stránky pro detekci systémů (stejné jako Dočíslování).
+  const PPT = 5;
+  const dpr = window.devicePixelRatio || 1;
+  let outW = pw * PPT / dpr, outH = ph * PPT / dpr;
+  const MAX_PX = 12e6;
+  const areaPx = outW * outH * dpr * dpr;
+  if (areaPx > MAX_PX) { const k = Math.sqrt(MAX_PX / areaPx); outW *= k; outH *= k; }
+  const cv = document.createElement('canvas');
+  await renderPageRegion(song, page + 1, cv, { x: 0, y: 0, w: pw, h: ph }, outW, outH);
+  const dpg = detectPageSystems(cv, cv.width / pw, {});
+  if (!dpg.systems || !dpg.systems.length) return [];
+  let nums = [];
+  try { nums = await pageTextNumbers(page); } catch (e) { nums = []; }
+  const out = [];
+  for (const d of dpg.systems.slice().sort((a, b) => a.sysTop - b.sysTop)) {
+    const sp = Number.isFinite(d.spacePt) ? d.spacePt : 4;
+    const firstBar = Number.isFinite(d.openingPt) ? d.openingPt
+      : (Number.isFinite(d.staffLeftPt) ? d.staffLeftPt + 2 * sp : d.lines[0] - 40);
+    const bandTop = d.sysTop - 6 * sp, bandBot = d.sysTop + 1.2 * sp;
+    let hit = null;
+    if (nums.length) {
+      // Textová vrstva je přesná: ber jen číslo malého písma u první taktové
+      // čáry. Číslo stránky je větší a stojí na okraji, čísla částí nemají
+      // rostoucí řadu (to ověří až `indexAllPdf`).
+      const cand = nums.filter(c => c && c.n > 0
+        && c.yTop >= bandTop && c.yTop <= bandBot
+        && Math.abs((c.x + (c.w || 0) / 2) - firstBar) <= 45
+        && (!c.h || c.h <= 3.5 * sp))
+        .sort((a, b) => a.x - b.x);
+      if (cand.length) hit = { n: cand[0].n, x: cand[0].x * s, y: cand[0].yTop * s, src: 'text' };
+    }
+    if (!hit) {
+      // Sken: přečti číslo z obrázku stejným strojem jako lupa (segmentace
+      // číslic + tesseract s validací). Číslo stojí hned za levou závorkou
+      // systému (naměřeno v 600dpi Cherubini: závorka 38 b, číslo 70 b — NE
+      // nad první taktovou čarou, ta je až na 146 b). Proto se hledá okno
+      // posunuté od závorky doprava; druhá možnost je nad první taktovou
+      // čarou (jiná vydání, kde číslo stojí tam).
+      const anchors = [];
+      if (Number.isFinite(d.openingPt)) anchors.push(d.openingPt + 32);
+      if (Number.isFinite(d.lines[0]) && Math.abs(d.lines[0] - (d.openingPt || 0)) > 40) anchors.push(d.lines[0]);
+      for (const ax of anchors) {
+        const layerPt = { x: ax * s, y: (d.sysTop - 2.2 * sp) * s };
+        const n = await ocrBarNumberAt(page, layerPt);
+        if (n != null) { hit = { n, x: layerPt.x, y: layerPt.y, src: 'ocr' }; break; }
+      }
+    }
+    if (hit) out.push({ page, n: hit.n, x: Math.round(hit.x), y: Math.round(hit.y), src: hit.src });
+  }
+  return out;
+}
+async function indexAllPdf() {
+  barIndexPreview.value = null;
+  // Čtečka číslic musí být NAHŘÁTÁ — první čtení po startu vrací prázdno
+  // s jistotou 0 (worker se ještě inicializuje) a hromadné čtení by pak
+  // prošlo celé PDF naprázdno.
+  showToast('Připravuji čtečku číslic…', 0);
+  await warmOcr();
+  const total = await getPageCount(song);
+  const scan = { done: 0, total, cancel: false };
+  barIndexScan.value = scan;
+  showToast('Hledám vytištěná čísla taktů…', 0);
+  const items = [];
+  let last = null, skipped = 0;
+  try {
+    for (let page = 0; page < total; page++) {
+      if (scan.cancel) break;
+      scan.done = page + 1;
+      barPickDiag.value = 'Oindexování: stránka ' + (page + 1) + ' / ' + total
+        + ' · indexů ' + items.length;
+      let found = [];
+      try { found = await findPrintedBarNumbersOnPage(page); } catch (e) { found = []; }
+      for (const f of found) {
+        // Posloupnost: číslo musí RŮST a skok musí být reálný počet taktů.
+        if (last != null) {
+          const diff = f.n - last;
+          if (diff < 1 || diff > 64) { skipped++; continue; }
+        }
+        items.push(f);
+        last = f.n;
+      }
+      // Aby UI nezamrzlo a hláška o průběhu se překreslila.
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  } finally {
+    barIndexScan.value = null;
+    barPickDiag.value = '';
+  }
+  if (!items.length) {
+    showToast('Žádná vytištěná čísla taktů jsem nenašla — u skenu je zkus načíst přes lupu (čte je z obrázku)', 8000);
+    return;
+  }
+  barIndexPreview.value = {
+    items, first: items[0].n, last: items[items.length - 1].n,
+    pages: new Set(items.map((i) => i.page)).size, skipped,
+    ocr: items.filter((i) => i.src === 'ocr').length,
+  };
+  showToast('Nalezeno ' + items.length + ' čísel (' + items[0].n + '–'
+    + items[items.length - 1].n + ') na ' + barIndexPreview.value.pages
+    + ' stránkách — Vložit, nebo Zrušit', 9000);
+}
+function commitBarIndexAll() {
+  const pv = barIndexPreview.value;
+  if (!pv) return;
+  barIndexPreview.value = null;
+  // HROMADNĚ: jeden pushHistory + jeden zápis do DB (Jan: hlídat zátěž DB).
+  pushHistory();
+  for (const it of pv.items) addBarIndexRaw(it.page, it.n, it.x, it.y);
+  saveAnnotations();
+  nextTick(() => measureTexts());
+  showToast('Oindexováno ' + pv.items.length + ' čísel (' + pv.first + '–' + pv.last
+    + ') na ' + pv.pages + ' stránkách — skok na takt i Dočíslování je teď berou jako pravdu');
 }
 // Potvrzení náhledu dočíslování: teprve tady se čísla uloží.
 function commitBarFill() {
@@ -4193,7 +4373,7 @@ onMounted(async () => {
   // DIAG (jen dev): zvenčí se dostat k renderu stránky a detekci čar, aby šla
   // změřit skutečná geometrie skenu bez hádání. V produkci se nepřidává.
   if (import.meta.env.DEV) {
-    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barnumMode, annotMode };
+    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barnumMode, annotMode, toggleBarnum, indexAllPdf, commitBarIndexAll, barIndexPreview, barIndexScan, findPrintedBarNumbersOnPage, warmOcr };
   }
   await nextTick();
   loadPanelOffsets();   // panely tam, kam si je uživatel odtáhl
@@ -5673,6 +5853,16 @@ function setTool(t) {
   // Přepnutí na jiný nástroj = konec režimu číslování (jeho tlačítko v liště
   // by jinak svítilo, i když se už čísla nevkládají).
   if (t !== 'barnumber' && t !== 'barpick') barnumMode.value = false;
+  // ⚠️ Jednorázové režimy v okně číslování (lupa, Výběr indexu, Dočíslovat)
+  // musí přepnutím nástroje ZMIZET. Dřív zůstávaly zapnuté, dokud je uživatel
+  // ručně neodklikl (Jan, listopad 2026: „nevyhnou, dokud je ručně
+  // neodkliknu“) — a protože se v obsluze dotyku vyhodnocují dřív než pero,
+  // kreslení pak „nic nedělalo“.
+  barSelArmed.value = false;
+  barFillArmed.value = false;
+  barFillPageArmed.value = false;
+  barIndexPreview.value = null;
+  if (barIndexScan.value) barIndexScan.value.cancel = true;
   wedgePoints.value = []; hlPoints.value = []; annotMode.value = true;
   // Nedokončené označení taktu/systému nesmí zůstat viset po přepnutí nástroje
   // (jinak by obdélník zůstal nakreslený a další tah by se choval jako drag).
@@ -6083,6 +6273,7 @@ function onLayerDown(e) {
     const hit = pageHits(p);
     if (hit && hit.barNum) {
       editingId.value = hit.id;
+      barSelArmed.value = false;   // jednorázově: dál už patří dotyk notám
       showToast('Vybrán index ' + (hit.text || '?') + ' — lišta dole má Smazat', 4000);
     } else {
       editingId.value = null;

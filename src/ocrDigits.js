@@ -17,6 +17,14 @@ let _workerP = null;
 
 export function ocrAssetsReady() { return !!_workerP; }
 
+/** Počkej, až je čtečka číslic opravdu připravená (worker + jazyková data).
+ *  Bez toho vrací první čtení po startu appky prázdný výsledek s jistotou 0 —
+ *  a hromadné oindexování PDF (které čte desítky čísel hned po sobě) pak
+ *  nenajde skoro nic. */
+export async function warmOcr() {
+  try { await getWorker(); return true; } catch (e) { return false; }
+}
+
 async function getWorker() {
   if (_workerP) return _workerP;
   _workerP = (async () => {
