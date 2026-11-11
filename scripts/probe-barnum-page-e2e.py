@@ -75,7 +75,7 @@ async def main():
                    "if (b) b.click(); return 1; })()")
         await asyncio.sleep(0.4)
 
-        # 3) dočíslování celé stránky: tlačítko → klepnutí do not → náhled → Vložit
+        # 3) dočíslování celé stránky: tlačítko → ROVNOU náhled (bez ťukání do not)
         # POZOR: dialog stránky vypíná anotační režim (openPageGo), takže se okno
         # číslování zavřelo — musí se otevřít znovu, jinak klik na .bn-page nic nedělá.
         # toggleBarnum je PŘEPÍNAČ a dialog stránky nechal barnumMode zapnutý,
@@ -89,33 +89,10 @@ async def main():
             await h.ev("(() => { const b=[...document.querySelectorAll('.tb-btn')]"
                        ".find(x => (x.title||'').startsWith('Číslování')); if (b) b.click(); })()")
             await asyncio.sleep(0.5)
+        # Žádné ťuknutí do not: náhled musí vzniknout hned z tlačítka.
         await h.ev("(() => { const b=document.querySelector('.bn-page'); if (b) b.click(); })()")
-        await asyncio.sleep(0.3)
-        armed = False
-        for _ in range(12):
-            armed = await h.ev("!!document.querySelector('.bn-page.on')")
-            if armed:
-                break
-            await asyncio.sleep(0.2)
-        check("tlačítko se „nabije“ (on)", armed,
-              await h.ev("window.__barDev ? window.__barDev.toast.value : '?'"))
-        # Bod, kde je skutečně anotační vrstva (ne panel) — mřížka s ověřením.
-        pt = json.loads(await h.ev("""(() => {
-            const v = document.querySelector('.viewer').getBoundingClientRect();
-            for (const fy of [0.55, 0.7, 0.85, 0.45]) {
-              for (const fx of [0.3, 0.5, 0.7, 0.4, 0.6]) {
-                const x = v.left + v.width * fx, y = v.top + v.height * fy;
-                const el = document.elementFromPoint(x, y);
-                if (el && el.closest && el.closest('.annot-layer'))
-                  return JSON.stringify({x: Math.round(x), y: Math.round(y)});
-              }
-            }
-            return 'null'; })()"""))
-        check("v notách je místo, kam ťuknout", pt, str(pt))
-        if not pt:
-            return
-        await h.finger_tap(pt["x"], pt["y"])
-        for _ in range(40):
+        prev = ""
+        for _ in range(60):
             prev = await h.ev("""(() => { const d=window.__barDev; const p=d.barFillPreview.value;
                 return p ? JSON.stringify({n:p.items.length, page:p.pageMode, sys:p.systems,
                   start:p.start, last:p.items[p.items.length-1].text,
@@ -124,7 +101,14 @@ async def main():
                 break
             await asyncio.sleep(0.25)
         pv = json.loads(prev) if prev else None
-        check("náhled celé stránky vznikl", pv is not None, prev[:120] if prev else "")
+        check("náhled celé stránky vznikl POUZE z tlačítka (bez ťuknutí)", pv is not None,
+              prev[:120] if prev else
+              await h.ev("window.__barDev ? window.__barDev.toast.value : '?'"))
+        armed_after = await h.ev(
+            """(() => { const b=document.querySelector('.bn-page');
+                return JSON.stringify({on: b ? b.classList.contains('on') : null,
+                  busy: window.__barDev.barFillPageBusy ? window.__barDev.barFillPageBusy.value : null}); })()""")
+        print("  tlačítko po náhledu:", armed_after)
         if pv:
             check("náhled je stránkový (pageMode)", pv["page"])
             check("str. 2: 3 systémy, 11 čísel 1–11",

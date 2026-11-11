@@ -1055,16 +1055,17 @@
       <!-- CELÁ STRÁNKA: jeden náhled pro všechny systémy stránky. Osnovy i
            hranice systémů se hledají JEDNOU pro celou stránku, takže se systémy
            nemůžou sejít dvakrát ani slit dohromady. -->
-      <button class="bn-page" :class="{ on: barFillPageArmed }" @click="armBarFillPage"
-              :title="barFillPageArmed
-                ? 'Dočíslování stránky je zapnuté — klepni kamkoli do not (vypneš tady)'
+      <button class="bn-page" :class="{ on: barFillPageBusy }" :disabled="barFillPageBusy"
+              @click="runBarFillPage"
+              :title="barFillPageBusy
+                ? 'Procházím stránku…'
                 : 'Dočíslovat celou stránku: najdu všechny systémy a doplním čísla popořadě (náhled, pak Vložit)'">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="4" y="2.5" width="16" height="19" rx="2"/>
           <path d="M7.5 7h4M7.5 11.5h4M7.5 16h4M14.5 7h2M14.5 11.5h2M14.5 16h2"/>
         </svg>
-        <span>Dočíslovat celou stránku</span>
+        <span>{{ barFillPageBusy ? 'Procházím stránku…' : 'Dočíslovat celou stránku' }}</span>
       </button>
       <!-- NEJEDNOZNAČNÉ ČTENÍ: lupa našla dvě různá čísla (např. 15 vs. 153).
            Většinou je jedno z nich správné, takže uživatel jen ťukne — žádné
@@ -1582,7 +1583,7 @@ function toggleBarnum() {
     tool.value = 'pencil';        // ať se okno číslování neobjeví v anotaci
     // Jednorázové režimy okna číslování skončily s ním (jinak by po návratu
     // do číslování zůstala zapnutá lupa/Výběr indexu a kreslení by nic nedělalo).
-    barSelArmed.value = false; barFillArmed.value = false; barFillPageArmed.value = false;
+    barSelArmed.value = false; barFillArmed.value = false;
     showTopBar();                 // zavření číslování vrací horní lištu
     return;
   }
@@ -2046,7 +2047,7 @@ function toggleBarPick() {
   }
   // Lupa, Výběr indexu a obě Dočíslování jsou VZÁJEMNĚ VÝLUČNÉ — jinak zůstane
   // svítit víc tlačítek a dotyk dělá něco jiného, než uživatel čeká.
-  barSelArmed.value = false; barFillArmed.value = false; barFillPageArmed.value = false;
+  barSelArmed.value = false; barFillArmed.value = false;
   setTool('barpick');
   showToast('Lupa: klepni na vytištěné číslo taktu — udělá z něj skrytý index');
 }
@@ -2396,7 +2397,10 @@ const barFillPreview = ref(null);
 // Dočíslování CELÉ STRÁNKY: projde všechny systémy na stránce a očísluje je
 // popořadě. První systém bere číslo z indexu (vytištěné číslo lupou), další
 // navazují plynule, i když jejich první takt číslo nemá.
-const barFillPageArmed = ref(false);
+// Tlačítko „Dočíslovat celou stránku“ spouští náhled ROVNOU pro zobrazenou
+// stránku — uživatel nemusí klepat do not. `barFillPageBusy` jen brání
+// dvojímu spuštění, když se klepne znovu během procházení stránky.
+const barFillPageBusy = ref(false);
 // VÝBĚR EXISTUJÍCÍHO INDEXU přímo z okna číslování (Jan, listopad 2026:
 // „pro smazání musím vždy přepnout do Anotačního režimu“). Klepnutím na číslo
 // se vybere stejně jako rukou a objeví se lišta se Smazat/Přepsat.
@@ -2405,7 +2409,6 @@ function toggleBarSelect() {
   barSelArmed.value = !barSelArmed.value;
   if (barSelArmed.value) {
     barFillArmed.value = false;
-    barFillPageArmed.value = false;
     // Výběr indexu není lupa: přepni nástroj, ať lupa (a její svítící tlačítko)
     // nezůstane zapnutá — v obsluze dotyku má přednost a číslo by se přečetlo
     // znovu místo vybrání.
@@ -2415,19 +2418,26 @@ function toggleBarSelect() {
     showToast('Výběr indexu vypnut');
   }
 }
-function armBarFillPage() {
-  if (barFillPageArmed.value) { barFillPageArmed.value = false; showToast('Dočíslování stránky zrušeno'); return; }
+// Dočíslování celé stránky startuje tlačítko — klepnutí do not už není potřeba
+// (dřív se režim „nabíjel“ a čekal na ťuknutí; Jan, listopad 2026: „po kliknutí
+// na tlačítko se rovnou vytvoří návrh číslování pro aktuální stránku“).
+async function runBarFillPage() {
+  if (barFillPageBusy.value) return;
   syncBarFieldsFromDom();
   barFillArmed.value = false;
   barSelArmed.value = false;
   if (tool.value === 'barpick') tool.value = 'barnumber';
-  barFillPageArmed.value = true;
-  showToast('Klepni kamkoli na stránku — očísluji všechny systémy popořadě', 6000);
+  barFillPageBusy.value = true;
+  showToast('Procházím stránku…', 0);
+  try {
+    await fillPageAt();
+  } finally {
+    barFillPageBusy.value = false;
+  }
 }
 function armBarFill() {
   if (barFillArmed.value) { barFillArmed.value = false; showToast('Dočíslování zrušeno'); return; }
   syncBarFieldsFromDom();
-  barFillPageArmed.value = false;
   barSelArmed.value = false;
   if (tool.value === 'barpick') tool.value = 'barnumber';
   barFillArmed.value = true;
@@ -4234,7 +4244,7 @@ onMounted(async () => {
   // DIAG (jen dev): zvenčí se dostat k renderu stránky a detekci čar, aby šla
   // změřit skutečná geometrie skenu bez hádání. V produkci se nepřidává.
   if (import.meta.env.DEV) {
-    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barnumMode, annotMode, toggleBarnum, editingId };
+    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage };
   }
   await nextTick();
   loadPanelOffsets();   // panely tam, kam si je uživatel odtáhl
@@ -5721,7 +5731,6 @@ function setTool(t) {
   // kreslení pak „nic nedělalo“.
   barSelArmed.value = false;
   barFillArmed.value = false;
-  barFillPageArmed.value = false;
   wedgePoints.value = []; hlPoints.value = []; annotMode.value = true;
   // Nedokončené označení taktu/systému nesmí zůstat viset po přepnutí nástroje
   // (jinak by obdélník zůstal nakreslený a další tah by se choval jako drag).
@@ -6142,13 +6151,6 @@ function onLayerDown(e) {
     return;
   }
   // Režim „Dočíslovat systém“: klepnutí jen změří pás a doplní čísla.
-  if (barFillPageArmed.value) {
-    _activePointerId = null;
-    barFillPageArmed.value = false;
-    fillPageAt(p).catch(() => {});
-    _prev = p;
-    return;
-  }
   if (barFillArmed.value) {
     _activePointerId = null;
     barFillArmed.value = false;
