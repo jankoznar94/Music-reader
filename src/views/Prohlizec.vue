@@ -9027,15 +9027,19 @@ async function deleteBookmark(b) {
   touch-action: manipulation;
 }
 .bn-pick.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
-/* Potvrzení dočíslování: ploché, bez karty; obě tlačítka ≥ 34 px (dotyk). */
+/* Potvrzení dočíslování: ploché, bez karty; obě tlačítka ≥ 34 px (dotyk).
+   ⚠️ Řádek se MUSÍ zalamovat. Panel má 234 px (vnitřek 214 px) a česká věta
+   „Celá stránka: 3 systémů → 12 čísel (5–16), 3 prvních taktů dopočteno“ je
+   sama širší — bez `flex-wrap` vylézalo „Zrušit“ mimo okno (Jan, listopad 2026).
+   Text proto dostane CELÝ řádek a tlačítka se o zbytek podělí rovným dílem. */
 .bn-fill-preview {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   border-top: 1px solid var(--border); padding-top: 6px;
 }
-.bn-fill-q { flex: 1 1 auto; font-size: 0.72rem; color: var(--text-dim); }
+.bn-fill-q { flex: 1 1 100%; min-width: 0; font-size: 0.72rem; color: var(--text-dim); }
 .bn-fill-warn { flex: 1 1 100%; font-size: 0.7rem; color: #e5a44a; }
 .bn-fill-ok, .bn-fill-no {
-  height: 34px; padding: 0 12px; border-radius: 10px; cursor: pointer;
+  flex: 1 1 0; min-width: 0; height: 34px; padding: 0 12px; border-radius: 10px; cursor: pointer;
   font-family: inherit; font-size: 0.82rem; font-weight: 700;
   touch-action: manipulation;
 }

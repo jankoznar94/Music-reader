@@ -579,18 +579,50 @@ function systemGroups(real, mask, w, colInk, h, dark, darkColInk) {
   }
   const sorted = gaps.map((q) => q.gap).sort((a, b) => a - b);
   const gapBase = sorted.length ? sorted[Math.floor((sorted.length - 1) * 0.25)] : 0;
-  // Hranice systému: obrovská mezera, nebo mezera nad 1,5× typickou bez spojnice,
-  // nebo (nově) mezera nad 1,4× typickou, kterou neprochází žádný tmavý sloupec.
-  // Hustota inkoustu v mezeře se počítá jen do diagnostiky — sama nerozhoduje:
-  // text písně je i mezi skutečnými systémy (naměřeno Cherubini tištěná str. 5).
-  const sizeBoundary = (q) => gapBase > 0
+  // Hranice systému: obrovská mezera, nebo mezera nad 1,5× typickou bez spojnice.
+  // ⚠️ ROZHODUJE SPOJNICE, ne velikost mezery. V této sazbě vede sazba
+  // taktové čáry SPOJITĚ jen v jedné mezeře každého systému (mezi klavírními
+  // osnovami — naměřeno `conn` 11–29, `ink` 9–25), kdežto mezerou MEZI systémy
+  // neprochází nic (`conn === 0`). Dřív se `conn === 0` uznávalo jako hranice
+  // jen při mezeře > 1,25× základu, takže se dva systémy slily, když byla mezera
+  // 1,06× (naměřeno tištěná 14, PDF 15: 20,0 b při základu 18,8 b) a na tištěné
+  // 43 (PDF 44) se slily VŠECHNY tři systémy do jednoho o 18 osnovách — a z toho
+  // pak vyšel jediný „velký takt“ (naměřeno bars=1).
+  // Proto nové pravidlo: SILNÁ spojnice (`conn >= 8`) označuje KONEC systému —
+  // mezera hned za ní, kterou už nic neprochází, je hranice. Velikost mezer
+  // tohle nerozliší: na str. 41 (PDF 48) je mezera uvnitř systému 24,0 b
+  // a skutečná hranice 22,0 b.
+  // Hustota inkoustu v mezeře zůstává jen v diagnostice — text písně je i mezi
+  // skutečnými systémy (naměřeno Cherubini tištěná str. 5).
+  const strongConn = Math.max(8, 0.45 * Math.max(0, ...gaps.map((q) => q.conn || 0)));
+  const sizeBoundary = (q, i) => gapBase > 0
     && (q.gap > 3 * gapBase
-        || (q.gap > 1.5 * gapBase && q.ink < 1)
-        || (q.conn === 0 && q.gap > 1.25 * gapBase));
+        // ⚠️ „Prázdná mezera“ musí být prázdná i ve TMAVÉM inkoustu (`conn`).
+        // Mezera sbor→klavír je velká (naměřeno 26–28 b = 1,5–1,6× základu)
+        // a `ink` je v ní 0 (text písně je jinde), ale prochází jí závorka
+        // sazby — `conn` 4. Bez podmínky `conn === 0` se systém rozpůlil na
+        // 4 + 2 osnovy a klavír se očísloval jako samostatný systém
+        // (naměřeno tištěná 12 = PDF 13, 31, 32, 54, 55).
+        // ⚠️ Mezera sbor→klavír je taky „velká a prázdná“ (naměřeno 26–28 b =
+        // 1,5–1,6× základu, `ink` 0), ale prochází jí závorka sazby (`conn` 4)
+        // a HNED POD NÍ vede spojnice mezi klavírními osnovami (`conn` 11–29).
+        // To je podpis klavírní dvojice, ne hranice systému — bez téhle
+        // pojistky se systém půlil na 4 + 2 a klavír se čísloval zvlášť
+        // (naměřeno tištěná 12 = PDF 13, 31, 32, 55).
+        || (q.gap > 1.5 * gapBase && q.ink < 1 && (q.conn === 0
+            // Podpis klavírní dvojice: mezera sbor→klavír (conn 4–5), pod ní
+            // SILNÁ spojnice mezi klavírními osnovami a teprve pod tou PRÁZDNO
+            // (skutečná hranice systému). V Mozartovi je pod velkou mezerou
+            // taky silná spojnice, ale pod ní další spojnice, ne prázdno —
+            // tam hranice zůstává (jinak se dva systémy slily, naměřeno 6+6→12).
+            || !((i + 1 < gaps.length && (gaps[i + 1].conn || 0) >= strongConn)
+                 && i + 2 < gaps.length && (gaps[i + 2].conn || 0) === 0)))
+        || (q.conn === 0 && q.gap > 1.25 * gapBase)
+        || (q.conn === 0 && i > 0 && (gaps[i - 1].conn || 0) >= strongConn));
   const bounds = [];
   let a = 0;
   for (let i = 0; i < real.length; i++) {
-    if (i + 1 < real.length && !sizeBoundary(gaps[i])) continue;
+    if (i + 1 < real.length && !sizeBoundary(gaps[i], i)) continue;
     bounds.push([a, i]);
     a = i + 1;
   }
@@ -884,8 +916,14 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     const useGap = sysCount >= 2 && accepted.filter(a => a.gs >= 1).length >= 3;
     const candsX = [];
     for (const a of accepted) {
-      const passes = useGap ? a.gs >= 1
-        : (a.support >= sysCount || sysCount < 2 || a.gs >= 1);
+      // ⚠️ Podpora ve VŠECH osnovách (`support === sysCount`) přebíjí chybějící
+      // spojnici. Nožička noty nikdy neprojde šesti osnovami — ta je vždy jen
+      // v jedné. Naměřeno tištěná 30 (PDF 31), 1. systém: skutečná čára na
+      // 321,7 b má podporu 6/6, ale mezerou neprochází (v této sazbě je čára
+      // v mezerách přerušená) → `gs = 0` → čára vypadla a systém dostal
+      // o takt MÍŇ (Jan: „ignoruje poslední takt“).
+      const passes = (useGap ? a.gs >= 1 : (sysCount < 2 || a.gs >= 1))
+        || (sysCount >= 4 && a.support >= sysCount);
       if (passes) candsX.push(a.x);
     }
     return { clusters, candsX, all };
