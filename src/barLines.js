@@ -981,6 +981,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     .filter(x => x >= staffLeft - pxPerPt);
   let holeDbg = null;   // diagnostika doplněných čar (jen pro panel/sondu)
   let weakDbg = [];     // co doplnila 4d) (slabá čára v dvojmezeře)
+  let weakSkipDbg = []; // dvojmezery, které 4d) ZÁMĚRNĚ nedoplnila (široký takt)
   // 4b) ZTRACENÁ ČÁRA UPROSTŘED SYSTÉMU. Na vybledlém skenu se jedna čára
   // nedetekuje (v jedné osnově má krytí jen 76 %, práh je 95 %), a protože
   // zbylé čáry drží krok, systém dostane o takt MÍŇ — číslo pak přeskočí
@@ -1209,6 +1210,14 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
       return mn;
     };
     const weakAdd = [];
+    // ⚠️ MEZERA MEZI OSNOVAMI ROZHODUJE (listopad 2026). Jan: Cherubini str. 23,
+    // 2. systém — takt se 4 dobami je na šířku stejně velký jako následující dva
+    // takty (4+4), takže dvojmezera vznikne i bez chybějící čáry; uprostřed stojí
+    // zarovnané noty sboru i klavíru a jejich nožičky vypadají jako slabá čára.
+    // Skutečná taktová čára prochází MEZEROU mezi osnovami, nožička ne.
+    // Doplní se proto, když sloupec mezerou prochází, NEBO když je v mezeře víc
+    // hudby než v sousedních taktech (dvě hudby = chybějící čára, ne roztažený takt).
+    const gapOk = (x) => gapSupport(x) >= 1;
     for (let i = 0; i + 1 < rest.length; i++) {
       const g = rest[i + 1] - rest[i];
       const nb = [];
@@ -1221,6 +1230,22 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
       if (k !== 2) continue;             // jen jednoznačná dvojmezera
       const step = g / 2;
       const want = rest[i] + step;
+      // ⚠️ HUSTOTA HUDBY ROZLIŠUJE ZTRACENOU ČÁRU OD ŠIROKÉHO TAKTU (listopad 2026).
+      // Jan: „takt má 4 doby, ale na šířku je stejně široký jako následující dva
+      // takty, které mají každý také 4 doby" → dvojmezera vznikne i tam, kde čára
+      // NEchybí, jen je takt roztažený (recitativ, dlouhé noty). V obou případech
+      // uprostřed stojí zarovnané noty sboru i klavíru, takže koherence je stejná.
+      // Rozdíl je v hustotě: když čára chybí, jsou v mezeře DVĚ hudby (hustota jako
+      // v sousedním taktu); když je takt jen široký, je hudba roztažená na dvojnásobnou
+      // šířku (hustota zhruba poloviční). Radši číslo chybí, než aby bylo o takt víc.
+      const densIn = (xa, xb) => musicDensity(xa + 1.2 * spacePx, xb - 1.2 * spacePx);
+      const dGap = densIn(rest[i], rest[i + 1]);
+      const dNb = [];
+      if (i - 1 >= 0) dNb.push(densIn(rest[i - 1], rest[i]));
+      if (i + 2 < rest.length) dNb.push(densIn(rest[i + 1], rest[i + 2]));
+      const dRef = dNb.length ? medOf(dNb) : dGap;
+      const densRatio = dRef > 0 ? dGap / dRef : 1;
+
       // okno ±30 % půlmezery: chybějící čára dělí takt na dvě podobné půlky
       const lo = Math.max(0, Math.round(want - 0.3 * step));
       const hi = Math.min(w - 1, Math.round(want + 0.3 * step));
@@ -1244,15 +1269,23 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
       // str. 44/2. vrchol 0,27), kdežto trámec/nožička zarovnaných akordů 0,61
       // a víc (Mozart str. 16/1. na 270 b). Nad 0,50 se nedoplňuje — radši
       // číslo chybí, než aby bylo o takt víc.
-      if (peak && !onChain && peak[1] >= minCoh && peak[1] <= 0.50) {
+      if (peak && !onChain && peak[1] >= minCoh && peak[1] <= 0.50
+          && (gapOk(peak[0]) || densRatio >= 1.05)) {
         weakAdd.push(peak[0]);
         weakAdd.dbg = weakAdd.dbg || [];
-        weakAdd.dbg.push([+(peak[0] / pxPerPt).toFixed(1), +peak[1].toFixed(2), +base.toFixed(2)]);
+        weakAdd.dbg.push([+(peak[0] / pxPerPt).toFixed(1), +peak[1].toFixed(2), +base.toFixed(2),
+                          +densRatio.toFixed(2)]);
+      } else if (peak && !onChain && peak[1] >= minCoh && peak[1] <= 0.50) {
+        // Záznam o tom, co se ZÁMĚRNĚ nedoplnilo (široký takt) — pro diagnostiku.
+        weakAdd.skip = weakAdd.skip || [];
+        weakAdd.skip.push([+(peak[0] / pxPerPt).toFixed(1), +peak[1].toFixed(2),
+                           +densRatio.toFixed(2)]);
       }
     }
     const dbgWeak = weakAdd.dbg || [];
     if (weakAdd.length) rest = rest.concat(weakAdd).sort((x, y) => x - y);
     weakDbg = dbgWeak;
+    weakSkipDbg = weakAdd.skip || [];
   }
   // 5) VNITŘNÍ ČÁRY = všichni kandidáti, které vidí celý systém. Řetěz
   // pravidelnosti se používá JEN u jedoosnového systému (tam podpora nic
@@ -1280,7 +1313,8 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
                  closingDens: rest.length
                    ? +(musicDensity(rest[rest.length - 1] + spacePx, staffRight)).toFixed(3) : null,
                  tail: rest.length ? +(staffRight - rest[rest.length - 1]).toFixed(1) : null,
-                 barP: +barP.toFixed(1), hole: holeDbg, weak: weakDbg };
+                 barP: +barP.toFixed(1), hole: holeDbg, weak: weakDbg,
+                 weakSkip: weakSkipDbg };
   const startsPt = candsX.map(x => +(x / pxPerPt).toFixed(1));
   const cands = clusters.map(c => {
     const mean = c.xs.reduce((n, p) => n + p.x, 0) / c.xs.length;

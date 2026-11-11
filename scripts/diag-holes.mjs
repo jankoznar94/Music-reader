@@ -34,5 +34,6 @@ for (const p of pages.map(Number)) {
     console.log(`    cands=${JSON.stringify(s.cands)}`);
     console.log(`    hole=${JSON.stringify(s.diag && s.diag.hole)}`);
     console.log(`    weak=${JSON.stringify(s.diag && s.diag.weak)}`);
+    console.log(`    skip=${JSON.stringify(s.diag && s.diag.weakSkip)}`);
   });
 }
