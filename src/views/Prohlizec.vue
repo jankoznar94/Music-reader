@@ -505,10 +505,10 @@
         <g v-if="barFillPreview && barFillPreview.page === currentPage" class="barfill-preview">
           <line v-for="(it, i) in barFillPreview.items" :key="'bl' + i"
                 :x1="it.x" :y1="it.y1 != null ? it.y1 : it.y - 26" :x2="it.x" :y2="it.y2 != null ? it.y2 : it.y + 120"
-                stroke="var(--accent,#d8a657)" stroke-width="2" stroke-dasharray="6 5" />
+                stroke="#0b6bff" stroke-width="2.5" stroke-dasharray="7 4" />
           <text v-for="(it, i) in barFillPreview.items" :key="'bt' + i"
                 :x="it.x" :y="it.y" :font-size="barSize" text-anchor="start"
-                fill="var(--accent,#d8a657)" font-family="system-ui, sans-serif"
+                fill="#0b6bff" font-family="system-ui, sans-serif" font-weight="600"
                 class="barfill-num">{{ it.text }}</text>
         </g>
 

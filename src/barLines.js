@@ -1158,6 +1158,12 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   // zahazuje se jen KRÁTKÝ chvost (do 0,6 šířky taktu) — koncová čára v této
   // sazbě stojí ~45 b před koncem linek, kdežto skutečný poslední takt je
   // široký jako ostatní, takže se nezahodí.
+  // ⚠️ Tohle kolo se smí pustit JEN když koncová čára ještě není nalezená.
+  // Dřív běželo i po něm a sežralo skutečnou VNITŘNÍ čáru: na tištěné 11/3.
+  // systému jsou kandidáti 402,5 (vnitřní) i 435,3 (koncová, u okraje linek);
+  // první kolo správně vzalo 435,3 jako koncovou, druhé pak přepsalo koncovou
+  // na 402,5 → poslední takt zůstal bez čísla (Jan: „ignoruje poslední takt“).
+  // Naměřeno stejně na tištěné 12/1. (412,3 vs 435) a 31/3. (396,7 vs 432,4).
   const barP = medGap(rest);
   const tailShort = () => {
     const t = staffRight - rest[rest.length - 1];
@@ -1171,7 +1177,8 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     const x = rest[rest.length - 1];
     return musicDensity(x + spacePx, Math.min(staffRight, x + 6 * spacePx));
   };
-  while (rest.length > 1 && closingPops < 2 && tailShort() && afterLast() < 0.05) {
+  while (rest.length > 1 && closing == null && closingPops < 2
+         && tailShort() && afterLast() < 0.05) {
     closing = rest.pop();
     closingPops++;
   }
