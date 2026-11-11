@@ -922,8 +922,16 @@
          ho uživatel musel pořád schovávat/posouvat — a s ním zmizelo i číslo
          a krok. Tenhle panel drží JEN číslování, je úzký, dá se odtáhnout
          a zmizí s přepnutím nástroje. -->
+    <!-- PŘI NÁHLEDU CELÉ STRÁNKY se okno SMRSKNE na potvrzení (Jan, listopad 2026):
+         náhled se kreslí do not, takže panel s počítadlem, krokem a lupou jen
+         překáží — zůstanou Vidět JEN „Vložit“ a „Zrušit“ (plus jeden řádek
+         souhrnu, ať je vidět, co se potvrzuje). Po Vložení/Zrušení se okno
+         vrátí samo, protože `barFillPreview` se vyprázdní. Skrývá se přes CSS
+         (ne `v-if`), aby pole „Další“/„Krok“ zůstala v DOM pro `syncBarFieldsFromDom`. -->
     <div v-if="annotMode && barnumMode && !jumpPlaceMode && (tool === 'barnumber' || tool === 'barpick')"
-         class="barnum-panel" data-panel="barnum" :style="panelStyle('barnum')">
+         class="barnum-panel"
+         :class="{ 'preview-only': barFillPreview && barFillPreview.pageMode }"
+         data-panel="barnum" :style="panelStyle('barnum')">
       <div class="bn-head">
         <span class="bn-title">{{ tool === 'barpick' ? 'Lupa na čísla' : 'Čísla taktů' }}</span>
         <!-- Zavřít číslování = zpět do čtení a ZPĚT HORNÍ LIŠTA (v číslování je
@@ -9079,6 +9087,20 @@ async function deleteBookmark(b) {
   touch-action: manipulation;
 }
 .bn-pick.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
+/* NÁHLED CELÉ STRÁNKY: okno číslování se smrskne na potvrzení. Schovává se jen
+   to, co při náhledu nemá co dělat (hlavička s lupou, počítadla, skok, hinty),
+   potvrzovací řádek zůstává. Pole „Další“/„Krok“ se schovávají přes CSS, ne
+   `v-if` — `syncBarFieldsFromDom` je čte z DOM před vložením čísla. */
+.barnum-panel.preview-only .bn-head,
+.barnum-panel.preview-only .bn-row,
+.barnum-panel.preview-only .bn-hint,
+.barnum-panel.preview-only .bn-page,
+.barnum-panel.preview-only .bn-choice,
+.barnum-panel.preview-only .bn-diag { display: none; }
+/* Panel se vejde jen na obsah (jinak by držel 234 px a kryl noty pod sebou)
+   a potvrzení ztratí oddělovací linku, protože nad ním už nic není. */
+.barnum-panel.preview-only { width: auto; max-width: min(420px, 92vw); }
+.barnum-panel.preview-only .bn-fill-preview { border-top: 0; padding-top: 0; }
 /* Potvrzení dočíslování: ploché, bez karty; obě tlačítka ≥ 34 px (dotyk).
    ⚠️ Řádek se MUSÍ zalamovat. Panel má 234 px (vnitřek 214 px) a česká věta
    „Celá stránka: 3 systémů → 12 čísel (5–16), 3 prvních taktů dopočteno“ je
