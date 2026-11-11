@@ -40,6 +40,7 @@ for (const n of pages) {
     const ratios = gaps.map(g => med ? +(g / med).toFixed(2) : 0);
     const suspect = ratios.filter(r => r > 1.6).length;
     console.log(`  sys${k + 1} st=${s.stavesFound}/${s.stavesExpected} ok=${s.ok} span=${s.spanOk} bars=${s.bars}`
+      + ` top=${+(s.sysTop / pxPerPt).toFixed(1)} bot=${+(s.sysBot / pxPerPt).toFixed(1)}`
       + ` xs=${JSON.stringify(xs)} gaps=${JSON.stringify(gaps)} med=${med} ratio=${JSON.stringify(ratios)}`
       + (suspect ? '  <<< SKOK' : ''));
   });
