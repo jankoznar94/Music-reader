@@ -1523,16 +1523,11 @@
             </div>
           </div>
 
-          <!-- Velikost noty se volí TADY, ještě před vložením — nota musí sedět
-               na velikost osnovy v notách a ta je u každé skladby jiná. -->
-          <div class="ti-size-row">
-          <span class="ti-size-label">Velikost</span>
-          <button class="ti-size-btn" @click="bumpNoteSize(-1)" title="Menší nota">−</button>
-          <span class="ti-size-val">{{ noteSizeDraft }}</span>
-          <button class="ti-size-btn" @click="bumpNoteSize(1)" title="Větší nota">+</button>
-        </div>
-
-        <div class="ti-row">
+          <!-- Velikost noty se tu NENABÍZÍ (Jan, Nov 2026: „při upravování noty,
+               kterou chci vložit, nemá smysl zobrazovat velikost — nastavíme ji
+               až rukou po vložení“), ale náhled ji používá: bere uloženou
+               velikost `noteSize` a ruka ji hned po vložení může měnit. -->
+          <div class="ti-row">
           <span class="ti-size-label">Tečka</span>
           <button class="ti-toggle" :class="{ on: noteDotDraft }" @click="toggleNoteDotDraft()"
                   title="Tečkovaný rytmus — čtvrtka s tečkou, půlka s tečkou…">Tečkovaný rytmus</button>
@@ -1559,17 +1554,18 @@
           <button class="ti-size-btn" @click="bumpLedgers(-1)" title="Ubrat pomocnou linku">−</button>
           <span class="ti-size-val">{{ noteLedgersDraft }}</span>
           <button class="ti-size-btn" @click="bumpLedgers(1)" title="Přidat pomocnou linku (nota nad/pod osnovou)">+</button>
-          <template v-if="noteLedgersDraft > 0">
-            <button class="ti-toggle" :class="{ on: noteLedgerSideDraft === 'up' }" @click="setLedgerSide('up')"
-                    title="Linky jdou od noty nahoru (nota je pod osnovou)">Nahoru</button>
-            <button class="ti-toggle" :class="{ on: noteLedgerSideDraft === 'down' }" @click="setLedgerSide('down')"
-                    title="Linky jdou od noty dolů (nota je nad osnovou)">Dolů</button>
-          </template>
         </div>
-        <div v-if="!isRestKey(annotTextDraft) && noteLedgersDraft > 0" class="ti-row">
-          <span class="ti-size-label">Poloha</span>
+        <!-- Umístění linek: VŠECHNY TŘI volby na JEDNOM řádku (Jan, Nov 2026:
+             „dole, nahoře i uprostřed noty musí být na jednom řádku“) — dřív
+             bylo „Nahoru/Dolů“ v řádku Linky a „Nota v mezeře“ o řádek níž,
+             takže to vypadalo jako dvě nesouvisející volby. -->
+        <div v-if="!isRestKey(annotTextDraft) && noteLedgersDraft > 0" class="ti-row ti-row-seg">
+          <button class="ti-toggle" :class="{ on: noteLedgerSideDraft === 'up' }" @click="setLedgerSide('up')"
+                  title="Linky jdou od noty nahoru (nota je pod osnovou)">Nahoru</button>
+          <button class="ti-toggle" :class="{ on: noteLedgerSideDraft !== 'up' }" @click="setLedgerSide('down')"
+                  title="Linky jdou od noty dolů (nota je nad osnovou)">Dolů</button>
           <button class="ti-toggle" :class="{ on: noteLedgerGapDraft }" @click="toggleLedgerGap()"
-                  title="Nota neleží na lince, ale v mezeře mezi linkami — první pomocná linka je o půl mezery dál">Nota v mezeře</button>
+                  title="Nota neleží na lince, ale v mezeře mezi linkami — první pomocná linka je o půl mezery dál">Mezera</button>
         </div>
             </div><!-- /ti-note-left -->
 
@@ -1813,9 +1809,12 @@ const NOTA_TOOLS = ['crescendo', 'decrescendo', 'dynamic', 'mark', 'note'];
 const notaGroupOpen = ref(false);
 const isNotaTool = computed(() => NOTA_TOOLS.includes(tool.value));
 function toggleNotaGroup() {
-  notaGroupOpen.value = !notaGroupOpen.value;
-  // Zavření skupiny nesmí nechat vybraný nástroj, který už není vidět.
-  if (!notaGroupOpen.value && isNotaTool.value) setTool('pencil');
+  // Skupina se chová jako NÁSTROJ, ne jako pouhé rozbalovací tlačítko
+  // (Jan, Nov 2026: „při kliknutí na nástroj Značky se tlačítko vůbec nevybarví,
+  // nástroje se chovají, jak kdybych byl stále na tužce“). Klepnutí proto řádek
+  // rozbalí A ZÁROVEŇ vybere Značky; zavřené tlačítko ukončí režim (zpět tužka).
+  if (notaGroupOpen.value && isNotaTool.value) { setTool('pencil'); return; }
+  setTool(NOTA_TOOLS.includes(tool.value) ? tool.value : 'mark');
 }
 
 // Rozšířené anotace
@@ -6865,6 +6864,11 @@ function onLayerDown(e) {
       noteFlipX.value = false; noteFlipY.value = false; noteDotDraft.value = false;
       // Linky patří jedné notě — nová nota začíná bez nich.
       noteLedgersDraft.value = 0; noteLedgerSideDraft.value = 'down'; noteLedgerGapDraft.value = false;
+      // Dialog otevírá s ČTVRŤOVOU notou předvybranou. Dřív začínal na prázdném
+      // klíči a „Uložit“ pak narazil na kontrolu neznámé noty, tiše se vrátil
+      // a OKNO ZŮSTALO OTEVŘENÉ — vypadalo to, že tlačítko nereaguje
+      // (Jan, Nov 2026: „po kliknutí na uložit se nic neděje, okno nezmizí“).
+      annotTextDraft.value = 'ctvrt_h';
     }
     activeItem.value = {
       id: crypto.randomUUID(), page: currentPage.value,
@@ -7359,8 +7363,15 @@ async function confirmTextAnnot(withHand = true) {
     }
     if (it.tool === 'note') {
       // Neznámý klíč by vložil PRÁZDNÝ glyf (a v notách by po něm zůstalo jen
-      // prázdné místo) — radši nic neukládej a nech uživatele vybrat z nabídky.
-      if (!noteGlyph(it.text).known) return;
+      // prázdné místo). Okno ale NESMÍ zůstat viset — dřív se tu jen tiše
+      // vrátilo a vypadalo to, že „Uložit“ nereaguje (Jan, Nov 2026).
+      if (!noteGlyph(it.text).known) {
+        activeItem.value = null;
+        editingAnnotationId.value = null;
+        annotTextDraft.value = '';
+        showToast('Vyber notu z nabídky — bez noty se nic nevložilo', 3000);
+        return;
+      }
       noteSize.value = clampNoteSize(noteSizeDraft.value);
       it.size = noteSize.value;
       it.flipX = noteFlipX.value;
@@ -10125,6 +10136,11 @@ async function deleteBookmark(b) {
 }
 /* Barva textu a rámeček — plochý řádek, stejná paleta jako pero (Jan, Oct 2026) */
 .ti-row { display: flex; align-items: center; gap: 8px; }
+/* Řádek se třemi segmentovými volbami (umístění pomocných linek): všechny tři
+   na JEDNOM řádku a stejně široké, aby to vypadalo jako jedna volba
+   (Jan, Nov 2026). */
+.ti-row-seg { gap: 6px; }
+.ti-row-seg .ti-toggle { flex: 1 1 0; min-width: 0; padding: 7px 4px; text-align: center; }
 .ti-colors { display: flex; flex-wrap: wrap; gap: 8px; }
 .ti-color {
   width: 28px; height: 28px; flex: 0 0 auto; padding: 0;
