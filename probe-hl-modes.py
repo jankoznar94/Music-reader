@@ -124,8 +124,14 @@ async def main():
         p = await h.ev(PANEL)
         ok("tři způsoby v panelu", p["modes"] == ["3 body", "Obdélník", "Volně"], str(p["modes"]))
         ok("výchozí způsob = 3 body", p["on"] == ["3 body"], str(p["on"]))
+        # Select tloušťky visí u tužky (u zvýrazňovače jen ve volném režimu).
+        await pick_tool(h, "Tužka")
+        await asyncio.sleep(0.3)
+        p = await h.ev(PANEL)
         ok("select tloušťky 1–50", p["optCount"] == 50 and p["first"] == "1" and p["last"] == "50",
            f'{p["optCount"]} voleb, {p["first"]}..{p["last"]}')
+        await pick_tool(h, "Zvýraznění")
+        await asyncio.sleep(0.3)
 
         # --- 2) tloušťka se propíše do nového tahu (tužka) --------------------
         await pick_tool(h, "Tužka")

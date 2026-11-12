@@ -1184,7 +1184,30 @@
           <button class="ap-tool" @click="setTool('highlighter')" :class="{ on: tool === 'highlighter' }" title="Zvýraznění"><span class="ap-glyph emoji">🖍️</span></button>
           <button class="ap-tool" @click="setTool('eraser')" :class="{ on: tool === 'eraser' }" title="Guma (maže anotace, přes které přejede)"><span class="ap-glyph emoji">🧽</span></button>
           <button class="ap-tool" @click="setTool('text')" :class="{ on: tool === 'text' }" title="Text (klávesnice)"><span class="ap-glyph t-glyph">T</span></button>
+          <!-- Notové nástroje (dřív samostatná kategorie „Značky“) mají vlastní
+               tlačítko s ikonou noty; řádek nástrojů se rozbalí až po kliknutí
+               (Jan, Nov 2026: „vždy by toho mělo být vidět minimum“). -->
+          <button class="ap-tool nota-tool" @click="toggleNotaGroup" :class="{ on: notaGroupOpen || isNotaTool }" title="Noty a značky — crescendo, dynamika, posuvky, vkládání not">
+            <span class="dyn-ico nota-ico">{{ noteGlyph('ctvrt_h').text }}</span>
+          </button>
           <button class="ap-tool" @click="setTool('edit')" :class="{ on: tool === 'edit' }" title="Upravit / přesunout text či dynamiku"><span class="ap-glyph emoji">✋</span></button>
+        </div>
+        <!-- Řádek notových nástrojů — jen po rozbalení tlačítkem Značky -->
+        <div v-if="notaGroupOpen" class="ap-row ap-nota-row">
+          <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (3 body)"><span class="ap-glyph">&lt;</span></button>
+          <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (3 body)"><span class="ap-glyph">&gt;</span></button>
+          <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf, sfz...)">
+            <span class="dyn-ico">{{ dynGlyph('mf').text }}</span>
+          </button>
+          <button class="ap-tool" @click="setTool('mark')" :class="{ on: tool === 'mark' }" title="Značky pro výšky not (béčko, odrážka, křížek, ozdoby...)">
+            <span class="dyn-ico">{{ markGlyph('k').text }}</span>
+          </button>
+          <button class="ap-tool" @click="setTool('note')" :class="{ on: tool === 'note' }" title="Vkládání not (celá, půlová, čtvrťová, osminová, šestnáctinová a pomlky) — v dialogu lze zapnout tečkovaný rytmus">
+            <span class="dyn-ico nota-ico">{{ noteGlyph('ctvrt_h').text }}</span>
+          </button>
+          <!-- Čísla taktů tu ZÁMĚRNĚ NEJSOU (Jan, Nov 2026): okno číslování
+               se otevírá JEN tlačítkem v horní liště a z anotačního panelu
+               se otevírat nesmí. -->
         </div>
         <!-- Zvýrazňovač má tři způsoby: tři body (celé osnovy), obdélník ze dvou
              bodů s nastavitelnou výškou (text) a volné kreslení jako tužka.
@@ -1211,35 +1234,17 @@
         </template>
       </div>
 
-      <!-- Kategorie: Hudební značky -->
-      <div class="ap-cat">
-        <div class="ap-cat-label">Značky</div>
-        <div class="ap-row">
-          <button class="ap-tool mus" @click="setTool('crescendo')" :class="{ on: tool === 'crescendo' }" title="Crescendo (3 body)"><span class="ap-glyph">&lt;</span></button>
-          <button class="ap-tool mus" @click="setTool('decrescendo')" :class="{ on: tool === 'decrescendo' }" title="Decrescendo (3 body)"><span class="ap-glyph">&gt;</span></button>
-          <button class="ap-tool" @click="setTool('dynamic')" :class="{ on: tool === 'dynamic' }" title="Dynamika (p, f, mf, sfz...)">
-            <span class="dyn-ico">{{ dynGlyph('mf').text }}</span>
-          </button>
-          <button class="ap-tool" @click="setTool('mark')" :class="{ on: tool === 'mark' }" title="Značky pro výšky not (béčko, odrážka, křížek, ozdoby...)">
-            <span class="dyn-ico">{{ markGlyph('k').text }}</span>
-          </button>
-          <button class="ap-tool" @click="setTool('note')" :class="{ on: tool === 'note' }" title="Vkládání not (celá, půlová, čtvrťová, osminová, šestnáctinová a pomlky) — v dialogu lze zapnout tečkovaný rytmus">
-            <span class="dyn-ico nota-ico">{{ noteGlyph('ctvrt_h').text }}</span>
-          </button>
-          <!-- Čísla taktů tu ZÁMĚRNĚ NEJSOU (Jan, Nov 2026): okno číslování
-               se otevírá JEN tlačítkem v horní liště a z anotačního panelu
-               se otevírat nesmí. -->
-        </div>
-      </div>
-
       <!-- Kategorie „Čísla taktů“ tu ZÁMĚRNĚ NENÍ — má vlastní malé okno
            (.barnum-panel), aby se dalo anotační okno sbalit a počítat takty v systému,
            aniž by uživatel přišel o číslo a krok (Jan, Nov 2026). -->
 
-      <!-- Kategorie: Styl -->
-      <div class="ap-cat">
-        <div class="ap-cat-label">Styl</div>
-        <div class="ap-row">
+      <!-- Kategorie: Styl — jen to, co daný nástroj OPRAVDU používá
+           (Jan, Nov 2026: „vždy by toho mělo být vidět minimum“):
+           tužka barva + tloušťka + krytí, zvýrazňovač barva (+ tloušťka jen
+           při volném kreslení), guma jen tloušťka, text jen barva,
+           ruka a notové nástroje nic. -->
+      <div v-if="styleParts.any" class="ap-cat">
+        <div class="ap-row" v-if="styleParts.color">
           <button
             v-for="c in colors"
             :key="c"
@@ -1250,13 +1255,13 @@
             :title="'Barva'"
           ></button>
         </div>
-        <div class="ap-row ap-select-row">
-          <span class="ap-op-label">Tloušťka</span>
+        <div v-if="styleParts.size" class="ap-row ap-select-row">
+          <span class="ap-op-label">{{ styleParts.sizeLabel }}</span>
           <select class="ap-select" :value="annotSize" @change="annotSize = Number($event.target.value)">
             <option v-for="n in penSizes" :key="n" :value="n">{{ n }} px</option>
           </select>
         </div>
-        <div class="ap-row op-row">
+        <div v-if="styleParts.opacity" class="ap-row op-row">
           <span class="ap-op-label">Krytí</span>
           <input
             type="range"
@@ -1273,10 +1278,14 @@
       <div class="ap-cat">
         <div class="ap-cat-label">Akce</div>
         <div class="ap-row">
-          <button class="ap-tool" @click="undoAnnot" title="Zpět" :disabled="!canUndo">
+          <!-- Zpět / Dopředu reagují na POLOŽENÍ (pointerdown), ne na click.
+               Pero často poslalo click až napodruhé (Jan: „tlačítko zpět
+               reaguje až na druhé kliknutí, zejména při prvním použití“) —
+               pointerdown dorazí vždy a hned, u pera, prstu i myši. -->
+          <button class="ap-tool" @pointerdown.prevent="undoAnnot" title="Zpět" :disabled="!canUndo">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
           </button>
-          <button class="ap-tool" @click="redoAnnot" title="Dopředu" :disabled="!canRedo">
+          <button class="ap-tool" @pointerdown.prevent="redoAnnot" title="Dopředu" :disabled="!canRedo">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
           </button>
           <button v-if="hasAnnotations" class="ap-tool" @click="clearAnnots" title="Smazat všechny anotace (celá skladba)">🗑️</button>
@@ -1692,6 +1701,16 @@ function toggleBarnum() {
 }
 const tool = ref('pencil');
 const activeItem = ref(null);
+// Notové nástroje (dřív kategorie „Značky“) se schovávají pod jedno tlačítko
+// s ikonou noty; řádek se rozbalí až po kliknutí.
+const NOTA_TOOLS = ['crescendo', 'decrescendo', 'dynamic', 'mark', 'note'];
+const notaGroupOpen = ref(false);
+const isNotaTool = computed(() => NOTA_TOOLS.includes(tool.value));
+function toggleNotaGroup() {
+  notaGroupOpen.value = !notaGroupOpen.value;
+  // Zavření skupiny nesmí nechat vybraný nástroj, který už není vidět.
+  if (!notaGroupOpen.value && isNotaTool.value) setTool('pencil');
+}
 
 // Rozšířené anotace
 // DVĚ palety:
@@ -3756,6 +3775,21 @@ function setHlMode(m) {
 function saveHlRectHeight() {
   try { localStorage.setItem('noty.hlRectHeight', String(hlRectHeight.value || 0)); } catch (e) {}
 }
+// Které prvky Stylu daný nástroj opravdu používá. Zbytek se v panelu vůbec
+// nevykreslí (Jan, Nov 2026: „vždy by toho mělo být vidět minimum“).
+// Zvýrazňovač tloušťku potřebuje jen při volném kreslení — obdélníky ji jen
+// ukládají, ale na obrazovce nic nemění.
+const styleParts = computed(() => {
+  const t = tool.value;
+  if (t === 'pencil') return { any: true, color: true, size: true, opacity: true, sizeLabel: 'Tloušťka' };
+  if (t === 'highlighter') {
+    const free = hlMode.value === 'free';
+    return { any: true, color: true, size: free, opacity: false, sizeLabel: 'Tloušťka' };
+  }
+  if (t === 'eraser') return { any: true, color: false, size: true, opacity: false, sizeLabel: 'Poloměr gumy' };
+  if (t === 'text') return { any: true, color: true, size: false, opacity: false, sizeLabel: 'Tloušťka' };
+  return { any: false, color: false, size: false, opacity: false, sizeLabel: 'Tloušťka' };
+});
 const wedgeHintText = computed(() => {
   if (tool.value === 'crescendo') {
     return wedgePoints.value.length === 0 ? '1. Špička (klepni)' :
@@ -4325,7 +4359,7 @@ const bmEditInput = ref(null);       // element inputu v řádku (fokus po tapu 
 function setBmEditInput(el) {
   bmEditInput.value = el || null;
 }
-const penOnly = ref(true);        // v anotaci kreslit jen perem (ignorovat dotyk prstem/rukou) — výchozí zapnuto
+const penOnly = ref(false);       // kreslit jen perem (ignorovat dotyk prstem/rukou) — výchozí VYPNUTO (většina lidí nemá stylus)
 
 // Rozměry a stránka
 
@@ -5935,6 +5969,9 @@ function setTool(t) {
     else annotColor.value = to[0];
   }
   tool.value = t;
+  // Notový nástroj smí být vybraný jen s otevřeným řádkem notových nástrojů —
+  // jinak by tlačítko svítilo a nebylo vidět, co je vlastně vybráno.
+  if (NOTA_TOOLS.includes(t)) notaGroupOpen.value = true;
   // Přepnutí na jiný nástroj = konec režimu číslování (jeho tlačítko v liště
   // by jinak svítilo, i když se už čísla nevkládají).
   if (t !== 'barnumber' && t !== 'barpick') barnumMode.value = false;
@@ -6295,8 +6332,20 @@ function onLayerDown(e) {
       _dragFrom = { x: p.x, y: p.y };
       // Snapshot geometrie, aby se celý prvek přesunul jedním delta posunem
       _dragSnap = JSON.parse(JSON.stringify(hit));
+      _dragMoved = false; _dragOff = false; _dragPushed = false;
+    } else if (editingAnnot.value) {
+      // NIC pod prstem, ale NĚCO je označené → hýbe se OZNAČENÝM prvkem
+      // odkudkoli (Jan, Nov 2026: „kliknu na číslo taktu, uhnu prstem kus
+      // vedle, abych na číslo viděl, a tam začnu prstem hýbat“). Bez toho se
+      // prst musel trefit přesně na prvek, který pod ním nebyl vidět.
+      // Prosté ťuknutí (bez pohybu) označení ZRUŠÍ — viz onLayerUp.
+      _dragAnnot = editingAnnot.value;
+      _dragFrom = { x: p.x, y: p.y };
+      _dragSnap = JSON.parse(JSON.stringify(toRaw(editingAnnot.value)));
+      _dragMoved = false; _dragOff = true; _dragPushed = false;
     } else {
       editingId.value = null;
+      _dragMoved = false; _dragOff = false; _dragPushed = false;
     }
     _prev = p;
     return;
@@ -6517,6 +6566,11 @@ let _dragAnnot = null;
 let _dragJump = null, _dragJumpFrom = null, _dragJumpSnap = null;   // prvek přetahovaný v režimu Upravit (ruka)
 let _dragFrom = null;    // výchozí bod přetažení (x,y)
 let _dragSnap = null;    // snapshot geometrie prvku na začátku přetažení
+// Přesun označeného prvku: rozlišení ťuknutí vs. tah. Ťuknutí (bez pohybu)
+// označení ZRUŠÍ, tah prvkem hýbe — i když prst není přímo na prvku.
+let _dragMoved = false;  // prst už ušel práh → opravdu se táhne
+let _dragOff = false;    // tah začal MIMO prvek (hýbe se vybraným)
+let _dragPushed = false; // historie už uložena pro tenhle tah
 // Rozpracovaná úprava zvýrazňovače (tažení za úchytku strany / otočným kolečkem).
 // Drží snapshot čtyřúhelníku — nové rohy se vždy počítají z něj, ne z minulého
 // snímku, aby se zaokrouhlovací chyba nekumulovala.
@@ -6588,6 +6642,7 @@ function resetGestureState() {
   _pinch = null;
   _rot3 = null;
   _dragAnnot = null; _dragFrom = null; _dragSnap = null;
+  _dragMoved = false; _dragOff = false; _dragPushed = false;
   _hlEdit = null;
   _dragJump = null; _dragJumpFrom = null; _dragJumpSnap = null;
   _prev = null;
@@ -6663,6 +6718,15 @@ function onLayerMove(e) {
     const dy = p.y - _dragFrom.y;
     const it = _dragAnnot;
     const s = _dragSnap;
+    // Práh: dokud prst neujde ~6 px NA OBRAZOVCE, je to ťuknutí, ne tah —
+    // prvek se ani nehne (jinak se „klik“ o půl pixelu posune) a označení
+    // se na konci zruší. Teprve za prahem se začne hýbat a uloží se historie
+    // (dřív se u přesunu historie neukládala vůbec → „zpět“ nepřesunovalo).
+    if (!_dragMoved) {
+      if (Math.hypot(dx, dy) * layerPx.value < 6) { _prev = p; return; }
+      _dragMoved = true;
+      if (!_dragPushed) { pushHistory(); _dragPushed = true; }
+    }
     if (isTextAnnot(it)) {
       it.x = s.x + dx; it.y = s.y + dy;
     } else if (isStroke(it)) {
@@ -6790,9 +6854,12 @@ function onLayerUp(e) {
       return;
     }
     if (_dragAnnot && _activePointerId === e.pointerId) {
-      saveAnnotations();
+      if (_dragMoved) saveAnnotations();
+      // Ťuknutí MIMO prvek (bez pohybu) = zrušit označení (Jan, Nov 2026).
+      else if (_dragOff) editingId.value = null;
     }
     _dragAnnot = null; _dragFrom = null; _dragSnap = null;
+    _dragMoved = false; _dragOff = false; _dragPushed = false;
     _activePointerId = null;
     _prev = null;
     return;
@@ -9276,6 +9343,8 @@ async function deleteBookmark(b) {
    (z pixelů, výřez přes CELÉ tlačítko): bez posunu je střed otisku 8,5 px nad
    středem tlačítka → posun 8,5 px. */
 .ap-tool[title^='Vkládání not'] .dyn-ico { --glyph-nudge: 8.5px; }
+/* Tlačítko skupiny notových nástrojů má TAKÉ ikonu noty → stejný posun. */
+.ap-tool.nota-tool .dyn-ico { --glyph-nudge: 8.5px; }
 .ap-size {
   width: 34px; height: 34px; flex: 0 0 auto; min-width: 0; padding: 0;
   border-radius: 50%; box-sizing: border-box;
