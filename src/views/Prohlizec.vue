@@ -339,7 +339,7 @@
         @pointerleave.prevent="onLayerUp"
       >
         <!-- Překreslené anotace aktuální stránky -->
-        <g v-for="it in pageItems" :key="it.id">
+        <g v-for="it in pageItems" :key="it.id" :data-id="it.id">
           <!-- Vykreslit tah (tužka / zvýraznění) -->
           <path
             v-if="isStroke(it)"
@@ -1352,6 +1352,7 @@
          smaže“). Lišta proto přijme jen klepnutí, jemuž předcházelo POLOŽENÍ
          uvnitř ní. -->
     <div v-if="(annotMode && tool === 'edit' && editingId) || (editingAnnot && editingAnnot.barNum)" class="edit-bar"
+         ref="editBarEl" :style="editBarStyle"
          @pointerdown.capture="editBarArmed = true"
          @click.capture="onEditBarClickCapture">
       <!-- DVA ŘÁDKY, které se samy zalamují (Jan, Oct 2026: „nabídka možností je
@@ -1527,8 +1528,26 @@
           <button class="ti-size-btn" @click="bumpNoteSize(-1)" title="Menší nota">−</button>
           <span class="ti-size-val">{{ noteSizeDraft }}</span>
           <button class="ti-size-btn" @click="bumpNoteSize(1)" title="Větší nota">+</button>
+          <!-- Náhled noty: glyf včetně zrcadlení, tečka i pomocné linky — přesně
+               to, co se vloží. Stejná geometrie jako v notách, jen zmenšená. -->
           <span class="ti-size-sample">
-            <span class="ti-size-aa nota-nahled" :style="notePreviewStyle">{{ noteGlyphFor(annotTextDraft.trim() || 'ctvrt_h', noteFlipY).text }}</span>
+            <svg class="nota-nahled" :viewBox="notePreview.vb"
+                 :style="{ height: notePreview.h + 'px' }"
+                 preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+              <line v-for="(l, i) in notePreview.lines" :key="'nl' + i"
+                    :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2"
+                    :stroke="notePreview.it.color" :stroke-width="notePreview.stroke"
+                    stroke-linecap="butt" />
+              <text :x="0" :y="0" :transform="notePreview.transform"
+                    :fill="notePreview.it.color" :stroke="notePreview.it.color"
+                    :stroke-width="notePreview.stroke" paint-order="stroke"
+                    :font-size="notePreview.it.size" font-family="'NotyDyn', serif"
+                    text-anchor="middle">{{ notePreview.glyph }}</text>
+              <circle v-if="notePreview.dot"
+                      :cx="notePreview.dot.cx" :cy="notePreview.dot.cy" :r="notePreview.dot.r"
+                      :fill="notePreview.it.color" :stroke="notePreview.it.color"
+                      :stroke-width="notePreview.stroke" />
+            </svg>
           </span>
         </div>
 
@@ -1653,14 +1672,10 @@
 
         <div class="ti-actions">
           <button class="jp-btn" @click="cancelTextAnnot">Zrušit</button>
-          <button class="jp-btn primary" @click="confirmTextAnnot(false)">Uložit</button>
-          <!-- Uloží a ROVNOU přepne na ruku nad vloženým prvkem — uživatel s ním
-               může hned hýbat (přesun, velikost), nemusí přepínat nástroj.
-               U dialogu otevřeného RUKOU (přepis existujícího textu) tohle
-               tlačítko nedává smysl — v ruce už jsme. -->
-          <button v-if="editingTextSize === null" class="jp-btn hand"
-                  @click="confirmTextAnnot(true)"
-                  title="Uložit a přepnout na ruku (hned lze přesouvat a měnit velikost)">Uložit a ruka ✋</button>
+          <!-- Ruka se po vložení zapne SAMA (Jan, Nov 2026: „ruka by se na prvek
+               měla aktivovat automaticky po každém vložení“ — tlačítko „Uložit
+               a ruka“ tím ztratilo smysl). -->
+          <button class="jp-btn primary" @click="confirmTextAnnot()">Uložit</button>
         </div>
       </div>
     </div>
@@ -3335,23 +3350,42 @@ function toggleLedgerGapOf(it) {
   saveAnnotations();
 }
 
-// Náhled noty ve SKUTEČNÉ velikosti — notační font (NotyDyn), ne systémové písmo.
-// Nota je na výšku celá osnova (1 em), takže velké velikosti se v náhledu zmenšují
-// stejně jako u textu (jinak by roztlačily dialog). Zrcadlení je vidět i tady —
-// uživatel musí vidět, co opravdu dostane (na rozdíl od textu se tu překlápí znak).
-const notePreviewStyle = computed(() => {
+// NÁHLED NOTY PŘESNĚ TAK, JAK SE VLOŽÍ (Jan, Nov 2026: „aby viděl, co bude
+// vkládat, ještě než to reálně vloží“). Dřív to byl jen glyf — teď je v náhledu
+// i tečka tečkovaného rytmu a pomocné linky, zrcadlení i barva.
+// Kreslí se jako SVG ve STEJNÉ geometrii jako v notách (`noteLedgers`,
+// `noteDot`, `noteStroke`, `noteFlipTransform`), takže náhled nelže: viewBox je
+// skutečný otisk noty (i s linkami a tečkou) a teprve ten se vejde do okna.
+const notePreview = computed(() => {
   const s = noteSizeDraft.value;
-  const scale = Math.min(1, 48 / Math.max(s, 1));
-  // Svislý směr u not s nožičkou řeší VÝMĚNA GLYFU (níž), takže měřítko svisle
-  // se překlápí jen tam, kde protějšek není (celá nota, pomlky).
-  const mirrorY = noteFlipY.value
-    && !NOTE_DIR_SWAP[String(annotTextDraft.value || '').trim().toLowerCase()];
-  const sx = scale * (noteFlipX.value ? -1 : 1);
-  const sy = scale * (mirrorY ? -1 : 1);
-  const st = { fontFamily: "'NotyDyn', serif", fontSize: s + 'px', lineHeight: 1,
-               color: annotColor.value };
-  if (sx !== 1 || sy !== 1) st.transform = `scale(${sx.toFixed(3)}, ${sy.toFixed(3)})`;
-  return st;
+  const key = String(annotTextDraft.value || '').trim() || 'ctvrt_h';
+  const it = {
+    tool: 'note', text: key, x: 0, y: 0, size: s, color: annotColor.value,
+    flipX: noteFlipX.value, flipY: noteFlipY.value,
+    dot: noteDotDraft.value,
+    ledgers: noteLedgersDraft.value,
+    ledgerSide: noteLedgerSideDraft.value,
+    ledgerGap: noteLedgerGapDraft.value,
+  };
+  const ink = noteInkBox(it) || { x: -s / 2, y: -s / 2, w: s, h: s };
+  const pad = Math.max(2, s * 0.16);   // dýchání kolem noty (nožička nesmí lepit na okraj)
+  const vb = {
+    x: ink.x - pad, y: ink.y - pad,
+    w: Math.max(ink.w + 2 * pad, 1), h: Math.max(ink.h + 2 * pad, 1),
+  };
+  return {
+    it,
+    vb: `${vb.x.toFixed(2)} ${vb.y.toFixed(2)} ${vb.w.toFixed(2)} ${vb.h.toFixed(2)}`,
+    // Výška náhledu: dost velká na to, aby byly vidět tečka i pomocné linky
+    // (při skutečné velikosti noty 30 px to bylo 28×36 px a detaily se ztrácely),
+    // ale omezená, aby okno nerostlo. Šířku dopočítá poměr stran z viewBoxu.
+    h: Math.min(96, Math.max(56, s * 1.7)),
+    glyph: noteGlyphFor(key, noteFlipY.value).text,
+    transform: noteFlipTransform(it),
+    stroke: noteStroke(it),
+    lines: noteLedgers(it),
+    dot: noteDot(it),
+  };
 });
 
 // --- Dynamika: psaný text -> SMuFL kód (font NotyDyn, blok U+E520-U+E549) ---
@@ -3696,16 +3730,18 @@ const NOTE_STEM_GAIN = 0.025;
 function noteStroke(it) {
   return it.tool === 'note' ? Number((it.size * NOTE_STEM_GAIN).toFixed(2)) : 0;
 }
-// Klepnutí na dlaždici noty: vyplní klíč a rovnou potvrdí (jako u značek).
+// Klepnutí na dlaždici noty jen VYPLNÍ klíč — nota se NEvkládá hned. Uživatel
+// tak vidí v náhledu velikost, tečku, zrcadlení i pomocné linky a potvrdí to
+// tlačítkem „Uložit“ (Jan, Nov 2026: „aby viděl, co bude vkládat, ještě než to
+// reálně vloží“). Po potvrzení se nástroj sám přepne na ruku a nota se označí,
+// takže se s ní dá hned hýbat (Jan: „po vložení noty by se nota automaticky
+// měla označit“).
 // Dlaždice reaguje na POLOŽENÍ (pointerdown), ne na `click` — viz pickMark.
-// Jan: „Po vložení noty by se nota automaticky měla označit. Aby mohl uživatel hned
-// notu upravit a přemístit.“ → dlaždice se chová jako „Uložit a ruka“: nota se vloží,
-// nástroj přepne na ruku a nota se ROVNOU vybere (rámeček + pás úprav), takže se s ní
-// dá hned hýbat a měnit velikost. Znamená to ale, že na další notu se nástroj vybírá
-// znovu — vkládání více not v řadě po sobě tak nejde (tak to Jan chce).
 function pickNote(k) {
+  // Dlaždice notu NEVKLÁDÁ hned — jen ji vloží do náhledu, aby uživatel viděl
+  // velikost, tečku i pomocné linky JEŠTĚ PŘED vložením a potvrdil tlačítkem
+  // „Uložit“ (Jan, Nov 2026).
   annotTextDraft.value = k;
-  confirmTextAnnot(true);
 }
 
 // Nabídka dynamik v dialogu — pořadí odpovídá běžnému notačnímu úzu (od slabé k silné).
@@ -3754,6 +3790,101 @@ function onDialogClickCapture(e) {
 // Platí pro CELOU lištu, ne jen pro koš — pod prstem může být kterékoli tlačítko.
 const editBarArmed = ref(false);
 watch(editingId, () => { editBarArmed.value = false; });
+
+// --- UMÍSTĚNÍ PÁSU ÚPRAV U OZNAČENÉHO PRVKU -------------------------------
+// Lišta dřív visela vždy nahoře uprostřed displeje — u prvku dole v notách byla
+// daleko od prstu a uživatel tápal, čeho se lišta týká. Teď se objeví HNED
+// U PRVKU: pod ním, a když se tam nevejde, nad ním; nikdy prvek nepřekryje a
+// nikdy nevyčnívá z displeje (Jan, Nov 2026).
+const editBarEl = ref(null);
+const editBarPos = ref(null);    // {left, top} ve viewportu; null = výchozí (střed nahoře)
+const EDIT_BAR_GAP = 10;         // mezera mezi prvkem a lištou
+const EDIT_BAR_MARGIN = 8;       // okraj displeje, za který lišta nesmí
+const editBarStyle = computed(() => (editBarPos.value
+  ? { left: editBarPos.value.left + 'px', top: editBarPos.value.top + 'px', transform: 'none' }
+  : {}));
+function editBarTarget() {
+  const it = editingAnnot.value
+    || (editingId.value ? annotations.value.items.find(x => x.id === editingId.value) : null);
+  return it || null;
+}
+function _rectsOverlap(a, b) {
+  return a.left < b.right - 0.5 && a.right > b.left + 0.5
+      && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5;
+}
+function placeEditBar() {
+  const bar = editBarEl.value;
+  if (!bar) return;
+  const it = editBarTarget();
+  const id = it && it.id;
+  const g = id ? document.querySelector('.annot-layer g[data-id="' + CSS.escape(String(id)) + '"]') : null;
+  if (!g) { editBarPos.value = null; return; }   // prvek není vykreslený → výchozí místo
+  const r = g.getBoundingClientRect();
+  const bw = bar.offsetWidth, bh = bar.offsetHeight;
+  if (!bw || !bh) return;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const topBarEl = document.querySelector('.top-bar');
+  const topLimit = Math.max(EDIT_BAR_MARGIN,
+    topBarEl ? topBarEl.getBoundingClientRect().bottom + 4 : EDIT_BAR_MARGIN);
+  const bottomLimit = vh - EDIT_BAR_MARGIN;
+  const clampLeft = (l) => Math.max(EDIT_BAR_MARGIN, Math.min(l, vw - bw - EDIT_BAR_MARGIN));
+  const centerX = () => clampLeft(r.left + r.width / 2 - bw / 2);
+  const cand = [];
+  // 1) pod prvkem, 2) nad prvkem, 3) vlevo/vpravo od prvku (krajní případy)
+  const down = r.bottom + EDIT_BAR_GAP;
+  if (down + bh <= bottomLimit) cand.push({ left: centerX(), top: Math.max(topLimit, down) });
+  const up = r.top - bh - EDIT_BAR_GAP;
+  if (up >= topLimit) cand.push({ left: centerX(), top: up });
+  const rightSide = { left: Math.min(r.right + EDIT_BAR_GAP, vw - bw - EDIT_BAR_MARGIN),
+                      top: Math.max(topLimit, Math.min(r.top, bottomLimit - bh)) };
+  if (rightSide.left >= EDIT_BAR_MARGIN) cand.push(rightSide);
+  const leftSide = { left: Math.max(EDIT_BAR_MARGIN, r.left - EDIT_BAR_GAP - bw),
+                     top: Math.max(topLimit, Math.min(r.top, bottomLimit - bh)) };
+  if (leftSide.left + bw <= vw - EDIT_BAR_MARGIN) cand.push(leftSide);
+  // Vyber první místo, které prvek NEPŘEKRYJE; když žádné, to s nejmenším krytím.
+  const elRect = { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+  let best = null, bestArea = Infinity;
+  for (const c of cand) {
+    const box = { left: c.left, right: c.left + bw, top: c.top, bottom: c.top + bh };
+    const ov = _rectsOverlap(box, elRect)
+      ? Math.max(0, Math.min(box.right, elRect.right) - Math.max(box.left, elRect.left))
+        * Math.max(0, Math.min(box.bottom, elRect.bottom) - Math.max(box.top, elRect.top))
+      : 0;
+    if (ov === 0) { best = c; bestArea = 0; break; }
+    if (ov < bestArea) { bestArea = ov; best = c; }
+  }
+  if (!best) return;   // prvek je mimo displej (posun/zoom) — lišta zůstane nahoře
+  // Poslední pojistka: lišta musí být CELÁ na displeji.
+  editBarPos.value = {
+    left: clampLeft(best.left),
+    top: Math.max(topLimit, Math.min(best.top, bottomLimit - bh)),
+  };
+}
+// Přemísti lištu, kdykoli se změní výběr, stránka, zoom, posun i velikost lišty
+// (u noty je lišta vyšší než u textu — proto ResizeObserver, ne jen watcher).
+// ⚠️ Watchery se registrují až v `onMounted`: `editingAnnot`, `cssW` i `cssH`
+// jsou deklarované NÍŽ v souboru, takže na začátku setupu by spadly na TDZ.
+let _editBarRO = null;
+onMounted(() => {
+  watch([editingId, editingAnnot, zoom, rot, panX, panY, currentPage, cssW, cssH],
+    () => nextTick(placeEditBar));
+  // Lišta musí prvek následovat i při TAŽENÍ a změně velikosti (mění se jen
+  // souřadnice prvku, ne výběr) — jinak by při přesunu ujela z dohledu.
+  watch(() => {
+    const it = editBarTarget();
+    return it ? [it.x, it.y, it.x1, it.y1, it.x2, it.y2, it.x3, it.y3,
+                 it.width, it.height, it.size] : null;
+  }, () => nextTick(placeEditBar));
+  watch(editBarEl, (el) => {
+    if (_editBarRO) { _editBarRO.disconnect(); _editBarRO = null; }
+    if (el && typeof ResizeObserver !== 'undefined') {
+      _editBarRO = new ResizeObserver(() => placeEditBar());
+      _editBarRO.observe(el);
+      nextTick(placeEditBar);
+    }
+  });
+  window.addEventListener('resize', () => nextTick(placeEditBar));
+});
 function onEditBarClickCapture(e) {
   if (editBarArmed.value) { editBarArmed.value = false; return; }
   e.preventDefault();
@@ -7155,9 +7286,12 @@ const editingAnnotTool = computed(() => {
          || (activeItem.value && activeItem.value.id === editingAnnotationId.value ? activeItem.value : null);
   return it ? it.tool : '';
 });
-// POZOR: je `async` kvůli `await nextTick()` ve větvi „Uložit a ruka“ —
+// POZOR: je `async` kvůli `await nextTick()` ve větvi, která přepíná na ruku —
 // bez toho by `watch(tool)` smazal právě nastavený výběr (viz níže).
-async function confirmTextAnnot(withHand = false) {
+// `withHand` je ZÁMĚRNĚ výchozí `true`: po každém vložení se nástroj přepne na
+// ruku a vložený prvek se rovnou označí (Jan, Nov 2026) — samostatné tlačítko
+// „Uložit a ruka“ proto zrušeno.
+async function confirmTextAnnot(withHand = true) {
   const id = editingAnnotationId.value;
   if (!id) return;
   const it = annotations.value.items.find(x => x.id === id) || activeItem.value;
@@ -7200,7 +7334,7 @@ async function confirmTextAnnot(withHand = false) {
   editingAnnotationId.value = null;
   annotTextDraft.value = '';
   saveAnnotations();
-  // „Uložit a ruka“ — nástroj se přepne na ruku a vložený prvek se ROVNOU vybere,
+  // Po vložení se nástroj přepne na ruku a vložený prvek se ROVNOU označí,
   // takže uživatel s ním hned hýbe (posun prstem/perem, velikost v pásu úprav)
   // a nemusí přepínat nástroj a znovu na prvek klepat.
   if (withHand && it) {
@@ -9901,7 +10035,14 @@ async function deleteBookmark(b) {
 .ti-size-aa { line-height: 1; color: var(--text); transform-origin: right center; }
 /* Náhled noty: překlápí se (scale −1) i zmenšuje kolem SVÉHO STŘEDU — u pravého
    okraje by zrcadlení uteklo mimo náhled. */
-.nota-nahled { transform-origin: center center; }
+/* Náhled noty je SVG se skutečnou geometrií (glyf + tečka + pomocné linky) —
+   výšku dodává :style, šířku dopočítá poměr stran z viewBoxu. */
+.nota-nahled {
+  display: block; width: auto; max-width: 180px;
+  /* Náhled kreslí notu barvou INKOUSTU (černá) — na tmavém okně by nebyla vidět.
+     Papírové podloží je proto součást náhledu: ukazuje, jak nota vypadá v notách. */
+  background: #f7f3e6; border-radius: 8px; padding: 4px 8px; box-sizing: content-box;
+}
 /* Barva textu a rámeček — plochý řádek, stejná paleta jako pero (Jan, Oct 2026) */
 .ti-row { display: flex; align-items: center; gap: 8px; }
 .ti-colors { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -9930,9 +10071,6 @@ async function deleteBookmark(b) {
 /* Skryté <text> pro měření skutečné šířky textu (viz textMetrics). Nesmí být
    vidět ani chytat dotyk — slouží jen prohlížeči k měření. */
 .text-measure { visibility: hidden; pointer-events: none; }
-/* Tlačítko „Uložit a ruka“ = potvrzení + přepnutí nástroje; musí být vidět,
-   že je to ta akce, kterou uživatel po vložení chce. */
-.jp-btn.hand { background: var(--bg-elev2); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 
 /* Nabídka dynamik — dlaždice s hotovými glyfy z fontu NotyDyn.
    Uživatel tak vidí přesně to, co se vloží, a nemusí znát SMuFL kódy.
@@ -9993,4 +10131,12 @@ async function deleteBookmark(b) {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .loading-text { color: var(--text-dim); font-size: 0.95rem; }
+/* RÁMEČEK VŠECH OKEN jako u pásu úprav (nástroj Ruka): 2 px akcent + tmavé
+   pozadí (Jan, Nov 2026: „rámeček, který má okno nástroje ruka při označení
+   nějakého prvku, implementujeme na všechna okna. Vypadá to hezky.“).
+   Vlastní poloměr zaoblení si každé okno nechává — mění se jen rámeček. */
+.annot-panel, .barnum-panel, .zoom-panel, .jump-panel,
+.text-input-card, .page-go {
+  border: 2px solid var(--accent);
+}
 </style>

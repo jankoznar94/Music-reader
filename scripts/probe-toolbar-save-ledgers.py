@@ -162,9 +162,79 @@ async def main():
               return b.title;
             })()""")
             await asyncio.sleep(0.6)
-            ok("nota se vložila (dlaždice)", tile not in (None, "missing"), str(tile))
+            ok("dlaždice notu vybere", tile not in (None, "missing"), str(tile))
+            # Dlaždice notu NEVKLÁDÁ — jen ji dá do náhledu (Jan, Nov 2026).
+            n_items0 = await h.ev("window.__barDev.annotations.value.items.length")
+            still_open = await h.ev("!!document.querySelector('.text-input-card')")
+            ok("okno po volbě noty zůstává otevřené", bool(still_open))
+
+            # náhled: glyf + tečka + 2 linky PŘED vložením
+            def dlg_click(js_selector):
+                return h.ev("""(() => {
+                  const card = document.querySelector('.text-input-card');
+                  if (!card) return 'no-card';
+                  card.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true}));
+                  const el = %s;
+                  if (!el) return 'missing';
+                  el.click();
+                  return 'ok';
+                })()""" % js_selector)
+
+            prev0 = await h.ev("""(() => {
+              const svg = document.querySelector('.text-input-card .nota-nahled');
+              if (!svg) return null;
+              return { lines: svg.querySelectorAll('line').length,
+                       dot: !!svg.querySelector('circle'),
+                       glyph: (svg.querySelector('text') || {}).textContent || '',
+                       h: svg.getBoundingClientRect().height,
+                       w: svg.getBoundingClientRect().width };
+            })()""")
+            ok("náhled noty existuje", prev0 is not None, str(prev0))
+            ok("náhled ukazuje glyf", bool(prev0 and prev0["glyph"]), str(prev0 and prev0["glyph"]))
+            ok("náhled je bez linek a tečky (výchozí)", prev0 and prev0["lines"] == 0
+               and not prev0["dot"], str(prev0))
+
+            # Tečka
+            await dlg_click("[...document.querySelectorAll('.text-input-card .ti-toggle')]"
+                            ".find(b => b.textContent.trim() === 'Tečkovaný rytmus')")
+            # 2 pomocné linky
+            for _ in range(2):
+                await dlg_click("[...[...document.querySelectorAll('.text-input-card .ti-row')]"
+                                ".find(r => r.innerText.trim().startsWith('Linky'))"
+                                ".querySelectorAll('.ti-size-btn')].find(b => b.textContent.trim() === '+')")
+            await asyncio.sleep(0.4)
+            prev1 = await h.ev("""(() => {
+              const svg = document.querySelector('.text-input-card .nota-nahled');
+              const box = svg.getBoundingClientRect();
+              const card = document.querySelector('.text-input-card').getBoundingClientRect();
+              return { lines: svg.querySelectorAll('line').length,
+                       dot: !!svg.querySelector('circle'),
+                       h: box.height, w: box.width, fits: box.right <= card.right + 0.5 };
+            })()""")
+            ok("náhled ukazuje 2 linky", prev1 and prev1["lines"] == 2, str(prev1))
+            ok("náhled ukazuje tečku", prev1 and prev1["dot"], str(prev1))
+            ok("náhled se vejde do okna", prev1 and prev1["fits"], str(prev1))
+
+            # potvrzení tlačítkem „Uložit" — ruka se zapne sama
+            ok("tlačítko „Uložit a ruka“ už v okně není",
+               await h.ev("![...document.querySelectorAll('.text-input-card button')]"
+                          ".some(b => b.innerText.includes('ruka'))"))
+            await dlg_click("[...document.querySelectorAll('.text-input-card button')]"
+                            ".find(b => b.innerText.trim() === 'Uložit')")
+            await asyncio.sleep(1.0)
             n_items = await h.ev("window.__barDev.annotations.value.items.length")
+            ok("nota se vloží až po potvrzení", n_items0 is not None and n_items == n_items0 + 1,
+               f"{n_items0} -> {n_items}")
             ok("nota je v datech", n_items and n_items > 0, str(n_items))
+            # ruka se zapnula sama a nota je označená (pás úprav je vidět)
+            hand = await h.ev("""(() => {
+              const on = [...document.querySelectorAll('.annot-panel .ap-tool.on')]
+                .map(x => (x.title || ''));
+              return { on, bar: !!document.querySelector('.edit-bar'),
+                       selected: !!window.__barDev.editingId.value };
+            })()""")
+            ok("po vložení je zapnutá ruka", hand and any("Upravit" in t for t in hand["on"]), str(hand))
+            ok("vložená nota je hned označená", hand and hand["bar"] and hand["selected"], str(hand))
 
             # pás úprav: řádek Linky → 2 čárky a Dolů
             rows = await h.ev("""(() => [...document.querySelectorAll('.edit-bar .eb-row')]
@@ -190,8 +260,11 @@ async def main():
             info = await h.ev("""(() => {
               const d = window.__barDev;
               const it = d.annotations.value.items.at(-1);
+              // Jen linky TÉTO noty — v notách může být víc not stejné barvy
+              // (sonda běží opakovaně na stejné stránce), filtrujeme podle x.
               const lines = [...document.querySelectorAll('.annot-layer line')]
-                .filter(l => (l.getAttribute('stroke') || '') === (it.color || ''))
+                .filter(l => (l.getAttribute('stroke') || '') === (it.color || '')
+                  && Math.abs((+l.getAttribute('x1') + +l.getAttribute('x2')) / 2 - it.x) < 2)
                 .map(l => ({ y1: +l.getAttribute('y1'), y2: +l.getAttribute('y2'),
                              x1: +l.getAttribute('x1'), x2: +l.getAttribute('x2'),
                              sw: +l.getAttribute('stroke-width') }));
@@ -229,7 +302,8 @@ async def main():
             gap = await h.ev("""(() => {
               const it = window.__barDev.annotations.value.items.at(-1);
               const lines = [...document.querySelectorAll('.annot-layer line')]
-                .filter(l => (l.getAttribute('stroke') || '') === (it.color || ''))
+                .filter(l => (l.getAttribute('stroke') || '') === (it.color || '')
+                  && Math.abs((+l.getAttribute('x1') + +l.getAttribute('x2')) / 2 - it.x) < 2)
                 .map(l => +l.getAttribute('y1'));
               return { gap: it.ledgerGap, lines };
             })()""")
