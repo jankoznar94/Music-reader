@@ -1011,6 +1011,16 @@
         </button>
       </div>
       <div class="bn-row">
+        <!-- VÝŠKA (Jan, listopad 2026): dočíslování sází číslo 2 b nad horní
+             linku systému — na většině skenů to vypadá nalepené. Tohle pole
+             čísla zvedne (0 = jak to bylo), aby se dala dostat nad text
+             písně i dynamiku. Platí pro Dočíslovat systém i celou stránku. -->
+        <span class="bn-label">Výška</span>
+        <button class="bn-btn" @click="bumpBarLift(-1)" title="Níž (blíž osnově)">−</button>
+        <span class="bn-val">{{ barLift }}</span>
+        <button class="bn-btn" @click="bumpBarLift(1)" title="Výš (dál od osnovy)">+</button>
+      </div>
+      <div class="bn-row">
         <!-- ZPĚT: poslední vložené číslo zpátky (a počítadlo s ním) — Jan:
              „ať kvůli každé chybě nemusí zapínat anotační okno a pak se vracet“.
              Undo je stejný jako v anotačním panelu, jen po ruce tady. -->
@@ -1822,6 +1832,17 @@ const barSize = ref(16);     // velikost čísla (menší než běžný text —
 // takže se číslo dává jen na začátek každého systému (krok 4 → 1, 5, 9, 13…).
 const BAR_STEP_MIN = 1, BAR_STEP_MAX = 64;
 const barStep = ref(1);
+// VÝŠKA ČÍSLA NAD OSNOVOU (Jan, listopad 2026): „většinou je to moc nízko,
+// nalepené na osnovu, chtělo by to mít nad tím kontrolu“. Dočíslování sedí
+// číslem 2 b nad horní linkou systému (a výš, když tam koliduje text); tenhle
+// posun se k tomu PŘIČTE, takže uživatel může čísla zvednout, aniž by musel
+// přepisovat detekci. 0 = výchozí chování. Drží se v localStorage.
+const BAR_LIFT_MAX = 60, BAR_LIFT_STEP = 2;
+const barLift = ref(0);
+function clampBarLift(v) {
+  const n = Math.round(Number(v) || 0);
+  return Math.min(BAR_LIFT_MAX, Math.max(0, n));
+}
 // SKRYTÁ ČÍSLA (Jan, Nov 2026): u not, kde jsou čísla taktů už VYTISKNUTÁ, by
 // se ruční číslo na papíře zdvojilo. Skryté číslo se nekreslí (jen v režimu
 // Ruka), ale do indexu pro skok na takt patří stejně jako viditelné.
@@ -1894,6 +1915,8 @@ function loadBarStyle() {
 
     const st = Number(localStorage.getItem('noty.barStep'));
     if (st > 0) barStep.value = clampBarStep(st);
+    const lf = Number(localStorage.getItem('noty.barLift'));
+    if (lf >= 0 && Number.isFinite(lf)) barLift.value = clampBarLift(lf);
     barNumsHidden.value = localStorage.getItem('noty.barHidden') === '1';
   } catch (e) { /* soukromý režim — jede se s výchozími hodnotami */ }
 }
@@ -1901,11 +1924,16 @@ function saveBarStyle() {
   try {
     localStorage.setItem('noty.barSize', String(barSize.value));
     localStorage.setItem('noty.barStep', String(barStep.value));
+    localStorage.setItem('noty.barLift', String(barLift.value));
     localStorage.setItem('noty.barHidden', barNumsHidden.value ? '1' : '0');
   } catch (e) { /* viz výše */ }
 }
 function bumpBarSize(dir) {
   barSize.value = clampBarSize(barSize.value + dir * BAR_SIZE_STEP);
+  saveBarStyle();
+}
+function bumpBarLift(dir) {
+  barLift.value = clampBarLift(barLift.value + dir * BAR_LIFT_STEP);
   saveBarStyle();
 }
 // Klíč počítadla je vázaný na skladbu — každá skladba začíná svým číslem
@@ -2586,8 +2614,9 @@ async function _fillSystemAt(p) {
   const withFirstBar = firstSrc !== 'index';
   const startNum = withFirstBar ? first : first + 1;
   // Číslo patří NAD horní linku CELÉHO SYSTÉMU (ne nad osnovu, do které se
-  // kleplo — u sboru + klavíru to bylo doprostřed systému).
-  const y = Math.max(1, det.top - 2);
+  // kleplo — u sboru + klavíru to bylo doprostřed systému). Uživatelská
+  // „Výška“ (barLift) číslo ještě zvedne nad text písně/dynamiku.
+  const y = Math.max(1, det.top - 2 - barLift.value);
   // x pro číslo 1. taktu = levá hrana systému (úvodní čára, jinak okraj osnov).
   const firstX = Number.isFinite(det.openingPt) ? det.openingPt
     : (Number.isFinite(det.staffLeftPt) ? det.staffLeftPt + 2 * spPt : det.lines[0] - 40);
@@ -2782,7 +2811,7 @@ async function _fillPageAt() {
     // při kterém je pás, kam číslo sedne, prázdný; zdvih platí pro CELÝ systém,
     // aby čísla zůstala v jedné řadě.
     const lift = systemLift(xs, d.top);
-    const y = Math.max(1, d.top - 2 - lift);
+    const y = Math.max(1, d.top - 2 - lift - barLift.value);
     nums.forEach((n, i) => {
       items.push({ text: String(n), x: (xs[i] + 1.5) * s, y: y * s,
                    y1: y * s - 10, y2: (d.sysBot || y) * s + 4 });

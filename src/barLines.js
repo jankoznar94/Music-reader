@@ -1040,7 +1040,7 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
             if (Math.abs(x - want) > 0.45 * step) continue;
             if (!best || Math.abs(x - want) < Math.abs(best - want)) best = x;
           }
-          if (best != null) add.push(best);
+          if (best != null && gapSupport(best) >= 1) add.push(best);
         }
       }
       if (add.length) rest = rest.concat(add).sort((x, y) => x - y);
@@ -1145,6 +1145,11 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
     }
     return n ? ink / n : 0;
   };
+  // Podpora kandidáta v osnovách systému (kolik osnov má v tom x plný tah).
+  // Slouží k rozlišení skutečné koncové čáry od okraje skenu: okraj je šedý
+  // pruh, který se chytí jen v části osnov.
+  const supportAt = (x) => staffCols.reduce((n, sc) =>
+    n + (sc.out.some(v => Math.abs(v - x) <= xTol) ? 1 : 0), 0);
   let closing = null;
   // ⚠️ Koncová čára je JEDNA (max. dvojitá). Bez počítadla se smyčka „za
   // koncovou čarou je prázdno“ na systému, kde jsou na konci pomlky, zakously
@@ -1155,6 +1160,24 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
          && rest[rest.length - 1] > staffRight - 2.5 * spacePx) {
     closing = rest.pop();
     closingPops++;
+  }
+  // ⚠️ OKRAJ SKENU vs. SKUTEČNÁ KONCOVÁ ČÁRA (listopad 2026). Na mnoha
+  // stránkách Mozarta je na pravém okraji šedý pruh/skn, který detekce zachytí
+  // jako kandidáta s podporou o osnovu nižší (naměřeno str. 24/1: okraj
+  // 563,7 b s podporou 6/7 hned za skutečnou koncovou čarou 549,4 b s 7/7).
+  // Slepé pravidlo „poslední kandidát u okraje = koncová čára“ pak nechalo
+  // skutečnou koncovou čáru mezi VNITŘNÍMI a systém dostal o takt navíc
+  // (Jan: „přidává na konec systému takt navíc“ — str. 24, 38, 44).
+  // Nové pravidlo: když jsou poslední dva kandidáti blíž než třetina šířky
+  // taktu, rozhoduje PODPORA — vyhrává plná (čára), ne částečná (okraj).
+  // Při stejné podpoře zůstává pravý (chování beze změny).
+  if (closing != null && rest.length > 1) {
+    const prev = rest[rest.length - 1];
+    const P = medGap(rest);
+    if (P > 0 && (closing - prev) < 0.35 * P
+        && supportAt(closing) < supportAt(prev)) {
+      closing = rest.pop();          // okraj se zahodí, closing = skutečná čára
+    }
   }
   // …a když linky přetahují, rozhodne prázdno za poslední čarou. Pojistka:
   // zahazuje se jen KRÁTKÝ chvost (do 0,6 šířky taktu) — koncová čára v této
@@ -1183,6 +1206,28 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
          && tailShort() && afterLast() < 0.05) {
     closing = rest.pop();
     closingPops++;
+  }
+  // ⚠️ POSLEDNÍ ZÁCHRANA PODLE PODPORY (listopad 2026). Okraj skenu je šedý
+  // pruh, který „hustotu hudby“ za koncovou čarou nafoukne (naměřeno Mozart
+  // str. 38/1: skutečná koncová čára 550 b má podporu 10/10 a jen 18,6 b před
+  // koncem linek, ale okno za ní 554–569 b obsahuje okraj → 9 % inkoustu,
+  // takže se koncová čára neuznala, zůstala mezi vnitřními a systém dostal
+  // o takt navíc). Když je poslední kandidát PLNOU čarou (support ve všech
+  // osnovách) a stojí blíž než třetina šířky taktu od konce linek, je to
+  // koncová čára — žádný takt není tak úzký.
+  // ⚠️ ABSOLUTNÍ STROP 30 b: v Cherubini přetahují linky osnov ~45 b do okraje,
+  // takže „třetina šířky taktu“ je u dvoutaktových systémů 70–80 b a sežrala by
+  // skutečnou poslední vnitřní čáru (naměřeno PDF 64: 3 takty → 2). Skutečná
+  // koncová čára stojí 15–25 b před koncem linek.
+  if (closing == null && rest.length > 1) {
+    const last = rest[rest.length - 1];
+    const P = medGap(rest);
+    const tail = staffRight - last;
+    if (P > 0 && supportAt(last) >= sysCount
+        && tail < 0.35 * P && tail < 30 * pxPerPt) {
+      closing = rest.pop();
+      closingPops++;
+    }
   }
 
   // 4d) CHYBĚJÍCÍ ČÁRA PODLE SOUSEDNÍCH MEZER (listopad 2026). Aplikuje se až na
