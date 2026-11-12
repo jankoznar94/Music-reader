@@ -57,6 +57,14 @@
                 title="Číslování taktů — vkládat čísla a číst vytištěná (lupa)">
           <span class="tb-glyph-1">1</span>
         </button>
+        <!-- ULOŽENÍ / SDÍLENÍ — vlastní tlačítko s ikonou diskety na HLAVNÍ LIŠTĚ
+             (Jan, Nov 2026: „sekci Sdílet vyndáme z Anotačního okna. Dáme na
+             hlavní lištu vlastní tlačítko s ikonou pro uložení.“). Panel nabídne
+             dvě cesty podle příjemce (viz exportPdf). -->
+        <button class="tb-btn" @click="toggleSharePanel" :class="{ on: sharePanelOpen }"
+                title="Uložit a sdílet noty s poznámkami (vypálit PDF / PDF + JSON)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
+        </button>
         <!-- Uložení stavu a vycentrování — na HLAVNÍ LIŠTĚ, ne v panelu zoomu.
              Ukládací tlačítka měla dosud stejnou podobu jako ostatní akce panelu
              a uživatel nerozeznal, které z nich ukládá STRÁNKU a které CELOU
@@ -256,6 +264,27 @@
       </button>
     </div>
 
+    <!-- Panel ULOŽENÍ (Sdílet) — vlastní nabídka tlačítka diskety v liště.
+         Vyndané z Anotačního okna (Jan, Nov 2026). Dvě cesty podle příjemce:
+         vypálené PDF pro kohokoli a čisté PDF + overlay.json pro naši appku. -->
+    <div v-if="sharePanelOpen" class="zoom-panel share-panel" data-panel="share" :style="panelStyle('share')">
+      <button class="panel-grip" title="Tažením přesuň panel, klepnutím zpět na výchozí místo"
+              @pointerdown="panelDragStart($event, 'share')" @pointermove="panelDragMove"
+              @pointerup="panelDragEnd" @pointercancel="panelDragEnd"
+              @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
+              @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
+      <button class="ap-share-btn" :disabled="!!exporting" @click="exportPdf('burn')"
+              title="Vypálit poznámky do PDF — otevře kdokoli, i bez aplikace">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M9 15l4-4 4 4"/><path d="M13 11v7"/></svg>
+        <span>Vypálit PDF</span>
+      </button>
+      <button class="ap-share-btn" :disabled="!!exporting" @click="exportPdf('bundle')"
+              title="Čisté PDF + overlay.json v .zip — pro naši aplikaci">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4"/><path d="M12 11v10"/></svg>
+        <span>PDF + JSON</span>
+      </button>
+    </div>
+
     <!-- Aktivní stránka (vlastní oblast pod lištou — lišta noty nepřekrývá) -->
     <div class="page-area" ref="pageAreaEl">
     <!-- Bílé plátno POD stránkou — VŽDY, pro každou stránku (Jan, Sep 2026:
@@ -395,6 +424,13 @@
               :cx="noteDot(it).cx" :cy="noteDot(it).cy" :r="noteDot(it).r"
               :fill="it.color" :stroke="it.color" :stroke-width="noteStroke(it)"
             />
+            <!-- Pomocné (příčné) linky — kreslí se MIMO zrcadlení noty: patří
+                 osnově, ne orientaci noty. -->
+            <line
+              v-for="(l, li) in noteLedgers(it)" :key="'lg' + li"
+              :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2"
+              :stroke="it.color" :stroke-width="noteStroke(it)" stroke-linecap="butt"
+            />
           </g>
           <!-- Crescendo (otvírá se vpravo) / decrescendo (otvírá se vlevo) -->
           <!-- Uložený klín: špička (x1,y1), dvě ramena (x2,y2) a (x3,y3). ŽÁDNÁ středová čára. -->
@@ -434,6 +470,12 @@
               v-if="noteDot(activeItem)"
               :cx="noteDot(activeItem).cx" :cy="noteDot(activeItem).cy" :r="noteDot(activeItem).r"
               :fill="activeItem.color"
+            />
+            <!-- Pomocné linky už při umísťování — uživatel vidí, co dostane. -->
+            <line
+              v-for="(l, li) in noteLedgers(activeItem)" :key="'alg' + li"
+              :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2"
+              :stroke="activeItem.color" :stroke-width="noteStroke(activeItem)" stroke-linecap="butt"
             />
           </g>
           <!-- Text: náhled rámečku už při umísťování — uživatel vidí čtverec
@@ -1186,8 +1228,10 @@
           <button class="ap-tool" @click="setTool('text')" :class="{ on: tool === 'text' }" title="Text (klávesnice)"><span class="ap-glyph t-glyph">T</span></button>
           <!-- Notové nástroje (dřív samostatná kategorie „Značky“) mají vlastní
                tlačítko s ikonou noty; řádek nástrojů se rozbalí až po kliknutí
-               (Jan, Nov 2026: „vždy by toho mělo být vidět minimum“). -->
-          <button class="ap-tool nota-tool" @click="toggleNotaGroup" :class="{ on: notaGroupOpen || isNotaTool }" title="Noty a značky — crescendo, dynamika, posuvky, vkládání not">
+               (Jan, Nov 2026: „vždy by toho mělo být vidět minimum“).
+               Tlačítko svítí JEN když je vybraný notový nástroj — jako každé
+               jiné tlačítko řady (žádný nástroj nesvítí dva najednou). -->
+          <button class="ap-tool nota-tool" @click="toggleNotaGroup" :class="{ on: isNotaTool }" title="Noty a značky — crescendo, dynamika, posuvky, vkládání not">
             <span class="dyn-ico nota-ico">{{ noteGlyph('ctvrt_h').text }}</span>
           </button>
           <button class="ap-tool" @click="setTool('edit')" :class="{ on: tool === 'edit' }" title="Upravit / přesunout text či dynamiku"><span class="ap-glyph emoji">✋</span></button>
@@ -1295,22 +1339,9 @@
         </div>
       </div>
 
-      <!-- Kategorie: Sdílet — dvě cesty podle příjemce (Jan, Oct 2026) -->
-      <div class="ap-cat">
-        <div class="ap-cat-label">Sdílet</div>
-        <div class="ap-row">
-          <button class="ap-share-btn" :disabled="!!exporting" @click="exportPdf('burn')"
-                  title="Vypálit poznámky do PDF — otevře kdokoli, i bez aplikace">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M9 15l4-4 4 4"/><path d="M13 11v7"/></svg>
-            <span>Vypálit PDF</span>
-          </button>
-          <button class="ap-share-btn" :disabled="!!exporting" @click="exportPdf('bundle')"
-                  title="Čisté PDF + overlay.json v .zip — pro naši aplikaci">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4"/><path d="M12 11v10"/></svg>
-            <span>PDF + JSON</span>
-          </button>
-        </div>
-      </div>
+      <!-- Kategorie „Sdílet“ tu UŽ NENÍ — export má vlastní tlačítko s ikonou
+           diskety na hlavní liště (Jan, Nov 2026). -->
+
       </template>
     </div>
 
@@ -1377,6 +1408,26 @@
         <button class="eb-chip" :class="{ on: !!editingAnnot.flipY }"
                 @click="toggleNoteFlip(editingAnnot, 'y')"
                 title="Svisle — nožička nahoru/dolů">Svisle</button>
+      </div>
+      <!-- Pomocné linky UŽ VLOŽENÉ noty — jinak by se musela smazat a vložit znovu. -->
+      <div v-if="editingAnnot && editingAnnot.tool === 'note'"
+           class="eb-row eb-row-frame">
+        <span class="eb-size">Linky</span>
+        <button v-for="n in 4" :key="'lg' + n" class="eb-chip"
+                :class="{ on: (editingAnnot.ledgers || 0) === n - 1 }"
+                @click="setLedgersOf(editingAnnot, n - 1)"
+                :title="n === 1 ? 'Bez pomocných linek' : (n - 1) + ' pomocné linky'">{{ n - 1 }}</button>
+        <template v-if="(editingAnnot.ledgers || 0) > 0">
+          <button class="eb-chip" :class="{ on: editingAnnot.ledgerSide === 'up' }"
+                  @click="setLedgerSideOf(editingAnnot, 'up')"
+                  title="Linky jdou od noty nahoru (nota je pod osnovou)">Nahoru</button>
+          <button class="eb-chip" :class="{ on: editingAnnot.ledgerSide !== 'up' }"
+                  @click="setLedgerSideOf(editingAnnot, 'down')"
+                  title="Linky jdou od noty dolů (nota je nad osnovou)">Dolů</button>
+          <button class="eb-chip" :class="{ on: !!editingAnnot.ledgerGap }"
+                  @click="toggleLedgerGapOf(editingAnnot)"
+                  title="Nota leží v mezeře — první linka je o půl mezery dál">Mezera</button>
+        </template>
       </div>
       <div v-if="editingAnnot && editingAnnot.tool === 'text' && editingAnnot.border"
            class="eb-row eb-row-frame">
@@ -1497,6 +1548,27 @@
                   title="Vodorovně — nožička i praporek na druhou stranu">Vodorovně</button>
           <button class="ti-toggle" :class="{ on: noteFlipY }" @click="toggleFlip('y')"
                   title="Svisle — nožička nahoru/dolů">Svisle</button>
+        </div>
+
+        <!-- Pomocné (příčné) linky: nota mimo osnovu (nad ní nebo pod ní) je
+             potřebuje. Aplikace neví, kde osnova je — nota se klade volně — takže
+             počet linek, stranu i „nota v mezeře“ určuje uživatel (Jan, Nov 2026). -->
+        <div v-if="editingAnnotTool === 'note'" class="ti-row">
+          <span class="ti-size-label">Linky</span>
+          <button class="ti-size-btn" @click="bumpLedgers(-1)" title="Ubrat pomocnou linku">−</button>
+          <span class="ti-size-val">{{ noteLedgersDraft }}</span>
+          <button class="ti-size-btn" @click="bumpLedgers(1)" title="Přidat pomocnou linku (nota nad/pod osnovou)">+</button>
+          <template v-if="noteLedgersDraft > 0">
+            <button class="ti-toggle" :class="{ on: noteLedgerSideDraft === 'up' }" @click="setLedgerSide('up')"
+                    title="Linky jdou od noty nahoru (nota je pod osnovou)">Nahoru</button>
+            <button class="ti-toggle" :class="{ on: noteLedgerSideDraft === 'down' }" @click="setLedgerSide('down')"
+                    title="Linky jdou od noty dolů (nota je nad osnovou)">Dolů</button>
+          </template>
+        </div>
+        <div v-if="editingAnnotTool === 'note' && noteLedgersDraft > 0" class="ti-row">
+          <span class="ti-size-label">Poloha</span>
+          <button class="ti-toggle" :class="{ on: noteLedgerGapDraft }" @click="toggleLedgerGap()"
+                  title="Nota neleží na lince, ale v mezeře mezi linkami — první pomocná linka je o půl mezery dál">Nota v mezeře</button>
         </div>
 
         <div v-if="editingAnnotTool === 'text'" class="ti-size-row">
@@ -1686,6 +1758,7 @@ function toggleBarnum() {
   jumpMode.value = false; bookmarkMode.value = false;
   sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
   pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false;
+  sharePanelOpen.value = false;
   annotMode.value = true;         // vrstva musí přijímat dotyk
   barnumMode.value = true;
   tool.value = 'barnumber';
@@ -3206,6 +3279,62 @@ function toggleNoteFlip(it, axis) {
   saveAnnotations();
 }
 
+// --- Pomocné linky u noty (ovládání v okně noty i v pásu úprav) -----------
+// Volba se NEPAMATUJE pro další notu (stejně jako zrcadlení a tečka): linky
+// patří jedné notě podle toho, kam ji uživatel v notách položil.
+const noteLedgersDraft = ref(0);
+const noteLedgerSideDraft = ref('down');   // 'down' = linky jdou dolů, 'up' = nahoru
+const noteLedgerGapDraft = ref(false);     // nota leží v mezeře (první linka o půl mezery dál)
+function applyLedgerDraft(it) {
+  if (!it || it.tool !== 'note') return;
+  it.ledgers = noteLedgersDraft.value;
+  it.ledgerSide = noteLedgerSideDraft.value;
+  it.ledgerGap = noteLedgerGapDraft.value;
+}
+// Propíše volbu do rozpracované noty, aby náhled na stránce ukazoval totéž
+// co okno (náhled nesmí lhát).
+function syncLedgerDraft() {
+  const it = activeItem.value;
+  if (it && it.tool === 'note' && editingAnnotationId.value === it.id) applyLedgerDraft(it);
+}
+function bumpLedgers(dir) {
+  noteLedgersDraft.value = Math.max(0, Math.min(NOTE_LEDGER_MAX, noteLedgersDraft.value + dir));
+  syncLedgerDraft();
+}
+function setLedgerSide(side) {
+  noteLedgerSideDraft.value = side === 'up' ? 'up' : 'down';
+  syncLedgerDraft();
+}
+function toggleLedgerGap() {
+  noteLedgerGapDraft.value = !noteLedgerGapDraft.value;
+  syncLedgerDraft();
+}
+// Otevření okna u UŽ VLOŽENÉ noty musí ukázat JEJÍ linky, ne připravené číslo.
+function loadLedgerDraft(it) {
+  noteLedgersDraft.value = Math.max(0, Math.min(NOTE_LEDGER_MAX, Number(it && it.ledgers) || 0));
+  noteLedgerSideDraft.value = it && it.ledgerSide === 'up' ? 'up' : 'down';
+  noteLedgerGapDraft.value = !!(it && it.ledgerGap);
+}
+// Pás úprav (nástroj Ruka) — mění UŽ VLOŽENOU notu.
+function setLedgersOf(it, n) {
+  if (!it || it.tool !== 'note') return;
+  it.ledgers = Math.max(0, Math.min(NOTE_LEDGER_MAX, n));
+  noteLedgersDraft.value = it.ledgers;
+  saveAnnotations();
+}
+function setLedgerSideOf(it, side) {
+  if (!it || it.tool !== 'note') return;
+  it.ledgerSide = side === 'up' ? 'up' : 'down';
+  noteLedgerSideDraft.value = it.ledgerSide;
+  saveAnnotations();
+}
+function toggleLedgerGapOf(it) {
+  if (!it || it.tool !== 'note') return;
+  it.ledgerGap = !it.ledgerGap;
+  noteLedgerGapDraft.value = !!it.ledgerGap;
+  saveAnnotations();
+}
+
 // Náhled noty ve SKUTEČNÉ velikosti — notační font (NotyDyn), ne systémové písmo.
 // Nota je na výšku celá osnova (1 em), takže velké velikosti se v náhledu zmenšují
 // stejně jako u textu (jinak by roztlačily dialog). Zrcadlení je vidět i tady —
@@ -3473,6 +3602,35 @@ function noteDot(it) {
   if (noteMirrorY(it)) d.cy = 2 * it.y - d.cy;
   return d;
 }
+
+// --- Pomocné (příčné) linky u vložené noty --------------------------------
+// Nota se vkládá VOLNĚ do not, takže aplikace neví, kde je osnova — a tím ani
+// to, kolik pomocných linek nota potřebuje. Uživatel to proto řekne v okně
+// noty: kolik linek (0–5), na kterou stranu od hlavičky leží osnova (Nahoru /
+// Dolů) a jestli nota leží V MEZEŘE (pak je první linka o půl mezery dál).
+// Jan, Nov 2026: „k notě přidat linku — když je nota nad osnovou nebo pod
+// osnovou a jsou potřeba pomocné linky“.
+// Rozměry jsou v em velikosti noty (1 em = celá osnova, tedy 4 notové mezery),
+// takže drží při každé velikosti.
+const NOTE_LEDGER_MAX = 5;
+const NOTE_LEDGER_STEP_EM = 0.25;   // jedna notová mezera (řádek osnovy → řádek)
+const NOTE_LEDGER_HALF_EM = 0.30;   // přesah linky do stran od hlavičky
+function noteLedgers(it) {
+  if (!it || it.tool !== 'note' || it.x == null || it.y == null) return [];
+  const n = Math.max(0, Math.min(NOTE_LEDGER_MAX, Math.round(Number(it.ledgers) || 0)));
+  if (!n) return [];
+  const s = it.size || noteSize.value;
+  const step = NOTE_LEDGER_STEP_EM * s;
+  const half = NOTE_LEDGER_HALF_EM * s;
+  const sign = it.ledgerSide === 'up' ? -1 : 1;   // strana, na které leží osnova
+  const gap = it.ledgerGap ? 0.5 : 0;             // nota v mezeře → první linka o půl mezery
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const y = it.y + sign * (gap + k) * step;
+    out.push({ x1: it.x - half, y1: y, x2: it.x + half, y2: y });
+  }
+  return out;
+}
 // Rámeček výběru i hit-test pro notu: SKUTEČNÉ obrysové meze glyfu z fontu.
 // Kreslí se s text-anchor="middle", takže počátek glyfu leží o půl šířky VLEVO
 // od `it.x`; svisle je účaří v `it.y` a kladné y fontu jde na obrazovce NAHORU.
@@ -3500,6 +3658,14 @@ function noteInkBox(it) {
     if (d.cx + d.r > x1) x1 = d.cx + d.r;
     if (d.cy - d.r < y0) y0 = d.cy - d.r;
     if (d.cy + d.r > y1) y1 = d.cy + d.r;
+  }
+  // Pomocné linky leží vždy souměrně kolem hlavičky — musí být v rámečku výběru
+  // i v klikatelné ploše, jinak by se nota dala „vybrat jen za hlavičku“.
+  for (const l of noteLedgers(it)) {
+    if (l.x1 < x0) x0 = l.x1;
+    if (l.x2 > x1) x1 = l.x2;
+    if (l.y1 < y0) y0 = l.y1;
+    if (l.y1 > y1) y1 = l.y1;
   }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
@@ -3787,7 +3953,10 @@ const styleParts = computed(() => {
     return { any: true, color: true, size: free, opacity: false, sizeLabel: 'Tloušťka' };
   }
   if (t === 'eraser') return { any: true, color: false, size: true, opacity: false, sizeLabel: 'Poloměr gumy' };
-  if (t === 'text') return { any: true, color: true, size: false, opacity: false, sizeLabel: 'Tloušťka' };
+  // Text nemá v panelu NIC — barvu, velikost i rámeček si uživatel volí ve
+  // vlastním okně, které se otevře po vložení (Jan, Nov 2026). Paleta v panelu
+  // by byla druhá, matoucí cesta ke stejné věci.
+  if (t === 'text') return { any: false, color: false, size: false, opacity: false, sizeLabel: 'Tloušťka' };
   return { any: false, color: false, size: false, opacity: false, sizeLabel: 'Tloušťka' };
 });
 const wedgeHintText = computed(() => {
@@ -3838,19 +4007,31 @@ const barPad = computed(() => (barHidden.value ? 10 : (topBarH.value || 0)));
 // i vlastní panel, protože jedno gesto nemůže dělat obojí najednou.
 const zoomPanelOpen = ref(false);
 const prefsPanelOpen = ref(false);   // menu Zobrazení (stránka / skladba / rám)
+// Panel ULOŽENÍ (export s poznámkami) — vlastní nabídka tlačítka diskety v liště.
+// Vzájemně se vylučuje se všemi ostatními panely jako každý jiný panel.
+const sharePanelOpen = ref(false);
+function toggleSharePanel() {
+  sharePanelOpen.value = !sharePanelOpen.value;
+  if (sharePanelOpen.value) {
+    annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false;
+    sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
+    pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false;
+    endEdit();
+  }
+}
 function togglePrefsPanel() {
   prefsPanelOpen.value = !prefsPanelOpen.value;
   if (prefsPanelOpen.value) {
     annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false;
     sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
-    pagesPanelOpen.value = false; pagesListOpen.value = false; endEdit();
+    pagesPanelOpen.value = false; pagesListOpen.value = false; sharePanelOpen.value = false; endEdit();
   } else {
     disarmReset();   // zavření panelu ruší „nabité“ tovární tlačítko
   }
 }
 function toggleZoomPanel() {
   zoomPanelOpen.value = !zoomPanelOpen.value;
-  if (zoomPanelOpen.value) { annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false; endEdit(); }
+  if (zoomPanelOpen.value) { annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false; sharePanelOpen.value = false; endEdit(); }
 }
 // Panel ODEBRÁNÍ STRÁNEK — samostatná nabídka, vzájemně se vylučuje s ostatními
 // (jako všechny ostatní panely; Jan: „když kliknu na něco jiného, anotační mód
@@ -3860,6 +4041,7 @@ function togglePagesPanel() {
   if (pagesPanelOpen.value) {
     annotMode.value = false; jumpMode.value = false; bookmarkMode.value = false;
     sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
+    sharePanelOpen.value = false;
     endEdit();
   } else {
     pagesListOpen.value = false;
@@ -3877,6 +4059,7 @@ function toggleRotPanel() {
     sliderOpen.value = false; zoomPanelOpen.value = false; endEdit();
     pagesPanelOpen.value = false; pagesListOpen.value = false;
     prefsPanelOpen.value = false;
+    sharePanelOpen.value = false;
     cancelRotTween(true);        // ať úhel nevisí mezi polohami
   }
 }
@@ -5235,6 +5418,7 @@ function toggleSlider() {
     zoomPanelOpen.value = false;
     rotPanelOpen.value = false;
     pagesPanelOpen.value = false; pagesListOpen.value = false;
+    sharePanelOpen.value = false;
     endEdit();               // a zrušit výběr prvku (rámeček by zůstal viset)
     pageSlider.value = visibleIndex.value;
     for (let i = Math.max(0, visibleIndex.value - 3); i <= Math.min(visiblePages.value.length - 1, visibleIndex.value + 3); i++) {
@@ -5872,6 +6056,7 @@ function closeGesturePanels() {
   zoomPanelOpen.value = false;
   rotPanelOpen.value = false;
   prefsPanelOpen.value = false;
+  sharePanelOpen.value = false;
 }
 
 // Tap: okraje → listování (jen mimo anotaci, tlačítka, lištu a formuláře).
@@ -5894,7 +6079,8 @@ function onTap(e) {
   // Když tap jen zavírá otevřený panel, lišta se NEsundává (jinak by uživatel
   // při zavírání panelu přišel i o lištu, ze které ho otevřel).
   const hadPanel = zoomPanelOpen.value || rotPanelOpen.value || prefsPanelOpen.value
-    || pagesPanelOpen.value || sliderOpen.value || jumpMode.value || bookmarkMode.value;
+    || pagesPanelOpen.value || sliderOpen.value || jumpMode.value || bookmarkMode.value
+    || sharePanelOpen.value;
   closeGesturePanels();
   if (hadPanel) return;
   const el = viewerEl.value;
@@ -5916,6 +6102,7 @@ function toggleTopBar() {
     // Panely visí na liště — se schovanou lištou by zůstaly bez kontextu.
     zoomPanelOpen.value = false; rotPanelOpen.value = false; prefsPanelOpen.value = false;
     pagesPanelOpen.value = false; pagesListOpen.value = false; sliderOpen.value = false;
+    sharePanelOpen.value = false;
     jumpMode.value = false; bookmarkMode.value = false; endEdit();
   }
   // Žádné přepočítávání fitu: lišta je overlay, stránka se nesmí pohnout.
@@ -5932,7 +6119,7 @@ function toggleAnnot() {
   // číslování je jen užší režim téže vrstvy.
   if (barnumMode.value) { barnumMode.value = false; annotMode.value = true; return; }
   annotMode.value = !annotMode.value;
-  if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false; } // jiné panely zavřít
+  if (annotMode.value) { jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false; pagesPanelOpen.value = false; pagesListOpen.value = false; prefsPanelOpen.value = false; sharePanelOpen.value = false; } // jiné panely zavřít
   // vypnutí řeší watch na annotMode níže (pokrývá i cesty, které by na endEdit zapomněly)
 }
 
@@ -5971,7 +6158,10 @@ function setTool(t) {
   tool.value = t;
   // Notový nástroj smí být vybraný jen s otevřeným řádkem notových nástrojů —
   // jinak by tlačítko svítilo a nebylo vidět, co je vlastně vybráno.
-  if (NOTA_TOOLS.includes(t)) notaGroupOpen.value = true;
+  // ⚠️ A naopak: řádek se ZAVÍRÁ, jakmile se vybere jiný nástroj. Dřív zůstával
+  // otevřený (a tlačítko noty svítilo) až do ručního odklinutí — vypadalo to,
+  // jako by značky nebyly součástí řady nástrojů (Jan, Nov 2026).
+  notaGroupOpen.value = NOTA_TOOLS.includes(t);
   // Přepnutí na jiný nástroj = konec režimu číslování (jeho tlačítko v liště
   // by jinak svítilo, i když se už čísla nevkládají).
   if (t !== 'barnumber' && t !== 'barpick') barnumMode.value = false;
@@ -5991,6 +6181,7 @@ function setTool(t) {
   _barDrag = null; barDragRect.value = null;
   barPickChoice.value = null; _lastBarChoice = null;   // nabídka čísel platí jen pro lupu
   jumpMode.value = false; bookmarkMode.value = false; sliderOpen.value = false; zoomPanelOpen.value = false; rotPanelOpen.value = false;
+  sharePanelOpen.value = false;
 }
 
 let _lastCoordPath = '';   // 'ctm' | 'ratio' — kterou cestou se naposledy přepočítalo klepnutí
@@ -6495,7 +6686,11 @@ function onLayerDown(e) {
     }
     // Nová nota začíná NEZRCADLENÁ — zrcadlení je vlastnost jedné noty, ne skladby
     // (na rozdíl od velikosti, ta se pamatuje). Drží to `noteFlipX/Y` z dialogu.
-    if (tool.value === 'note') { noteFlipX.value = false; noteFlipY.value = false; noteDotDraft.value = false; }
+    if (tool.value === 'note') {
+      noteFlipX.value = false; noteFlipY.value = false; noteDotDraft.value = false;
+      // Linky patří jedné notě — nová nota začíná bez nich.
+      noteLedgersDraft.value = 0; noteLedgerSideDraft.value = 'down'; noteLedgerGapDraft.value = false;
+    }
     activeItem.value = {
       id: crypto.randomUUID(), page: currentPage.value,
       tool: tool.value,
@@ -6993,6 +7188,7 @@ async function confirmTextAnnot(withHand = false) {
       it.flipX = noteFlipX.value;
       it.flipY = noteFlipY.value;
       it.dot = !!noteDotDraft.value;
+      applyLedgerDraft(it);
       saveNoteSize();
     }
   }
@@ -7302,6 +7498,7 @@ function editText(it) {
     noteFlipX.value = !!it.flipX;
     noteFlipY.value = !!it.flipY;
     noteDotDraft.value = !!it.dot;
+    loadLedgerDraft(it);
   }
   editingTextSize.value = it.tool === 'text' ? clampTextSize(it.size || 20) : null;
   editingAnnotationId.value = it.id;
@@ -7658,11 +7855,14 @@ const shareHelpers = {
   borderRects: textBorderRects,
   noteStroke,
   noteFlipY: noteMirrorY,
+  noteLedgers,
   // NEzrcadlená tečka — zrcadlení řeší canvas sám (jako u noty).
   noteDot: noteDotRaw,
 };
 async function exportPdf(kind) {
   if (exporting.value) return;
+  // Nabídka se zavře hned — průběh hlásí toast, ne panel s mrtvými tlačítky.
+  sharePanelOpen.value = false;
   exporting.value = kind;
   try {
     await flushAnnotations();                       // exportuj přesně to, co je uložené
@@ -7761,7 +7961,7 @@ function rescuePanelOffsets() {
   if (changed) { panelOffsets.value = out; savePanelOffsets(); }
 }
 // Otevření kteréhokoli panelu zkontroluje, že jeho úchyt je na displeji.
-watch([zoomPanelOpen, rotPanelOpen, pagesPanelOpen, jumpMode, bookmarkMode, annotMode, tool],
+watch([zoomPanelOpen, rotPanelOpen, pagesPanelOpen, sharePanelOpen, jumpMode, bookmarkMode, annotMode, tool],
   () => { nextTick(rescuePanelOffsets); });
 
 function panelDragStart(e, name) {
@@ -8709,6 +8909,9 @@ async function deleteBookmark(b) {
 /* Panel rotace — na užším displeji se řada tlačítek musí vejít, proto povolíme
    zalomení (zoom panel má prvků málo a zůstává v jednom řádku). */
 .rot-panel { flex-wrap: wrap; justify-content: center; max-width: min(96vw, 620px); }
+/* Nabídka uložení (tlačítko diskety) — dvě plochá tlačítka s popisem. */
+.share-panel { flex-wrap: wrap; justify-content: center; max-width: min(96vw, 420px); }
+.share-panel .ap-share-btn { min-height: 40px; }
 
 /* Hláška o uložení — plochá, teplá, bez glow (Jan: mobilní PWA, žádné efekty).
    Sedí dole nad lištou záložek, aby nepřekážela v čtení not. */

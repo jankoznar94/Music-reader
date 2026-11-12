@@ -33,6 +33,7 @@ function roundRect(ctx, r) {
  *   noteStroke    (it) => tloušťka tahu noty
  *   noteDot       (it) => {cx, cy, r} tečka tečkovaného rytmu (NEzrcadlená —
  *                        zrcadlení už je v ctx), nebo null
+ *   noteLedgers   (it) => [{x1,y1,x2,y2}] pomocné (příčné) linky noty
  */
 export function renderAnnotationLayer(canvas, items, opts) {
   const w = Math.max(1, Math.round(opts.w));
@@ -44,6 +45,9 @@ export function renderAnnotationLayer(canvas, items, opts) {
   // Tečka tečkovaného rytmu (font ji nemá) — kreslí se kruhem jako v SVG.
   // Souřadnice jsou NEzrcadlené: zrcadlení noty už řeší transformace ctx níž.
   const noteDot = opts.noteDot || (() => null);
+  // Pomocné linky noty (nota nad/pod osnovou) — kreslí se MIMO zrcadlení noty,
+  // protože patří osnově, ne orientaci noty.
+  const noteLedgers = opts.noteLedgers || (() => []);
   // Zrcadlení noty ve svislé ose NENÍ jen geometrie: u not, které mají
   // v fontu obrácenou variantu (NOTE_DIR_SWAP), je směr už v glyfu a flipY
   // se geometricky neprojeví. Rozhoduje o tom Prohlížeč → callback.
@@ -119,6 +123,22 @@ export function renderAnnotationLayer(canvas, items, opts) {
       ctx.font = `${it.size || 20}px 'NotyDyn', serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'alphabetic';
+      // Pomocné linky noty — kreslí se PŘED zrcadlením: patří osnově, ne
+      // orientaci noty (a stejně jako v SVG na obrazovce).
+      if (it.tool === 'note') {
+        const ledgers = noteLedgers(it) || [];
+        if (ledgers.length) {
+          const sw = noteStroke(it);
+          ctx.strokeStyle = it.color;
+          ctx.lineWidth = sw > 0 ? sw : 1;
+          for (const l of ledgers) {
+            ctx.beginPath();
+            ctx.moveTo(l.x1, l.y1);
+            ctx.lineTo(l.x2, l.y2);
+            ctx.stroke();
+          }
+        }
+      }
       if (it.tool === 'note' && (it.flipX || noteFlipY(it))) {
         // Zrcadlení noty se dělá kolem jejího ukotvení (střed/účaří).
         const sx = it.flipX ? -1 : 1;

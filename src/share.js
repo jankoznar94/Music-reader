@@ -224,6 +224,7 @@ export async function burnOverlayIntoPdf(pdfBytes, opts) {
           noteStroke: helpers.noteStroke,
           noteFlipY: helpers.noteFlipY,
           noteDot: helpers.noteDot,
+          noteLedgers: helpers.noteLedgers,
         });
         const png = await canvasToPngBytes(canvas);
         // Paměť se uvolní DŘÍV, než se začne kreslit další vrstva — na mobilu
