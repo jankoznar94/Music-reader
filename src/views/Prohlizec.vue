@@ -500,7 +500,21 @@
           />
         </g>
 
-        <!-- NÁHLED dočíslování systému: čárkované čáry + čísla, kam padnou.
+        <!-- ZVÝRAZNĚNÍ TAKTU PO SKOKU (Jan, listopad 2026: „když použiji funkci
+             na skok na konkrétní takt, tak by se mohl daný takt nějak výrazně
+             označit, aby uživatel takt hned viděl“). Plochý rámeček + jemné
+             podbarvení přes takt, sám zmizí po 4 s; žádná animace ani glow. -->
+        <g v-if="barJumpMark && barJumpMark.page === currentPage" class="bar-jump-mark">
+          <rect
+            :x="barJumpMark.x - 4" :y="barJumpMark.y - 20"
+            :width="barJumpMark.w + 8" :height="barJumpMark.h + 26"
+            rx="5"
+            fill="rgba(11,107,255,0.10)"
+            stroke="#0b6bff" stroke-width="3"
+          />
+        </g>
+
+        <!-- Náhled dočíslování systému: čárkované čáry + čísla, kam padnou.
              Nic z toho ještě není uložené — uživatel to potvrdí nebo zruší. -->
         <g v-if="barFillPreview && barFillPreview.page === currentPage" class="barfill-preview">
           <line v-for="(it, i) in barFillPreview.items" :key="'bl' + i"
@@ -1046,6 +1060,18 @@
             <path d="M10 11v6M14 11v6"/>
           </svg>
           <span>{{ barClearArmed ? 'Opravdu smazat?' : 'Smazat všechny' }}</span>
+        </button>
+        <!-- Jen TATO stránka: při opravě jedné rozbité stránky se nemusí mazat
+             číslování celé skladby (Jan, listopad 2026). -->
+        <button class="bn-clear" :class="{ armed: barClearPageArmed }" @click="clearPageBarNums"
+                :title="barClearPageArmed
+                  ? 'Klepni znovu — smaže čísla taktů na této stránce'
+                  : 'Smazat čísla taktů jen na této stránce (ostatní stránky zůstanou)'">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 15.5l7-7"/>
+          </svg>
+          <span>{{ barClearPageArmed ? 'Opravdu tuto?' : 'Smazat tuto str.' }}</span>
         </button>
       </div>
       <!-- SKOK NA TAKT — dřív v dialogu stránky, teď tady (Jan, listopad 2026):
@@ -1983,6 +2009,37 @@ function syncBarFieldsFromDom() {
   const ins = p.querySelectorAll('.bn-input');
   if (ins[0] && ins[0].value !== '') setBarNext(ins[0].value);
   if (ins[1] && ins[1].value !== '') setBarStep(ins[1].value);
+}
+// SMAZÁNÍ ČÍSLOVÁNÍ JEN NA TÉTO STRÁNCE (Jan, listopad 2026: „ještě bychom
+// mohli přidat tlačítko Smazat číslování pro tuto stránku“). Stejná dvouklepnutá
+// pojistka jako u celé skladby; maže jen `barNum` anotace aktuální stránky,
+// ostatní poznámky i čísla na jiných stránkách zůstávají. Počítadlo „Další“ se
+// nemění (uživatel může chtít pokračovat od jiného čísla).
+const barClearPageArmed = ref(false);
+let barClearPageTimer = null;
+function disarmBarClearPage() {
+  barClearPageArmed.value = false;
+  if (barClearPageTimer) { clearTimeout(barClearPageTimer); barClearPageTimer = null; }
+}
+function clearPageBarNums() {
+  const page = currentPage.value;
+  const onPage = annotations.value.items.filter(it => it.barNum && it.page === page);
+  if (!barClearPageArmed.value) {
+    barClearPageArmed.value = true;
+    if (barClearPageTimer) clearTimeout(barClearPageTimer);
+    barClearPageTimer = setTimeout(disarmBarClearPage, 4000);
+    showToast(onPage.length
+      ? `Klepni znovu — smaže ${onPage.length} čísel taktů na stránce ${page + 1}`
+      : `Na stránce ${page + 1} nejsou vložená čísla taktů`);
+    return;
+  }
+  disarmBarClearPage();
+  if (!onPage.length) { showToast('Nebylo co smazat'); return; }
+  pushHistory();
+  annotations.value.items = annotations.value.items.filter(it => !(it.barNum && it.page === page));
+  saveAnnotations();
+  nextTick(() => measureTexts());
+  showToast(`Smazáno ${onPage.length} čísel taktů na stránce ${page + 1}`);
 }
 // SMAZÁNÍ ČÍSLOVÁNÍ V CELÉM SOUBLU (Jan, Nov 2026). Maže jen anotace s `barNum`
 // na VŠECH stránkách skladby — ostatní poznámky zůstávají. Dvě klepnutí (první
@@ -7723,6 +7780,36 @@ function barScope() {
 }
 // Najdi cíl: přesné číslo, jinak NEJBLIŽŠÍ známý (při stejné vzdálenosti ten
 // nižší — noty jdou dopředu, dozadu se vrací jen výjimečně).
+// ZVÝRAZNĚNÍ TAKTU PO SKOKU: rámeček kolem taktu, do kterého se skočilo, aby
+// ho uživatel hned našel (Jan, listopad 2026). Šířka = do dalšího čísla taktu
+// na téže stránce; výška = do dalšího systému (číslo dalšího systému je níž).
+// Sám zmizí po 4 s, aby nepřekážel při hraní.
+const barJumpMark = ref(null);
+let barJumpTimer = null;
+function markBarJump(t) {
+  if (!t || t.x == null || t.y == null) return;
+  const items = annotations.value.items
+    .filter(it => it && it.barNum && it.page === t.page && it.x != null && it.y != null);
+  // Čísla TÉHOŽ systému (číslo dalšího taktu je na stejné výšce, jiný systém
+  // je o desítky bodů níž) — bez toho se šířka brala z jiného systému a rámeček
+  // končil uprostřed taktu.
+  const sameSys = items.filter(it => Math.abs(it.y - t.y) < 80).sort((a, b) => a.x - b.x);
+  const right = sameSys.filter(it => it.x > t.x + 4)[0];
+  const below = items.filter(it => it.y > t.y + 8).sort((a, b) => a.y - b.y)[0];
+  let w = right ? right.x - t.x : 0;
+  if (!w && sameSys.length >= 2) {
+    const gaps = [];
+    for (let i = 1; i < sameSys.length; i++) gaps.push(sameSys[i].x - sameSys[i - 1].x);
+    gaps.sort((a, b) => a - b);
+    w = gaps[Math.floor((gaps.length - 1) / 2)] || 0;
+  }
+  w = Math.max(30, w || 90);
+  // Výška = k dalšímu systému (rámeček tak obejme i klavírní osnovy), max 620 px.
+  const h = Math.max(40, Math.min(below ? below.y - t.y - 8 : 260, 620));
+  barJumpMark.value = { page: t.page, x: t.x, y: t.y, w, h };
+  if (barJumpTimer) clearTimeout(barJumpTimer);
+  barJumpTimer = setTimeout(() => { barJumpMark.value = null; }, 4000);
+}
 function findBarTarget(n) {
   const list = barScope();
   if (!list.length) return null;
@@ -7752,9 +7839,11 @@ function goToTypedBar() {
   // Stejné číslo taktu na víc stránkách: vždy ber stránku, kde hudba pokračuje.
   if (t.page === currentPage.value) {
     showToast(t.exact ? 'Už jsi na taktu ' + n : 'Nejbližší známý takt ' + t.n);
+    markBarJump(t);
     return;
   }
   gotoPage(t.page);
+  markBarJump(t);
   showToast(t.exact
     ? 'Takt ' + n + ' — stránka ' + withOffset(dispPage(t.page))
     : 'Takt ' + n + ' tu není — nejbližší známý ' + t.n + ' (stránka ' + withOffset(dispPage(t.page)) + ')');

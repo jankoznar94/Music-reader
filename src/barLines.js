@@ -1150,6 +1150,16 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   // pruh, který se chytí jen v části osnov.
   const supportAt = (x) => staffCols.reduce((n, sc) =>
     n + (sc.out.some(v => Math.abs(v - x) <= xTol) ? 1 : 0), 0);
+  // ⚠️ OKRAJ SKENU PROCHÁZÍ VŠEMI MEZERAMI. Skutečná taktová čára v této sazbě
+  // vede spojitě jen v jedné mezeře (mezi klavírními osnovami), kdežto okraj
+  // skenu/závorka u pravého konce linek projde všemi (naměřeno Mozart str. 9/1
+  // a /3: kandidát 566,7 b s podporou 6/6, `mezery 5/5`, jen 1,3 b před koncem
+  // linek → systém dostal o takt navíc, Jan: „přidává v prvním systému takt
+  // navíc na konec“). Pravidlo platí jen u PRAVÉHO OKRAJE — uvnitř systému
+  // prochází všemi mezerami i skutečná čára v některých vydáních.
+  const gapTotal = gapColsPer.length;
+  const edgeLike = (x) => gapTotal >= 3 && gapSupport(x) >= gapTotal
+    && x > staffRight - 1.5 * pxPerPt && sysCount >= 5;
   let closing = null;
   // ⚠️ Koncová čára je JEDNA (max. dvojitá). Bez počítadla se smyčka „za
   // koncovou čarou je prázdno“ na systému, kde jsou na konci pomlky, zakously
@@ -1171,11 +1181,17 @@ export function detectBarlines(cv, pxPerPt, opt = {}) {
   // Nové pravidlo: když jsou poslední dva kandidáti blíž než třetina šířky
   // taktu, rozhoduje PODPORA — vyhrává plná (čára), ne částečná (okraj).
   // Při stejné podpoře zůstává pravý (chování beze změny).
+  // Okraj, který prochází VŠEMI mezerami (edgeLike), se zahodí vždy, když před
+  // ním stojí jiná plná čára blíž než 0,6 šířky taktu (str. 9/1 a /3).
   if (closing != null && rest.length > 1) {
     const prev = rest[rest.length - 1];
     const P = medGap(rest);
-    if (P > 0 && (closing - prev) < 0.35 * P
-        && supportAt(closing) < supportAt(prev)) {
+    const closerFull = supportAt(prev) >= sysCount;
+    const tail = staffRight - closing;
+    if (P > 0 && (closing - prev) < 0.6 * P
+        && (edgeLike(closing)
+            || (tail <= 1.5 * pxPerPt && closerFull
+                && supportAt(closing) < supportAt(prev)))) {
       closing = rest.pop();          // okraj se zahodí, closing = skutečná čára
     }
   }
