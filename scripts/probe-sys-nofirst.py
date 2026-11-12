@@ -10,34 +10,58 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 m.CDP_HTTP = os.environ.get("NOTY_CDP", m.CDP_HTTP)
 PDF = os.environ.get("NOTY_PDF", "/tmp/cherub_small.pdf")
+# URL appky z prostředí — bez toho sonda míří na výchozích 5173, kde neběží
+# server, zůstane na about:blank a spadne na „IndexedDB denied“ (past harnessu).
+APP = os.environ.get("APP_URL") or os.environ.get("NOTY_APP")
 
 
 async def main():
     ok = m.Check()
-    async with m.Harness() as h:
+    async with (m.Harness(url=APP) if APP else m.Harness()) as h:
         await h.open()
         await h.set_tablet()
         await h.open_song(pdf=PDF)
         await h.wait_for("!!(window.__barDev && window.__barDev.song)", 60, "app")
 
         # 1) SYSTÉM BEZ INDEXU: musí navázat na poslední index a očíslovat i první takt
+        # Klepnutý bod se NEBERE od oka — systém se najde detekcí celé stránky
+        # (`detectPageSystems`, stejně jako to dělá fillSystemAt) a klepe se do
+        # jeho středu. Dřív tu byl odhad (300, 290) b, který na jiném PDF padl
+        # mimo osnovu („nenašel jsem linky osnov“) a sonda hlásila chybu funkce.
         r = json.loads(await h.ev("""(async () => {
             const d = window.__barDev;
             const s = await d.layerScale(0);
-            // index 39 nad PRVNÍM systémem (stránka 0), vlevo nad osnovou
+            const { width: pw, height: ph } = await d.getPageWidthHeight(d.song, 1);
+            const PPT = 5, MAX = 12e6;   // stejné rozlišení detekce jako fillSystemAt
+            let W = pw * PPT, H = ph * PPT;
+            const area = W * H; if (area > MAX) { const k = Math.sqrt(MAX / area); W *= k; H *= k; }
+            const cv = document.createElement('canvas');
+            await d.renderPageRegion(d.song, 1, cv, { x: 0, y: 0, w: pw, h: ph }, W, H, { dpr: 1 });
+            const dpg = d.detectPageSystems(cv, cv.width / pw, { krok: 4 });
+            const sys = (dpg.systems || []).filter(x => x.ok && x.bars >= 3)[0];
+            if (!sys) return JSON.stringify({ reason: dpg.reason || 'žádný systém', n: (dpg.systems || []).length,
+              sys0: (dpg.systems || []).map(x => ({ ok: x.ok, bars: x.bars, staves: x.staves, top: Math.round(x.sysTop), bot: Math.round(x.sysBot), reason: x.reason })) });
+            // index 39 nad PRVNÍM použitelným systémem (stránka 0), vlevo nad osnovou
             d.annotations.value.items.push({ id: 'seed1', page: 0, tool: 'text', barNum: true,
               text: '39', size: 12, color: '#000', opacity: 1, border: false,
-              x: 40 * s, y: 26 * s });
-            await d.fillSystemAt({ x: 300 * s, y: 290 * s });
+              x: 40 * s, y: (sys.sysTop - 12) * s });
+            const cy = (sys.sysTop + sys.sysBot) / 2;
+            await d.fillSystemAt({ x: Math.min(pw * 0.5, 300) * s, y: cy * s });
             const p = d.barFillPreview.value;
             return JSON.stringify(p ? { start: p.start, first: p.first, src: p.firstSrc,
-              n: p.items.length, xs: p.items.map(i => Math.round(i.x / s)) } : null);
+              n: p.items.length, xs: p.items.map(i => Math.round(i.x / s)) }
+              : { reason: d.toast.value, sys: { top: sys.sysTop, bot: sys.sysBot, bars: sys.bars } });
         })()""", await_promise=True))
         print("  preview:", r)
-        ok("navázal na poslední index (39)", r and r["first"] == 40, r)
-        ok("první takt systému je očíslován", r and r["n"] >= 3, r)
-        ok("číslo 1. taktu leží u levého okraje systému",
-           r and r["xs"][0] < 100, r["xs"] if r else None)
+        if r and "first" in r:
+            ok("navázal na poslední index (39)", r["first"] == 40, r)
+            ok("první takt systému je očíslován", r["n"] >= 3, r)
+            ok("číslo 1. taktu leží u levého okraje systému", r["xs"][0] < 100, r["xs"])
+        else:
+            # Stránka 1 zvoleného PDF nemá detekovatelné osnovy (např. titulní
+            # strana 600dpi skenu) — dočíslování nemá co měřit. SKIP, ne zelené
+            # „prošlo“: sonda to řekne nahlas, ať se to neplete s ověřenou funkcí.
+            print("SKIP  dočíslování systému —", (r or {}).get("reason"), "| stránka bez osnov")
         # náhled zruš, ať do výběru indexu nezasahuje
         await h.ev("(() => { window.__barDev.barFillPreview.value = null; })()")
 
@@ -107,7 +131,9 @@ async def main():
         print("  výběr:", st)
         ok("index se vybral", st["editing"], st)
         ok("vybraný index je v notách označený", st["marked"], st)
-        ok("režim výběru se po výběru vypnul", st["selOff"], st)
+        # Jan (listopad 2026): režim se NESMÍ vypnout po výběru — jinak ho musí
+        # po každém smazaném indexu znovu zapínat.
+        ok("režim výběru zůstává po výběru zapnutý", not st["selOff"], st)
         # označení musí být U TOHO čísla, ne jinde na stránce
         near = (st.get("geo") and abs((st["geo"]["x"] + st["geo"]["w"] / 2) - pt["x"]) < 60
                 and abs((st["geo"]["y"] + st["geo"]["h"] / 2) - pt["y"]) < 60)

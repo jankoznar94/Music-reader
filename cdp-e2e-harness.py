@@ -264,6 +264,18 @@ class Harness:
         await self.click(".pg-btn.primary")
         await asyncio.sleep(1.0)
 
+    async def arm_bar_insert(self):
+        """Zapne přepínač „Vkládat“ v okně čísel.
+
+        Číslo taktu se vkládá JEN když je přepínač zapnutý (Jan, listopad 2026:
+        „uživatel omylem vkládá indexy do not, aniž by o tom věděl“) — sondy,
+        které ťukají do not a čekají vložené číslo, ho musí nejdřív zapnout.
+        UI cestu přepínače ověřuje `probe-barnum-panel.py`; tady jde o geometrii.
+        """
+        return await self.ev("(() => { const d = window.__barDev;"
+                             " if (!d || !d.barInsertArmed) return false;"
+                             " d.barInsertArmed.value = true; return true; })()")
+
     async def annot_toggle(self):
         await self.ev("(() => { const b = [...document.querySelectorAll('.tb-btn')]"
                       ".find(x => (x.title || '').startsWith('Anotace')); if (b) b.click(); })()")

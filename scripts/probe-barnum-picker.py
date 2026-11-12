@@ -182,6 +182,17 @@ async def bars(h):
     return json.loads(await h.ev(BARS_JS, await_promise=True) or "[]")
 
 
+async def open_barnum(h):
+    """Otevře okno Čísel taktů tlačítkem na HLAVNÍ LIŠTĚ (nástroj už v anotačním
+    panelu není — Jan, Nov 2026)."""
+    if await h.ev("!!document.querySelector('.barnum-panel')"):
+        return True
+    okk = await h.ev("""(() => { const b = document.querySelector('.tb-btn[title^="Číslování taktů"]');
+        if (!b) return false; b.click(); return true; })()""")
+    await asyncio.sleep(0.6)
+    return bool(okk) and bool(await h.ev("!!document.querySelector('.barnum-panel')"))
+
+
 async def pick_tool(h, title_part):
     if not await h.ev("document.querySelectorAll('.ap-tool').length"):
         await h.ev("(() => { const b = document.querySelector('.ap-collapse');"
@@ -218,9 +229,9 @@ async def main():
             await asyncio.sleep(1.0)
             await h.open()
         await h.open_song(pdf=FIX, pages=1)
-        await h.annot_toggle()
-        assert await pick_tool(h, "Čísla taktů"), "nástroj Čísla taktů nenalezen"
-        await h.wait_for("!!document.querySelector('.barnum-panel')", timeout=8, label="panel")
+        assert await open_barnum(h), "tlačítko Číslování taktů na hlavní liště nenalezeno"
+        # Číslo se vkládá jen se zapnutým přepínačem „Vkládat“ (listopad 2026)
+        assert await h.arm_bar_insert(), "nepodařilo se zapnout přepínač Vkládat"
 
         # --- 1. tlačítko lupy v okně -----------------------------------------
         has = await h.ev("!!document.querySelector('.barnum-panel .bn-pick')")
@@ -292,9 +303,7 @@ async def main():
         # --- 6. SKEN: číslo je OBRÁZEK, musí ho přečíst OCR ------------------
         make_scan_pdf()
         await h.open_song(pdf=SCAN, pages=1)
-        await h.annot_toggle()
-        assert await pick_tool(h, "Čísla taktů"), "nástroj Čísla taktů nenalezen"
-        await h.wait_for("!!document.querySelector('.barnum-panel')", timeout=8, label="panel")
+        assert await open_barnum(h), "tlačítko Číslování taktů na hlavní liště nenalezeno"
         await h.ev("document.querySelector('.bn-pick').click()")
         await asyncio.sleep(0.5)
         # obrázek je 60x30 bodů na (440..500, 552..582) od shora → střed (470, 567)

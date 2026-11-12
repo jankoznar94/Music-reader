@@ -51,13 +51,13 @@ PANEL_JS = """(() => {
   const p = document.querySelector('.barnum-panel');
   if (!p) return null;
   const r = p.getBoundingClientRect();
-  const kids = [...p.querySelectorAll('.bn-btn, .bn-input, .bn-toggle, .panel-grip')].map(el => {
+  const kids = [...p.querySelectorAll('.bn-btn, .bn-input, .bn-toggle, .panel-grip, .bn-insert')].map(el => {
     const b = el.getBoundingClientRect();
     const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
     return {
       cls: el.className, x: Math.round(b.left), y: Math.round(b.top),
       w: Math.round(b.width), h: Math.round(b.height),
-      hit: !!(hit && (hit === el || el.contains(hit) || hit.closest('.bn-btn, .bn-input, .bn-toggle, .panel-grip'))),
+      hit: !!(hit && (hit === el || el.contains(hit) || hit.closest('.bn-btn, .bn-input, .bn-toggle, .panel-grip, .bn-insert'))),
       hitCls: hit ? (hit.className || hit.tagName) : null,
     };
   });
@@ -70,6 +70,9 @@ PANEL_JS = """(() => {
       next: (p.querySelectorAll('.bn-input')[0] || {}).value,
       step: (p.querySelectorAll('.bn-input')[1] || {}).value,
       size: (p.querySelector('.bn-val') || {}).textContent,
+      insertOn: !!(p.querySelector('.bn-insert') || {}).classList
+        && p.querySelector('.bn-insert').classList.contains('on'),
+      insertText: (p.querySelector('.bn-insert') || {}).textContent,
     },
   });
 })()"""
@@ -133,6 +136,37 @@ async def bar_nums(h):
     return json.loads(await h.ev(ANN_JS, await_promise=True) or "[]")
 
 
+async def open_barnum(h):
+    """Otevře okno Čísel taktů tlačítkem na HLAVNÍ LIŠTĚ.
+
+    Nástroj už v anotačním panelu NENÍ (Jan, Nov 2026: „číslování bychom měli
+    dát úplně mimo anotační menu — bude mít svoje vlastní tlačítko na hlavní
+    liště“), takže staré `pick_tool('Čísla taktů')` nemá co najít.
+    """
+    if await h.ev("!!document.querySelector('.barnum-panel')"):
+        return True
+    okk = await h.ev("""(() => { const b = document.querySelector('.tb-btn[title^="Číslování taktů"]');
+        if (!b) return false; b.click(); return true; })()""")
+    try:
+        await h.wait_for("!!document.querySelector('.barnum-panel')", timeout=8, label="barnum panel")
+    except Exception:
+        return False
+    return bool(okk)
+
+
+async def arm_insert(h):
+    """Zapne přepínač „Vkládat“ (bez něj dotyk do not nic nevloží)."""
+    st = json.loads(await h.ev(PANEL_JS))
+    if st["vals"]["insertOn"]:
+        return True
+    pt = json.loads(await h.ev("""(() => { const b = document.querySelector('.barnum-panel .bn-insert');
+        const r = b.getBoundingClientRect();
+        return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); })()"""))
+    await h.finger_tap(pt["x"], pt["y"], r=10)
+    await asyncio.sleep(0.5)
+    return json.loads(await h.ev(PANEL_JS))["vals"]["insertOn"]
+
+
 async def pick_tool(h, title_part):
     # Velký panel se sbalením schová i tlačítka nástrojů — v tom případě ho
     # rozbal (tlačítko je jen ikona se šipkou, text „Rozbalit“ nemá).
@@ -164,9 +198,7 @@ async def main():
             await asyncio.sleep(1.0)
             await h.open()
         await h.open_song(pages=4)
-        await h.annot_toggle()
-        assert await pick_tool(h, "Čísla taktů"), "tlačítko nástroje Čísla taktů nenalezeno"
-        await h.wait_for("!!document.querySelector('.barnum-panel')", timeout=8, label="barnum panel")
+        assert await open_barnum(h), "tlačítko Číslování taktů na hlavní liště nenalezeno"
 
         # --- 1. samostatný panel, velký panel už číslování neobsahuje ---------
         st = json.loads(await h.ev(PANEL_JS))
@@ -177,14 +209,20 @@ async def main():
             if (!p) return 'no panel';
             return JSON.stringify({ barNext: p.querySelectorAll('.ap-bar-next').length,
               label: (p.textContent.match(/Čísla taktů/g) || []).length }); })()""")
-        bigd = json.loads(big) if big.startswith("{") else {"barNext": -1, "label": -1}
-        ok("velký anotační panel už čísla taktů neobsahuje",
-           bigd["barNext"] == 0 and bigd["label"] == 0, str(bigd))
+        # Velký anotační panel se při číslování VŮBEC nekreslí (číslování má
+        # vlastní okno a noty musí být vidět) — dřív tu stačilo, že v něm čísla
+        # nejsou; teď je to silnější: panel neexistuje.
+        bigd = json.loads(big) if big.startswith("{") else {"barNext": 0, "label": 0}
+        ok("velký anotační panel se při číslování nekreslí / neobsahuje čísla",
+           bigd["barNext"] == 0 and bigd["label"] == 0, big)
 
         # --- 2. malý a celý na displeji ---------------------------------------
         r = st["r"]
-        ok("panel je malý (<= 250 x 250 px)", r["w"] <= 250 and r["h"] <= 250,
-           f"{r['w']:.0f} x {r['h']:.0f}")
+        # Šířka zůstává úzká (jedna kolona). Výška roste s řádky, které panel
+        # v listopadu 2026 dostal (Výška, Vkládat, Smazat tuto stránku) — hlídá
+        # se jen to, že nepřeteče displej.
+        ok("panel je úzký (<= 250 px) a vejde se na displej", r["w"] <= 250 and r["h"] < st["vh"] - 40,
+           f"{r['w']:.0f} x {r['h']:.0f} / displej {st['vw']}x{st['vh']}")
         ok("panel je celý na displeji",
            r["left"] >= 0 and r["top"] >= 0 and r["right"] <= st["vw"] and r["bottom"] <= st["vh"],
            f"panel {r['left']:.0f},{r['top']:.0f}..{r['right']:.0f},{r['bottom']:.0f} / displej {st['vw']}x{st['vh']}")
@@ -195,17 +233,41 @@ async def main():
         small = [k for k in st["kids"] if k["cls"] != "panel-grip" and k["h"] < 28]
         ok("ovládací prvky mají dotykovou výšku >= 28 px", not small, str(small))
 
-        # --- 4. se sbaleným anotačním oknem panel zůstává a funguje -----------
-        await h.ev("document.querySelector('.ap-collapse').click()")
+        # --- 3b. VKLÁDAT: explicitní přepínač, výchozí VYPNUTO ----------------
+        # Jan (listopad 2026): „uživatel omylem vkládá indexy do not, aniž by
+        # o tom věděl“ — otevřené okno čísel nesmí samo do not sáhnout.
+        ok("panel má přepínač „Vkládat“", "Vkládat" in st["text"], st["text"])
+        ok("po otevření číslování je vkládání VYPNUTÉ",
+           (not st["vals"]["insertOn"]) and "vypnuto" in (st["vals"]["insertText"] or ""),
+           st["vals"])
+        n_off = len(await bar_nums(h))
+        fp_off = await free_point_retry(h, 0.3, 0.6)
+        await h.finger_tap(fp_off["x"], fp_off["y"], r=11)
+        await asyncio.sleep(0.8)
+        ok("s vypnutým „Vkládat“ dotyk do not NIC nevloží",
+           len(await bar_nums(h)) == n_off,
+           f"{n_off} -> {len(await bar_nums(h))}")
+        ins_pt = json.loads(await h.ev("""(() => { const b = document.querySelector('.barnum-panel .bn-insert');
+            const r = b.getBoundingClientRect();
+            return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); })()"""))
+        await h.finger_tap(ins_pt["x"], ins_pt["y"], r=10)
         await asyncio.sleep(0.5)
+        st = json.loads(await h.ev(PANEL_JS))
+        ok("klepnutím na přepínač se vkládání ZAPNE",
+           st["vals"]["insertOn"] and "zapnuto" in (st["vals"]["insertText"] or ""),
+           st["vals"])
+
+        # --- 4. panel žije samostatně a počítadlo funguje ---------------------
+        # Anotační panel je při číslování zavřený, takže „sbalení“ odpadá;
+        # ověřuje se, že okno čísel stojí samo a jeho ovládání funguje.
         still = json.loads(await h.ev(PANEL_JS))
-        ok("po sbalení anotačního okna panel zůstává", still is not None)
+        ok("okno čísel stojí samostatně (bez anotačního panelu)",
+           still is not None and not await h.ev("!!document.querySelector('.annot-panel')"))
         n0 = int(still["vals"]["next"])
         step0 = int(still["vals"]["step"])
         # klik na „+“ u Další přes CDP (skutečné klepnutí na střed tlačítka)
         pt = await h.ev("""(() => { const p = document.querySelector('.barnum-panel');
-            const rows = p.querySelectorAll('.bn-row');
-            const b = rows[0].querySelectorAll('.bn-btn')[1];
+            const b = p.querySelectorAll('.bn-btn')[1];
             const r = b.getBoundingClientRect();
             return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); })()""")
         pt = json.loads(pt)
@@ -232,6 +294,10 @@ async def main():
                f"rozdíl {dy:.1f} px (x bodu {lay['x']:.1f} vs číslo {it['x']:.1f})")
             ok("číslo začíná na x ťuknutí (±2 px)", abs(lay["x"] - it["x"]) <= 2,
                f"dx {lay['x'] - it['x']:.1f} px")
+        # Přepínač zůstává zapnutý i po vložení — číslování je série ťuknutí,
+        # ne jedno číslo na každé zapnutí.
+        ok("vkládání zůstává po vložení zapnuté",
+           json.loads(await h.ev(PANEL_JS))["vals"]["insertOn"])
 
         # --- 6. klepnutí NA panel nevloží číslo -------------------------------
         n_before = len(await bar_nums(h))
@@ -288,11 +354,18 @@ async def main():
         await h.finger_tap(fp3["x"], fp3["y"], r=11)
         await asyncio.sleep(0.9)
         # jedna NEčíselná anotace, aby „ostatní zůstaly“ nebylo prázdné tvrzení
+        # (velký anotační panel je při číslování ZAVŘENÝ, takže se musí otevřít)
+        await h.ev("(() => { const b = document.querySelector('.barnum-panel .bn-close'); if (b) b.click(); return !!b; })()")
+        await asyncio.sleep(0.6)
+        await h.annot_toggle()
+        await asyncio.sleep(0.6)
         assert await pick_tool(h, "Tužka"), "nástroj Tužka nenalezen"
         await h.pen_stroke(300, 620, 420, 660)
         await asyncio.sleep(0.5)
-        assert await pick_tool(h, "Čísla taktů"), "nástroj Čísla taktů nenalezen"
-        await h.wait_for("!!document.querySelector('.barnum-panel')", timeout=8, label="barnum panel")
+        await h.annot_toggle()
+        await asyncio.sleep(0.6)
+        assert await open_barnum(h), "okno čísel se nepodařilo otevřít"
+        assert await arm_insert(h), "nepodařilo se zapnout Vkládat"
         c0 = await counts(h)
         ok("čísla jsou na víc stránkách", c0["bar"] >= 3, str(c0))
         ok("v datech je i nečíselná anotace", c0["other"] >= 1, str(c0))

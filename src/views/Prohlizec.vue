@@ -986,6 +986,23 @@
                 @touchstart.stop.prevent="noopTouch" @touchmove.stop.prevent="noopTouch"
                 @touchend.stop="noopTouch" @touchcancel.stop="noopTouch">⠿</button>
       </div>
+      <!-- VKLÁDAT (Jan, listopad 2026): dřív se číslo vložilo KAPLÝM dotykem do
+           not, kdykoli bylo tohle okno otevřené — „uživatel omylem vkládá indexy
+           do not, aniž by o tom věděl“. Teď vkládá JEN tenhle přepínač: okno
+           samo noty nechá na pokoji, dokud ho uživatel nezapne. Výchozí stav je
+           VYPNUTO (každé otevření číslování). -->
+      <div class="bn-row">
+        <button class="bn-insert" :class="{ on: barInsertArmed }" @click="toggleBarInsert"
+                :title="barInsertArmed
+                  ? 'Vkládání zapnuto — klepnutím nebo tažením v notách vložíš číslo taktu (vypneš tady)'
+                  : 'Vkládání vypnuto — dotyk do not nic nevloží. Zapni, až budeš číslovat.'">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          <span>{{ barInsertArmed ? 'Vkládat · zapnuto' : 'Vkládat · vypnuto' }}</span>
+        </button>
+      </div>
       <div class="bn-row">
         <span class="bn-label">Další</span>
         <button class="bn-btn" @click="bumpBarNext(-1)" title="Předchozí číslo">−</button>
@@ -1134,6 +1151,9 @@
       </div>
       <div class="bn-diag" v-if="barPickDiag">{{ barPickDiag }}</div>
       <div class="bn-hint" v-if="tool === 'barpick'">Lupa: klepni na VYTIŠTĚNÉ číslo taktu — appka ho přečte (u skenu z obrázku) a nastaví skrytý index pro skok. Nic se do not nekreslí.</div>
+      <!-- Vypnuté vkládání se musí říct PŘED návodem „ťukni na roh systému“ —
+           jinak uživatel ťuká a nic se neděje (přesně to byl původní problém). -->
+      <div class="bn-hint" v-else-if="!barInsertArmed">Vkládání je vypnuté — zapni „Vkládat“ nahoře, pak ťukni na levý horní roh systému.</div>
       <div class="bn-hint" v-else>Ťukni na levý horní roh systému — číslo se vloží nad bod. Tažením přes systém se vloží do rohu označení.</div>
     </div>
 
@@ -1630,7 +1650,7 @@ function toggleBarnum() {
     tool.value = 'pencil';        // ať se okno číslování neobjeví v anotaci
     // Jednorázové režimy okna číslování skončily s ním (jinak by po návratu
     // do číslování zůstala zapnutá lupa/Výběr indexu a kreslení by nic nedělalo).
-    barSelArmed.value = false; barFillArmed.value = false;
+    barSelArmed.value = false; barFillArmed.value = false; barInsertArmed.value = false;
     showTopBar();                 // zavření číslování vrací horní lištu
     return;
   }
@@ -1640,6 +1660,9 @@ function toggleBarnum() {
   annotMode.value = true;         // vrstva musí přijímat dotyk
   barnumMode.value = true;
   tool.value = 'barnumber';
+  // Každé otevření číslování začíná s VYPNUTÝM vkládáním — aby okno samo
+  // nevkládalo čísla do not (Jan, listopad 2026).
+  barInsertArmed.value = false;
   // Skok na takt je v tomhle okně, takže index taktů z textové vrstvy PDF musí
   // být načtený (u skenů nic nenajde — platí vložená čísla).
   ensurePdfBars();
@@ -2501,6 +2524,24 @@ const barFillPageBusy = ref(false);
 // „pro smazání musím vždy přepnout do Anotačního režimu“). Klepnutím na číslo
 // se vybere stejně jako rukou a objeví se lišta se Smazat/Přepsat.
 const barSelArmed = ref(false);
+// VKLÁDÁNÍ ČÍSEL (Jan, listopad 2026): okno čísel otevřené ≠ vkládání. Dřív
+// každý dotyk do not vložil číslo, i když uživatel jen chtěl listovat nebo
+// omylem ťukl — „uživatel omylem vkládá indexy do not, aniž by o tom věděl“.
+// Teď vkládá jen zapnutý přepínač „Vkládat“ a po otevření číslování je VYPNUTÝ.
+const barInsertArmed = ref(false);
+function toggleBarInsert() {
+  barInsertArmed.value = !barInsertArmed.value;
+  if (barInsertArmed.value) {
+    // Vkládání, Výběr indexu, Dočíslování a Lupa se vzájemně vylučují — jinak
+    // svítí víc tlačítek a dotyk dělá něco jiného, než uživatel čeká.
+    barSelArmed.value = false; barFillArmed.value = false;
+    if (tool.value === 'barpick') tool.value = 'barnumber';
+    showToast('Vkládání zapnuto — klepni do not, číslo se vloží', 4000);
+  } else {
+    _barDrag = null; barDragRect.value = null;   // nedokončené tažení nesmí viset
+    showToast('Vkládání vypnuto — dotyk do not nic nevloží');
+  }
+}
 function toggleBarSelect() {
   barSelArmed.value = !barSelArmed.value;
   if (barSelArmed.value) {
@@ -4349,7 +4390,7 @@ onMounted(async () => {
   // DIAG (jen dev): zvenčí se dostat k renderu stránky a detekci čar, aby šla
   // změřit skutečná geometrie skenu bez hádání. V produkci se nepřidává.
   if (import.meta.env.DEV) {
-    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage };
+    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barInsertArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage };
   }
   await nextTick();
   loadPanelOffsets();   // panely tam, kam si je uživatel odtáhl
@@ -5836,6 +5877,9 @@ function setTool(t) {
   // kreslení pak „nic nedělalo“.
   barSelArmed.value = false;
   barFillArmed.value = false;
+  // Vkládání zůstává zapnuté, dokud se zůstává v číslování (jinak by se při
+  // každém návratu z lupy muselo zapínat znovu); opuštění číslování ho vypne.
+  if (t !== 'barnumber' && t !== 'barpick') barInsertArmed.value = false;
   wedgePoints.value = []; hlPoints.value = []; annotMode.value = true;
   // Nedokončené označení taktu/systému nesmí zůstat viset po přepnutí nástroje
   // (jinak by obdélník zůstal nakreslený a další tah by se choval jako drag).
@@ -6246,8 +6290,10 @@ function onLayerDown(e) {
     const hit = pageHits(p);
     if (hit && hit.barNum) {
       editingId.value = hit.id;
-      barSelArmed.value = false;   // jednorázově: dál už patří dotyk notám
-      showToast('Vybrán index ' + (hit.text || '?') + ' — lišta dole má Smazat', 4000);
+      // REŽIM ZŮSTÁVÁ ZAPNUTÝ (Jan, listopad 2026): dřív se po výběru indexu
+      // sám vypl a po každém smazaném čísle ho uživatel musel znovu zapínat.
+      // Vypíná se jen ručně tlačítkem Výběr, nebo přepnutím jiného nástroje.
+      showToast('Vybrán index ' + (hit.text || '?') + ' — lišta dole má Smazat; klepni na další číslo', 4000);
     } else {
       editingId.value = null;
       showToast('Tady žádné číslo taktu není — klepni přímo na číslo', 4000);
@@ -6277,6 +6323,15 @@ function onLayerDown(e) {
     // osnově pokaždé stejně (dřív přistálo přesně pod prstem, takže bylo
     // pokaždé jinde). Klepnutí bez tažení položí číslo tam, kam se kleplo.
     if (tool.value === 'barnumber') {
+      // VKLÁDÁ SE JEN SE ZAPNUTÝM PŘEPÍNAČEM „Vkládat“ (Jan, listopad 2026).
+      // Otevřené okno čísel samo do not nesahá — dřív se číslo vložilo každým
+      // dotykem a uživatel o tom ani nevěděl.
+      if (!barInsertArmed.value) {
+        _activePointerId = null;
+        showToast('Vkládání je vypnuté — zapni „Vkládat“ v okně čísel', 4000);
+        _prev = p;
+        return;
+      }
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* starší prohlížeč */ }
       _barDrag = { from: p, pointerId: e.pointerId };
       barDragRect.value = null;
@@ -9307,6 +9362,20 @@ async function deleteBookmark(b) {
 .bn-page svg { display: block; flex: 0 0 auto; }
 .bn-page span { white-space: nowrap; }
 .bn-page:active, .bn-page.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
+/* VKLÁDAT — plochý přepínač přes celou šířku panelu, 34 px (dotyk). Zapnutý
+   stav je plný akcent, ne jen obrys: z tabletu musí být na první pohled vidět,
+   jestli dotyk do not vloží číslo nebo ne. */
+.bn-insert {
+  flex: 1 1 auto; width: 100%; box-sizing: border-box; height: 34px;
+  padding: 0 8px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--bg-elev2); color: var(--text-dim);
+  font-size: 0.8rem; font-family: inherit; font-weight: 700; line-height: 1;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer; touch-action: manipulation;
+}
+.bn-insert svg { display: block; flex: 0 0 auto; }
+.bn-insert span { white-space: nowrap; }
+.bn-insert.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
 /* „Jdi“ vedle pole Takt — obdélníkové, ne kruh (je to akce s textem). */
 .bn-go-btn { width: auto; min-width: 38px; padding: 0 10px; border-radius: 9px; font-size: 0.78rem; }
 /* Diagnostika posledního klepnutí — drobné, ale čitelné (z tabletu se fotí). */
