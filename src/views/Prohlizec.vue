@@ -2711,22 +2711,21 @@ async function _fillPageAt() {
   };
   // Nejmenší zdvih čísel celého systému, aby pás nad osnovou (kde je vytištěná
   // dynamika nebo „Tutti“) zůstal volný. 0 = číslo sedí hned nad osnovou.
-  const systemLift = (xs, top) => {
-    if (!xs.length) return 0;
-    // Pro každé číslo se zjistí, jestli na něj nad osnovou nesedí hustý vytištěný
-    // text (dynamika, „Tutti“): práh 0,08 při zdvihu 0 = koliduje. Kolidující
-    // číslo se hledá první zdvih (po 2 b, max 8), kde je pás prázdný (< 0,03).
-    // Zdvih platí pro CELÝ systém, aby čísla zůstala v řadě — ale jen pokud
-    // jiné číslo tím neshodí do textu (jinak se zdvih sníží).
+  // `base` = uživatelská Výška (barLift) — bere se jako MINIMUM, takže posun
+  // polem je vždy přesně o tolik bodů; automatika přidá jen to, co na text
+  // ještě nestačí. (Dřív se počítala od nuly a při Výška 20 se automatika
+  // vypnula, takže se číslo zvedlo o 29 b místo 20 — matoucí.)
+  const systemLift = (xs, top, base = 0) => {
+    if (!xs.length) return base;
     const dens = (x, lift) => inkIn(x + 1.5, top - lift - 12, 15, 11);
-    let need = 0;
+    let need = base;
     for (const x of xs) {
-      if (dens(x, 0) < 0.08) continue;
-      for (let l = 2; l <= 8; l += 2) {
+      if (dens(x, base) < 0.08) continue;
+      for (let l = base + 2; l <= base + 8; l += 2) {
         if (dens(x, l) < 0.03) { need = Math.max(need, l); break; }
       }
     }
-    while (need > 0 && xs.some((x) => dens(x, need) > 0.07)) need -= 2;
+    while (need > base && xs.some((x) => dens(x, need) > 0.07)) need -= 2;
     return need;
   };
   const dpg = detectPageSystems(cv, pxPerPt, { krok: step, numXs: numIdx });
@@ -2810,8 +2809,11 @@ async function _fillPageAt() {
     // „Tutti“ a nebylo čitelné. Hledá se nejmenší zdvih (po 2 bodech, max 16),
     // při kterém je pás, kam číslo sedne, prázdný; zdvih platí pro CELÝ systém,
     // aby čísla zůstala v jedné řadě.
-    const lift = systemLift(xs, d.top);
-    const y = Math.max(1, d.top - 2 - lift - barLift.value);
+    // Když uživatel nastavil Výšku (> 0), platí PŘESNĚ ona — je to jeho volba
+    // a číslo se nesmí samo posunout jinam, když nad osnovou stojí text.
+    // Automatika (kolize s dynamikou / „Tutti“) se uplatní jen při Výška 0.
+    const lift = barLift.value > 0 ? barLift.value : systemLift(xs, d.top, 0);
+    const y = Math.max(1, d.top - 2 - lift);
     nums.forEach((n, i) => {
       items.push({ text: String(n), x: (xs[i] + 1.5) * s, y: y * s,
                    y1: y * s - 10, y2: (d.sysBot || y) * s + 4 });
@@ -4281,7 +4283,7 @@ onMounted(async () => {
   // DIAG (jen dev): zvenčí se dostat k renderu stránky a detekci čar, aby šla
   // změřit skutečná geometrie skenu bez hádání. V produkci se nepřidává.
   if (import.meta.env.DEV) {
-    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage };
+    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage };
   }
   await nextTick();
   loadPanelOffsets();   // panely tam, kam si je uživatel odtáhl
