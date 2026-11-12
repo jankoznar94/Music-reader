@@ -412,6 +412,7 @@
             :d="pathD(activeItem)"
             fill="none" :stroke="activeItem.color" :stroke-width="activeItem.width"
             :opacity="activeItem.opacity" stroke-linecap="round" stroke-linejoin="round"
+            :class="{ hl: activeItem.tool === 'highlighter' }"
           />
           <line v-else-if="activeItem.tool === 'crescendo' || activeItem.tool === 'decrescendo'"
             :x1="activeItem.x1" :y1="activeItem.y1" :x2="activeItem.x2" :y2="activeItem.y2"
@@ -529,7 +530,7 @@
         <!-- Live preview bodů zvýrazňovače — kam uživatel klikl + náhled boxu -->
         <g v-if="tool === 'highlighter' && hlPoints.length" class="wedge-preview">
           <path
-            v-if="hlPoints.length >= 2"
+            v-if="hlPreviewD"
             :d="hlPreviewD"
             :fill="annotColor" opacity="0.3" :stroke="annotColor" stroke-width="1.5" stroke-dasharray="4 3"
             class="hl-preview"
@@ -1185,6 +1186,29 @@
           <button class="ap-tool" @click="setTool('text')" :class="{ on: tool === 'text' }" title="Text (klávesnice)"><span class="ap-glyph t-glyph">T</span></button>
           <button class="ap-tool" @click="setTool('edit')" :class="{ on: tool === 'edit' }" title="Upravit / přesunout text či dynamiku"><span class="ap-glyph emoji">✋</span></button>
         </div>
+        <!-- Zvýrazňovač má tři způsoby: tři body (celé osnovy), obdélník ze dvou
+             bodů s nastavitelnou výškou (text) a volné kreslení jako tužka.
+             Volba se pamatuje; přepnutí způsobu zahodí nasbírané body. -->
+        <template v-if="tool === 'highlighter'">
+          <div class="ap-row ap-hl-modes">
+            <button
+              v-for="m in HL_MODE_LIST" :key="m.key"
+              class="ap-mode" :class="{ on: hlMode === m.key }"
+              @click="setHlMode(m.key)" :title="m.title"
+            >{{ m.label }}</button>
+          </div>
+          <div v-if="hlMode === 'rect'" class="ap-row ap-select-row">
+            <span class="ap-op-label">Výška</span>
+            <input
+              type="number" class="ap-num" min="4" max="300" step="2"
+              :value="hlRectHeight"
+              @input="hlRectHeight = Number($event.target.value) || 0"
+              @change="saveHlRectHeight"
+            />
+            <span class="ap-op-val">px</span>
+          </div>
+          <div v-if="hlMode === 'rect'" class="ap-hint">Dva body určí okraje i sklon pásu; výška je kolmo na spojnici.</div>
+        </template>
       </div>
 
       <!-- Kategorie: Hudební značky -->
@@ -1226,15 +1250,11 @@
             :title="'Barva'"
           ></button>
         </div>
-        <div class="ap-row">
-          <button
-            v-for="s in sizes"
-            :key="s"
-            class="ap-size"
-            :class="{ on: annotSize === s }"
-            @click="annotSize = s"
-            :title="'Velikost ' + s"
-          ><span class="ap-size-num">{{ s }}</span></button>
+        <div class="ap-row ap-select-row">
+          <span class="ap-op-label">Tloušťka</span>
+          <select class="ap-select" :value="annotSize" @change="annotSize = Number($event.target.value)">
+            <option v-for="n in penSizes" :key="n" :value="n">{{ n }} px</option>
+          </select>
         </div>
         <div class="ap-row op-row">
           <span class="ap-op-label">Krytí</span>
@@ -1743,7 +1763,10 @@ function normalizeNoteFlips() {
   }
   return changed;
 }
-const sizes = [1, 2, 3, 4, 6, 8, 12];
+// Velikost pera: místo pevné řady čísel klasický select 1–50 px (Jan, Nov 2026:
+// „vybírání z předem daného výběru čísel je omezující“).
+const PEN_SIZE_MAX = 50;
+const penSizes = Array.from({ length: PEN_SIZE_MAX }, (_, i) => i + 1);
 const annotColor = ref('#111111'); // aktuální barva pera
 const annotSize = ref(1);          // aktuální velikost pera (výchozí = nejmenší 1)
 const annotOpacity = ref(100);     // aktuální opacity tahu v % (100 = plné krytí)
@@ -3554,13 +3577,27 @@ function onEditBarClickCapture(e) {
 
 // Náhled zvýrazňovače při sběru bodů — stejná geometrie jako výsledek, takže
 // uživatel hned vidí, že pás je vodorovně se čtečkou (i na otočené stránce).
+// U obdélníku (dva body + výška) se pás ukáže už po PRVNÍM bodě, aby byla vidět
+// zvolená výška — jinak by uživatel tapal naslepo.
 const hlPreviewD = computed(() => {
+  if (tool.value !== 'highlighter' || hlMode.value === 'free') return '';
   const pts = hlPoints.value;
-  if (pts.length < 2) return '';
-  const fake = pts.length >= 3
-    ? pts
-    : [...pts, { x: pts[0].x + 60, y: pts[0].y, cx: (pts[0].cx != null ? pts[0].cx : pts[0].x) + 60, cy: pts[0].cy != null ? pts[0].cy : pts[0].y }];
-  const corners = hlCorners(fake);
+  if (!pts.length) return '';
+  let corners = null;
+  if (hlMode.value === 'rect') {
+    const a = pts[0];
+    const b = pts[1] || {
+      x: a.x + 120, y: a.y,
+      cx: (a.cx != null ? a.cx : a.x) + 120, cy: a.cy != null ? a.cy : a.y,
+    };
+    corners = hlRectCorners([a, b], hlRectHeight.value);
+  } else {
+    if (pts.length < 2) return '';
+    const fake = pts.length >= 3
+      ? pts
+      : [...pts, { x: pts[0].x + 60, y: pts[0].y, cx: (pts[0].cx != null ? pts[0].cx : pts[0].x) + 60, cy: pts[0].cy != null ? pts[0].cy : pts[0].y }];
+    corners = hlCorners(fake);
+  }
   if (!corners) return '';
   return 'M' + corners.map(q => `${q.x},${q.y}`).join('L') + 'Z';
 });
@@ -3694,6 +3731,31 @@ const editingTypeLabel = computed(() => {
 });
 const wedgePoints = ref([]); // body zobáčku (crescendo/decrescendo), až 3 × {x,y}
 const hlPoints = ref([]);    // body zvýrazňovače (3 × {x,y}: levý spodní, levý horní, vpravo) — ve „vzpřímené" soustavě
+// --- Způsob zvýrazňovače ---------------------------------------------------
+// 'three' = původní tři body (levý spodní, levý horní, pravý) — celé osnovy.
+// 'rect'  = dva body (levý a pravý okraj) + číselná Výška — na text.
+// 'free'  = volné kreslení tahem jako tužka (jen silnější a s multiply).
+// Volba se pamatuje mezi otevřeními panelu; přepnutí způsobu zahodí
+// nasbírané body, aby zbytek starého obdélníku nepletl nový.
+const HL_MODE_LIST = [
+  { key: 'three', label: '3 body', title: 'Tři body: levý spodní, levý horní, pravý — obdélník na celé osnovy' },
+  { key: 'rect',  label: 'Obdélník', title: 'Dva body (levý a pravý okraj) a nastavená výška — na text' },
+  { key: 'free',  label: 'Volně', title: 'Kreslení volnou rukou jako tužkou' },
+];
+const hlMode = ref(localStorage.getItem('noty.hlMode') || 'three');
+if (!HL_MODE_LIST.some(m => m.key === hlMode.value)) hlMode.value = 'three';
+const hlRectHeight = ref(Number(localStorage.getItem('noty.hlRectHeight')) || 30);
+watch(hlMode, (v) => {
+  try { localStorage.setItem('noty.hlMode', v); } catch (e) {}
+  hlPoints.value = [];
+});
+function setHlMode(m) {
+  if (hlMode.value === m) { hlPoints.value = []; return; }
+  hlMode.value = m;
+}
+function saveHlRectHeight() {
+  try { localStorage.setItem('noty.hlRectHeight', String(hlRectHeight.value || 0)); } catch (e) {}
+}
 const wedgeHintText = computed(() => {
   if (tool.value === 'crescendo') {
     return wedgePoints.value.length === 0 ? '1. Špička (klepni)' :
@@ -3706,6 +3768,12 @@ const wedgeHintText = computed(() => {
            '3. Špička (klepni)';
   }
   if (tool.value === 'highlighter') {
+    if (hlMode.value === 'free') return '';   // volné kreslení žádné body nesbírá
+    if (hlMode.value === 'rect') {
+      return hlPoints.value.length === 0
+        ? '1. Levý okraj (klepni)'
+        : '2. Pravý okraj (klepni) — výška ' + Math.round(hlRectHeight.value) + ' px';
+    }
     return hlPoints.value.length === 0 ? '1. Levý spodní (klepni)' :
            hlPoints.value.length === 1 ? '2. Levý horní (klepni)' :
            '3. Pravý (klepni)';
@@ -5949,11 +6017,42 @@ function hlCorners(pts) {
     { x: left, y: top }, { x: right, y: top },
     { x: right, y: bottom }, { x: left, y: bottom },
   ];
-  // Převod obraz → vrstva inverzí matice vrstvy
+  return screenQuadToLayer(screen, pts);
+}
+// Obdélník ze DVOU bodů a nastavené VÝŠKY (v px obrazovky, proto se staví
+// v obrazové soustavě stejně jako tříbodový režim). Body neurčují jen levý a
+// pravý okraj — určují i VERTIKÁLNÍ STŘED pásu, takže pás může jít lehce
+// z kopce (Jan, Nov 2026: „dva body neurčují jen hrany, ale i vertikální střed.
+// Takže obdélník klidně může jít lehce z kopce.“). Osa pásu = spojnice bodů,
+// výška = kolmice na ni, pás je na spojnici vycentrovaný.
+function hlRectCorners(pts, height) {
+  if (!pts || pts.length < 2) return null;
+  const [a, b] = pts;
+  const ax = a.cx != null ? a.cx : a.x, ay = a.cy != null ? a.cy : a.y;
+  const bx = b.cx != null ? b.cx : b.x, by = b.cy != null ? b.cy : b.y;
+  const dx = bx - ax, dy = by - ay;
+  const len = Math.hypot(dx, dy);
+  // Nulová délka = omylem dvojklik na stejné místo → nic se nemá vytvořit.
+  if (!(len > 1.5)) return null;
+  const ux = dx / len, uy = dy / len;        // směr pásu (i s kopcem)
+  const nx = uy, ny = -ux;                   // kolmice (= výška), míří „nahoru“
+  const hh = Math.max(2, Number(height) || 0) / 2;
+  const screen = [
+    { x: ax + nx * hh, y: ay + ny * hh },    // levý horní
+    { x: bx + nx * hh, y: by + ny * hh },    // pravý horní
+    { x: bx - nx * hh, y: by - ny * hh },    // pravý dolní
+    { x: ax - nx * hh, y: ay - ny * hh },    // levý dolní
+  ];
+  return screenQuadToLayer(screen, pts);
+}
+// Obrazové rohy → souřadnice vrstvy (inverzí matice vrstvy). pts slouží jen
+// jako záložní zdroj, kdyby matice nebyla k dispozici.
+function screenQuadToLayer(screen, pts) {
   const svg = layerSvgEl.value;
   const ctm = svg && svg.getScreenCTM();
   if (!ctm || typeof DOMPoint === 'undefined') {
     // bez matice (nemělo by nastat) – vrať aspoň obdélník ve vrstvě
+    const a = pts[0], b = pts[1] || pts[0], c = pts[2] || b;
     return [
       { x: a.x, y: Math.min(a.y, b.y) }, { x: c.x, y: Math.min(a.y, b.y) },
       { x: c.x, y: Math.max(a.y, b.y) }, { x: a.x, y: Math.max(a.y, b.y) },
@@ -6243,18 +6342,23 @@ function onLayerDown(e) {
     return;
   }
 
-  // Zvýrazňovač: 3 body klepnutím → levý spodní, levý horní, vpravo → přesný obdélník.
+  // Zvýrazňovač: sběr bodů klepnutím. Způsob 'three' = 3 body (levý spodní, levý
+  // horní, vpravo), 'rect' = 2 body (levý a pravý okraj) + nastavená výška,
+  // 'free' = volné kreslení (propadne dolů do tahu jako tužka).
   // POZOR: obdélník se počítá v souřadnicích OBRAZOVKY, ne otočené vrstvy.
   // Vrstva se otáčí s papírem, takže obdélník zarovnaný podle vrstvy je na
   // obrazovce nakloněný o úhel rotace — Jan: „zvýrazňovač se po rotaci chová
   // zvláštně, jak kdyby byl z kopce; měl by být stále naprosto vodorovně."
   // Uživatel klepá body vodorovně se čtečkou, proto se obdélník staví tam
   // a do vrstvy se uloží jako čtyřúhelník (aby zůstal přilepený k notám).
-  if (tool.value === 'highlighter') {
+  if (tool.value === 'highlighter' && hlMode.value !== 'free') {
     _activePointerId = null;   // guard by jinak zablokoval 2. a 3. klik
     hlPoints.value.push({ x: p.x, y: p.y, cx: e.clientX, cy: e.clientY });
-    if (hlPoints.value.length === 3) {
-      const corners = hlCorners(hlPoints.value);
+    const need = hlMode.value === 'rect' ? 2 : 3;
+    if (hlPoints.value.length >= need) {
+      const corners = hlMode.value === 'rect'
+        ? hlRectCorners(hlPoints.value.slice(0, 2), hlRectHeight.value)
+        : hlCorners(hlPoints.value);
       if (corners) {
         const xs = corners.map(c => c.x), ys = corners.map(c => c.y);
         const it = {
@@ -6273,6 +6377,8 @@ function onLayerDown(e) {
         pushHistory();
         annotations.value.items.push(it);
         saveAnnotations();
+      } else if (hlMode.value === 'rect') {
+        showToast('Body jsou příliš blízko u sebe — klepni levý a pravý okraj dál od sebe', 3500);
       }
       hlPoints.value = [];
     }
@@ -6387,6 +6493,9 @@ function onLayerDown(e) {
   activeItem.value = {
     id: crypto.randomUUID(), page: currentPage.value,
     tool: tool.value,
+    // Zvýrazňovač kreslený volnou rukou se ukládá jako TAH (free), ne jako
+    // čtyřúhelník — jinak by ho vykreslování i guma braly jako obdélník.
+    ...(tool.value === 'highlighter' ? { free: true } : {}),
     // Zvýrazňovač už není poloprůhledný ('80') — výraznost řeší sytý odstín
     // + mix-blend-mode: multiply, takže noty pod ním zůstanou čitelné.
     color: annotColor.value,
@@ -6501,7 +6610,12 @@ function _staleGuard(maxAge = PEN_GUARD_MS) {
 }
 
 function isStroke(it) {
-  return it && it.tool === 'pencil';   // highlighter je teď 3-bodový obdélník, ne tah
+  if (!it) return false;
+  if (it.tool === 'pencil') return true;
+  // Zvýrazňovač kreslený volnou rukou (free) JE tah. Starší uložené zvýrazňovače
+  // bez poly a bez x1 byly taky tahy — berou se jako tah i po načtení.
+  return it.tool === 'highlighter'
+    && (it.free || (Array.isArray(it.points) && it.points.length && !it.poly && it.x1 == null));
 }
 function isText(it) {
   return it && it.tool === 'text';
@@ -9171,6 +9285,36 @@ async function deleteBookmark(b) {
 .ap-size span { font-size: 0.9rem; color: var(--text); line-height: 1; }
 .ap-size.on span { color: #fff; }
 .ap-size.on { border-color: var(--accent); }
+/* Způsob zvýrazňovače (3 body / Obdélník / Volně) — ploché segmenty přes celou
+   šířku řádku, stav jen podle vybrané volby (žádné hover efekty). */
+.ap-hl-modes { width: 100%; gap: 6px; }
+.ap-mode {
+  flex: 1 1 0; min-width: 0; height: 34px; padding: 0 6px;
+  box-sizing: border-box; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 0.8rem; font-family: inherit; line-height: 1;
+  cursor: pointer; touch-action: manipulation;
+}
+.ap-mode.on { border-color: var(--accent); color: var(--accent); }
+/* Select místo řady čísel (tloušťka pera 1–50 px) — plochý jako zbytek panelu. */
+.ap-select-row { width: 100%; gap: 8px; }
+.ap-select {
+  flex: 1 1 auto; min-width: 0; height: 34px; padding: 0 8px;
+  box-sizing: border-box; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg-elev2);
+  color: var(--text); font-size: 0.85rem; font-family: inherit;
+  touch-action: manipulation;
+}
+/* Číselné pole (Výška obdélníku zvýrazňovače) — stejný plochý rámeček. */
+.ap-num {
+  width: 76px; height: 34px; box-sizing: border-box; padding: 0 8px;
+  border-radius: 10px; border: 1px solid var(--border);
+  background: var(--bg-elev2); color: var(--text);
+  text-align: center; font-size: 0.9rem; font-family: inherit; line-height: 1;
+  -moz-appearance: textfield; appearance: textfield;
+}
+.ap-num::-webkit-outer-spin-button,
+.ap-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 /* Čísla taktů: vstup „další číslo" a hodnota velikosti. Ploché jako zbytek
    panelu — žádná karta, jen rámeček v barvě ostatních ovládacích prvků. */
 .ap-bar-next {
@@ -9190,7 +9334,8 @@ async function deleteBookmark(b) {
 .bar-hidden span { font-size: 0.82rem; color: var(--text); line-height: 1; }
 .bar-hidden.on { border-color: var(--accent); }
 .bar-hidden.on span { color: var(--accent); }
-.ap-hint { font-size: 0.72rem; color: var(--text-dim); line-height: 1.35; padding: 2px 2px 0; }
+.ap-hint { font-size: 0.72rem; color: var(--text-dim); line-height: 1.35; padding: 2px 2px 0;
+  max-width: 320px; white-space: normal; }
 .ap-delpage { font-size: 0.55rem; font-weight: 700; margin-left: 1px; }
 
 /* SAMOSTATNÉ malé okno čísel taktů (Jan, Nov 2026) — není součástí anotačního
