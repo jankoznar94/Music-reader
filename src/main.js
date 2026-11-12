@@ -16,9 +16,18 @@ resetLibraryState();
 // obnoví přímo pod rukami a to se nesmí dít“). Proto se tu ani nevolá
 // reg.update() — nový SW by se instaloval pod běžící stránkou.
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw-v2.js').catch(() => {});
-  });
+  if (import.meta.env.DEV) {
+    // Ve vývoji SW NEREGISTROVAT a starý rovnou odhlásit — jinak dev server
+    // servíruje starý bundle ze sw-v2.js a testy měří jinou verzi, než jakou
+    // má uživatel (naměřeno: str. 9 vracela 5 taktů místo 4).
+    navigator.serviceWorker.getRegistrations()
+      .then((rs) => rs.forEach((r) => r.unregister()))
+      .catch(() => {});
+  } else {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw-v2.js').catch(() => {});
+    });
+  }
 }
 
 // --- ZJIŠTĚNÍ nové verze (nic nenačítá) -------------------------------------

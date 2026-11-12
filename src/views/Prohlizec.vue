@@ -1061,9 +1061,12 @@
           </svg>
           <span>{{ barClearArmed ? 'Opravdu smazat?' : 'Smazat všechny' }}</span>
         </button>
+      </div>
+      <div class="bn-row">
         <!-- Jen TATO stránka: při opravě jedné rozbité stránky se nemusí mazat
-             číslování celé skladby (Jan, listopad 2026). -->
-        <button class="bn-clear" :class="{ armed: barClearPageArmed }" @click="clearPageBarNums"
+             číslování celé skladby (Jan, listopad 2026). Vlastní řádek — vedle
+             „Smazat všechny“ byla obě tlačítka namačkaná. -->
+        <button class="bn-clear bn-clear-wide" :class="{ armed: barClearPageArmed }" @click="clearPageBarNums"
                 :title="barClearPageArmed
                   ? 'Klepni znovu — smaže čísla taktů na této stránce'
                   : 'Smazat čísla taktů jen na této stránce (ostatní stránky zůstanou)'">
@@ -1071,7 +1074,7 @@
                stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8.5 15.5l7-7"/>
           </svg>
-          <span>{{ barClearPageArmed ? 'Opravdu tuto?' : 'Smazat tuto str.' }}</span>
+          <span>{{ barClearPageArmed ? 'Opravdu tuto?' : 'Smazat číslování této stránky' }}</span>
         </button>
       </div>
       <!-- SKOK NA TAKT — dřív v dialogu stránky, teď tady (Jan, listopad 2026):
@@ -2571,13 +2574,16 @@ async function _fillSystemAt(p) {
   // do kterého se kleplo, a očísluje se stejnou logikou jako klepnutí.
   const step = Math.max(1, Math.min(64, Number(barStep.value) || 1));
   const PPT = 5;
-  const dpr = window.devicePixelRatio || 1;
-  let outW = pw * PPT / dpr, outH = ph * PPT / dpr;
+  // Detekce MUSÍ být na zařízení nezávislá — plátno se proto kreslí vždy s dpr 1
+  // (jinak tablet s dpr 2 vykreslí stránku jinak a vyjdou jiné počty taktů;
+  // naměřeno Mozart str. 9: 5 taktů na dpr 2 vs 4 takty na dpr 1).
+  const dpr = 1;
+  let outW = pw * PPT, outH = ph * PPT;
   const MAX_PX = 12e6;
-  const areaPx = outW * outH * dpr * dpr;
+  const areaPx = outW * outH;
   if (areaPx > MAX_PX) { const k = Math.sqrt(MAX_PX / areaPx); outW *= k; outH *= k; }
   const cv = document.createElement('canvas');
-  await renderPageRegion(song, page + 1, cv, { x: 0, y: 0, w: pw, h: ph }, outW, outH);
+  await renderPageRegion(song, page + 1, cv, { x: 0, y: 0, w: pw, h: ph }, outW, outH, { dpr: 1 });
   const pxPerPt = cv.width / pw;
   const dpg = detectPageSystems(cv, pxPerPt, { krok: step, numXs: numIdx });
   // Vybraný systém = ten, který obsahuje klepnutí; jinak nejbližší.
@@ -2742,13 +2748,16 @@ async function _fillPageAt() {
   // proskenovávala po 14 bodech a každé kolo si osnovy seskupilo jinak, takže
   // se jeden systém očísloval dvakrát (čísla se opakovala) nebo se dva slily.
   const PPT = 5;
-  const dpr = window.devicePixelRatio || 1;
-  let outW = pw * PPT / dpr, outH = ph * PPT / dpr;
+  // Detekce MUSÍ být na zařízení nezávislá — plátno se proto kreslí vždy s dpr 1
+  // (jinak tablet s dpr 2 vykreslí stránku jinak a vyjdou jiné počty taktů;
+  // naměřeno Mozart str. 9: 5 taktů na dpr 2 vs 4 takty na dpr 1).
+  const dpr = 1;
+  let outW = pw * PPT, outH = ph * PPT;
   const MAX_PX = 12e6;
-  const areaPx = outW * outH * dpr * dpr;
+  const areaPx = outW * outH;
   if (areaPx > MAX_PX) { const k = Math.sqrt(MAX_PX / areaPx); outW *= k; outH *= k; }
   const cv = document.createElement('canvas');
-  await renderPageRegion(song, page + 1, cv, { x: 0, y: 0, w: pw, h: ph }, outW, outH);
+  await renderPageRegion(song, page + 1, cv, { x: 0, y: 0, w: pw, h: ph }, outW, outH, { dpr: 1 });
   const pxPerPt = cv.width / pw;
   const ctxPage = cv.getContext('2d', { willReadFrequently: true });
   // Kolik inkoustu je ve výřezu (zlomek plochy) — slouží jen k hledání volného
@@ -9280,6 +9289,9 @@ async function deleteBookmark(b) {
 }
 .bn-clear svg { display: block; flex: 0 0 auto; }
 .bn-clear span { white-space: nowrap; }
+/* Samostatný řádek pro „Smazat číslování této stránky“ — přes celou šířku
+   panelu, aby text nebyl namačkaný vedle „Smazat všechny“ (Jan, listopad 2026). */
+.bn-clear-wide { width: 100%; height: 32px; font-size: 0.8rem; }
 .bn-clear.armed { background: #e0836f; border-color: #e0836f; color: #17130f; }
 .bn-hint { font-size: 0.66rem; color: var(--text-dim); line-height: 1.3; }
 /* Dočíslování CELÉ STRÁNKY — ploché tlačítko přes celou šířku panelu (v hlavičce

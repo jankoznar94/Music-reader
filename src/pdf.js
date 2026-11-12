@@ -78,10 +78,15 @@ export async function renderPage(song, pageNum, canvas, renderScale = 900) {
  * @param {number} outW cílová šířka v CSS px
  * @param {number} outH cílová výška v CSS px
  */
-export async function renderPageRegion(song, pageNum, canvas, crop, outW, outH) {
+export async function renderPageRegion(song, pageNum, canvas, crop, outW, outH, opts = {}) {
   const doc = await getDoc(song);
   const page = await doc.getPage(pageNum);
-  const devicePixelRatio = window.devicePixelRatio || 1;
+  // `opts.dpr` = pevné měřítko plátna. Detekce taktových čar MUSÍ být na
+  // zařízení nezávislá: s window.devicePixelRatio se stejná stránka vykreslí
+  // jinak (jiné zaokrouhlení/antialiasing) a na tabletu s dpr 2 vycházely jiné
+  // počty taktů než na dpr 1 (naměřeno Mozart str. 9: 5 taktů vs 4). Proto
+  // detekční volání předávají dpr: 1.
+  const devicePixelRatio = opts.dpr != null ? opts.dpr : (window.devicePixelRatio || 1);
   const s = outW / crop.w;                      // CSS px na PDF bod
   const viewport = page.getViewport({ scale: s });
 
