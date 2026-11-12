@@ -1232,7 +1232,18 @@
                Tlačítko svítí JEN když je vybraný notový nástroj — jako každé
                jiné tlačítko řady (žádný nástroj nesvítí dva najednou). -->
           <button class="ap-tool nota-tool" @click="toggleNotaGroup" :class="{ on: isNotaTool }" title="Noty a značky — crescendo, dynamika, posuvky, vkládání not">
-            <span class="dyn-ico nota-ico">{{ noteGlyph('ctvrt_h').text }}</span>
+            <!-- Dvě osminy spojené linkou (pár) — Jan, Nov 2026: „ikonu nástroje
+                 Značky změníme na jinou notu, teď jsou pod sebou dvě tlačítka se
+                 stejným obrázkem“. Skládá se ze DVOU glyfů čtvrťové noty z fontu
+                 (hlavička + nožička, bez praporku) a jedné linky mezi špičkami
+                 nožiček — font NotyDyn pár osmin nemá (76 glyfů, žádné trámce). -->
+            <svg class="ico-pair nota-ico" viewBox="-0.06 -1.06 1.02 1.26" aria-hidden="true">
+              <g fill="currentColor">
+                <text x="0" y="0" font-size="1" font-family="'NotyDyn', serif">{{ noteGlyph('ctvrt_h').text }}</text>
+                <text x="0.55" y="0" font-size="1" font-family="'NotyDyn', serif">{{ noteGlyph('ctvrt_h').text }}</text>
+                <rect x="0.302" y="-0.995" width="0.58" height="0.12" />
+              </g>
+            </svg>
           </button>
           <button class="ap-tool" @click="setTool('edit')" :class="{ on: tool === 'edit' }" title="Upravit / přesunout text či dynamiku"><span class="ap-glyph emoji">✋</span></button>
         </div>
@@ -1410,8 +1421,9 @@
                 @click="toggleNoteFlip(editingAnnot, 'y')"
                 title="Svisle — nožička nahoru/dolů">Svisle</button>
       </div>
-      <!-- Pomocné linky UŽ VLOŽENÉ noty — jinak by se musela smazat a vložit znovu. -->
-      <div v-if="editingAnnot && editingAnnot.tool === 'note'"
+      <!-- Pomocné linky UŽ VLOŽENÉ noty — jinak by se musela smazat a vložit znovu.
+           POMLKY linky nemají (Jan, Nov 2026) — řádek se u nich vůbec neukáže. -->
+      <div v-if="editingAnnot && editingAnnot.tool === 'note' && !isRestKey(editingAnnot.text)"
            class="eb-row eb-row-frame">
         <span class="eb-size">Linky</span>
         <button v-for="n in 4" :key="'lg' + n" class="eb-chip"
@@ -1456,7 +1468,7 @@
     <div v-if="editingAnnotationId" class="text-input-overlay"
          @pointerdown.capture="dialogArmed = true"
          @click.capture="onDialogClickCapture">
-      <div class="text-input-card">
+      <div class="text-input-card" :class="{ 'ti-card-note': editingAnnotTool === 'note' }">
         <span class="ti-label">{{ editingAnnotTool === 'dynamic' ? 'Dynamika' : editingAnnotTool === 'mark' ? 'Značka' : editingAnnotTool === 'note' ? 'Nota' : 'Text' }}</span>
 
         <!-- Rychlý výběr: klepni na dynamiku, vyplní se do pole (a rovnou se uloží) -->
@@ -1489,9 +1501,12 @@
           </div>
         </template>
 
-        <!-- Vkládání not — dlaždice rozdělené do sekcí (noty / pomlky). Stejná
-             dlaždice i stejná past: reaguje na POLOŽENÍ, ne na `click`. -->
-        <template v-if="editingAnnotTool === 'note'">
+        <!-- OKNO VKLÁDÁNÍ NOTY JE DVOU SLOUPCŮ (Jan, Nov 2026): VLEVO dlaždice
+             a nastavení (velikost, tečka, zrcadlení, linky), VPRAVO náhled přes
+             celou pravou část okna — čárkovaný rám, světlé písmo i border.
+             Dlaždice reagují na POLOŽENÍ, ne na `click`. -->
+        <div v-if="editingAnnotTool === 'note'" class="ti-note-body">
+          <div class="ti-note-left">
           <div v-for="g in NOTE_GROUPS" :key="g.label" class="mark-sec">
             <div class="mark-sec-label">{{ g.label }}</div>
             <div class="dyn-grid">
@@ -1507,51 +1522,17 @@
               >{{ noteGlyphFor(n.key, noteFlipY).text }}</span></button>
             </div>
           </div>
-        </template>
 
-        <input
-          v-model="annotTextDraft"
-          class="ti-input"
-          :placeholder="editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : editingAnnotTool === 'mark' ? 'vyber značku z nabídky výše' : editingAnnotTool === 'note' ? 'vyber notu z nabídky výše' : 'Text poznámky'"
-          @keydown.enter="confirmTextAnnot"
-        />
-
-        <!-- Velikost textu JEŠTĚ PŘED vložením. Dřív se dala upravit až po vložení
-             (nástrojem Ruka), takže uživatel musel vkládat „naslepo“ a pak
-             dohánět velikost. Volba se pamatuje i pro příští vložení a náhled
-             „Aa“ ukazuje skutečnou velikost, jakou text dostane. -->
-        <!-- Velikost noty se volí TADY, ještě před vložením — nota musí sedět na
-             velikost osnovy v notách a ta je u každé skladby jiná. Náhled ukazuje
-             skutečný glyf v této velikosti (co uživatel dostane). -->
-        <div v-if="editingAnnotTool === 'note'" class="ti-size-row">
+          <!-- Velikost noty se volí TADY, ještě před vložením — nota musí sedět
+               na velikost osnovy v notách a ta je u každé skladby jiná. -->
+          <div class="ti-size-row">
           <span class="ti-size-label">Velikost</span>
           <button class="ti-size-btn" @click="bumpNoteSize(-1)" title="Menší nota">−</button>
           <span class="ti-size-val">{{ noteSizeDraft }}</span>
           <button class="ti-size-btn" @click="bumpNoteSize(1)" title="Větší nota">+</button>
-          <!-- Náhled noty: glyf včetně zrcadlení, tečka i pomocné linky — přesně
-               to, co se vloží. Stejná geometrie jako v notách, jen zmenšená. -->
-          <span class="ti-size-sample">
-            <svg class="nota-nahled" :viewBox="notePreview.vb"
-                 :style="{ height: notePreview.h + 'px' }"
-                 preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-              <line v-for="(l, i) in notePreview.lines" :key="'nl' + i"
-                    :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2"
-                    :stroke="notePreview.it.color" :stroke-width="notePreview.stroke"
-                    stroke-linecap="butt" />
-              <text :x="0" :y="0" :transform="notePreview.transform"
-                    :fill="notePreview.it.color" :stroke="notePreview.it.color"
-                    :stroke-width="notePreview.stroke" paint-order="stroke"
-                    :font-size="notePreview.it.size" font-family="'NotyDyn', serif"
-                    text-anchor="middle">{{ notePreview.glyph }}</text>
-              <circle v-if="notePreview.dot"
-                      :cx="notePreview.dot.cx" :cy="notePreview.dot.cy" :r="notePreview.dot.r"
-                      :fill="notePreview.it.color" :stroke="notePreview.it.color"
-                      :stroke-width="notePreview.stroke" />
-            </svg>
-          </span>
         </div>
 
-        <div v-if="editingAnnotTool === 'note'" class="ti-row">
+        <div class="ti-row">
           <span class="ti-size-label">Tečka</span>
           <button class="ti-toggle" :class="{ on: noteDotDraft }" @click="toggleNoteDotDraft()"
                   title="Tečkovaný rytmus — čtvrtka s tečkou, půlka s tečkou…">Tečkovaný rytmus</button>
@@ -1561,7 +1542,7 @@
              stranu) i svisle (nožička nahoru/dolů). Zrcadlí se KOLEM UKOTVENÍ, takže
              hlavička zůstane přesně v místě klepnutí. Volba se NEPAMATUJE: zrcadlení
              je vlastnost jedné noty, ne skladby (velikost naopak ano). -->
-        <div v-if="editingAnnotTool === 'note'" class="ti-row">
+        <div class="ti-row">
           <span class="ti-size-label">Zrcadlení</span>
           <button class="ti-toggle" :class="{ on: noteFlipX }" @click="toggleFlip('x')"
                   title="Vodorovně — nožička i praporek na druhou stranu">Vodorovně</button>
@@ -1571,8 +1552,9 @@
 
         <!-- Pomocné (příčné) linky: nota mimo osnovu (nad ní nebo pod ní) je
              potřebuje. Aplikace neví, kde osnova je — nota se klade volně — takže
-             počet linek, stranu i „nota v mezeře“ určuje uživatel (Jan, Nov 2026). -->
-        <div v-if="editingAnnotTool === 'note'" class="ti-row">
+             počet linek, stranu i „nota v mezeře“ určuje uživatel (Jan, Nov 2026).
+             POMLKY linky NEMAJÍ (Jan, Nov 2026) — nemají nožičku ani výšku. -->
+        <div v-if="!isRestKey(annotTextDraft)" class="ti-row">
           <span class="ti-size-label">Linky</span>
           <button class="ti-size-btn" @click="bumpLedgers(-1)" title="Ubrat pomocnou linku">−</button>
           <span class="ti-size-val">{{ noteLedgersDraft }}</span>
@@ -1584,11 +1566,47 @@
                     title="Linky jdou od noty dolů (nota je nad osnovou)">Dolů</button>
           </template>
         </div>
-        <div v-if="editingAnnotTool === 'note' && noteLedgersDraft > 0" class="ti-row">
+        <div v-if="!isRestKey(annotTextDraft) && noteLedgersDraft > 0" class="ti-row">
           <span class="ti-size-label">Poloha</span>
           <button class="ti-toggle" :class="{ on: noteLedgerGapDraft }" @click="toggleLedgerGap()"
                   title="Nota neleží na lince, ale v mezeře mezi linkami — první pomocná linka je o půl mezery dál">Nota v mezeře</button>
         </div>
+            </div><!-- /ti-note-left -->
+
+            <!-- NÁHLED: celá pravá část okna, čárkovaný rám a světlé písmo.
+                 Kreslí se stejnou geometrií jako nota v notách, jen s pevným
+                 měřítkem (viz notePreview) — proporce hodnot zůstávají. -->
+            <div class="ti-note-prev">
+              <svg class="nota-nahled" :viewBox="notePreview.vb"
+                   :style="{ width: notePreview.w + 'px', height: notePreview.h + 'px' }"
+                   preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+                <line v-for="(l, i) in notePreview.lines" :key="'nl' + i"
+                      :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2"
+                      :stroke="notePreview.it.color" :stroke-width="notePreview.stroke"
+                      stroke-linecap="butt" />
+                <text :x="0" :y="0" :transform="notePreview.transform"
+                      :fill="notePreview.it.color" :stroke="notePreview.it.color"
+                      :stroke-width="notePreview.stroke" paint-order="stroke"
+                      :font-size="notePreview.it.size" font-family="'NotyDyn', serif"
+                      text-anchor="middle">{{ notePreview.glyph }}</text>
+                <circle v-if="notePreview.dot"
+                        :cx="notePreview.dot.cx" :cy="notePreview.dot.cy" :r="notePreview.dot.r"
+                        :fill="notePreview.it.color" :stroke="notePreview.it.color"
+                        :stroke-width="notePreview.stroke" />
+              </svg>
+            </div>
+          </div><!-- /ti-note-body -->
+
+        <!-- Ruční zadání klíče. U NOT SE NEPOUŽÍVÁ — nota se vybírá dlaždicí
+             a pole jen ukazovalo technický klíč („ctvrt_h“), takže v okně noty
+             není (Jan, Nov 2026: „vždy by toho mělo být vidět minimum“). -->
+        <input
+          v-if="editingAnnotTool !== 'note'"
+          v-model="annotTextDraft"
+          class="ti-input"
+          :placeholder="editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : editingAnnotTool === 'mark' ? 'vyber značku z nabídky výše' : 'Text poznámky'"
+          @keydown.enter="confirmTextAnnot"
+        />
 
         <div v-if="editingAnnotTool === 'text'" class="ti-size-row">
           <span class="ti-size-label">Velikost</span>
@@ -1666,9 +1684,9 @@
         <span v-if="editingAnnotTool === 'note' && annotTextDraft.trim() && !noteGlyph(annotTextDraft).known" class="ti-warn">
           Tuhle notu font nezná — vyber ji z nabídky výše.
         </span>
-        <span v-else-if="editingAnnotTool === 'note' && noteLabel(annotTextDraft, noteDotDraft)" class="ti-note">
-          {{ noteLabel(annotTextDraft, noteDotDraft) }}
-        </span>
+        <!-- Název noty malým písmem dole UŽ NENÍ (Jan, Nov 2026: „úplně dole já
+             malým písmem název noty. To bych smazal.“) — název je vidět
+             v nabídce dlaždic a tvar v náhledu, řádek jen zabíral místo. -->
 
         <div class="ti-actions">
           <button class="jp-btn" @click="cancelTextAnnot">Zrušit</button>
@@ -3354,8 +3372,16 @@ function toggleLedgerGapOf(it) {
 // vkládat, ještě než to reálně vloží“). Dřív to byl jen glyf — teď je v náhledu
 // i tečka tečkovaného rytmu a pomocné linky, zrcadlení i barva.
 // Kreslí se jako SVG ve STEJNÉ geometrii jako v notách (`noteLedgers`,
-// `noteDot`, `noteStroke`, `noteFlipTransform`), takže náhled nelže: viewBox je
-// skutečný otisk noty (i s linkami a tečkou) a teprve ten se vejde do okna.
+// `noteDot`, `noteStroke`, `noteFlipTransform`).
+// ⚠️ MĚŘÍTKO JE PEVNÉ PRO VŠECHNY HODNOTY (Jan, Nov 2026: „celá nota je
+// v náhledu o hodně větší než ostatní, měla by být proporčně stejně“). Dřív se
+// viewBox počítal z OTISKU konkrétní noty a náhled se natáhl na pevnou výšku —
+// celá nota (nízký otisk) proto měla hlavičku 3× větší než nota s nožičkou.
+// Teď platí 1 em noty = NOTE_PREVIEW_EM_PX px a viewBox se jen ROZŠIŘUJE, když
+// nota potřebuje víc místa (pomocné linky, zrcadlení). Velikost noty se přitom
+// nemění — roste jen plátno, do kterého je nakreslená.
+const NOTE_PREVIEW_EM_PX = 120;   // ~1,2 em vysoké plátno ≈ 145 px
+const NOTE_PREVIEW_MIN_EM = { x0: -0.42, y0: -0.95, x1: 0.72, y1: 0.25 };
 const notePreview = computed(() => {
   const s = noteSizeDraft.value;
   const key = String(annotTextDraft.value || '').trim() || 'ctvrt_h';
@@ -3368,18 +3394,24 @@ const notePreview = computed(() => {
     ledgerGap: noteLedgerGapDraft.value,
   };
   const ink = noteInkBox(it) || { x: -s / 2, y: -s / 2, w: s, h: s };
-  const pad = Math.max(2, s * 0.16);   // dýchání kolem noty (nožička nesmí lepit na okraj)
-  const vb = {
-    x: ink.x - pad, y: ink.y - pad,
-    w: Math.max(ink.w + 2 * pad, 1), h: Math.max(ink.h + 2 * pad, 1),
-  };
+  // Společné minimum plátna (v px) + otisk konkrétní noty s malým dýcháním.
+  // Plátno se NIKDY nezmenšuje pod minimum (aby měřítko drželo stejné) a otisk
+  // se v něm VŽDY vycentruje — jinak nota sedí nízko, protože minimum počítá
+  // s místem pro nožičku nahoru.
+  const pad = Math.max(1, s * 0.05);
+  const vbW = Math.max(NOTE_PREVIEW_MIN_EM.x1 * s - NOTE_PREVIEW_MIN_EM.x0 * s, ink.w + 2 * pad);
+  const vbH = Math.max(NOTE_PREVIEW_MIN_EM.y1 * s - NOTE_PREVIEW_MIN_EM.y0 * s, ink.h + 2 * pad);
+  const cx = ink.x + ink.w / 2;
+  const cy = ink.y + ink.h / 2;
+  const x0 = cx - vbW / 2;
+  const y0 = cy - vbH / 2;
   return {
     it,
-    vb: `${vb.x.toFixed(2)} ${vb.y.toFixed(2)} ${vb.w.toFixed(2)} ${vb.h.toFixed(2)}`,
-    // Výška náhledu: dost velká na to, aby byly vidět tečka i pomocné linky
-    // (při skutečné velikosti noty 30 px to bylo 28×36 px a detaily se ztrácely),
-    // ale omezená, aby okno nerostlo. Šířku dopočítá poměr stran z viewBoxu.
-    h: Math.min(96, Math.max(56, s * 1.7)),
+    vb: `${x0.toFixed(2)} ${y0.toFixed(2)} ${vbW.toFixed(2)} ${vbH.toFixed(2)}`,
+    // Rámeček náhledu dostane skutečnou velikost v px → měřítko (px na em) je
+    // stejné pro každou notu, jen plátno je podle potřeby větší.
+    w: Math.round((vbW / s) * NOTE_PREVIEW_EM_PX),
+    h: Math.round((vbH / s) * NOTE_PREVIEW_EM_PX),
     glyph: noteGlyphFor(key, noteFlipY.value).text,
     transform: noteFlipTransform(it),
     stroke: noteStroke(it),
@@ -3608,6 +3640,12 @@ function noteGlyphFor(raw, flipY) {
   return { text: String.fromCodePoint(it.cp), known: true };
 }
 function noteGlyph(raw) { return noteGlyphFor(raw, false); }
+// Je to POMLKA? Pomlky nemají pomocné linky (Jan, Nov 2026: „pomlky nemusí mít
+// možnost linek“) — linky patří notám, které leží mimo osnovu. Klíč pomlky
+// začíná „poml“, takže se to pozná i po výměně směru nožičky.
+function isRestKey(raw) {
+  return /^poml/i.test(String(raw == null ? '' : raw).trim());
+}
 function noteLabel(raw, dot) {
   const it = NOTE_LOOKUP.get(String(raw || '').trim().toLowerCase());
   if (!it) return '';
@@ -3619,7 +3657,11 @@ function noteLabel(raw, dot) {
 // tahem jako nota — výsledek vypadá jako součást glyfu. Poloha je v datech
 // (`dotAt`), takže dlaždice, náhled, kreslení, výběr i vypálení do PDF počítají
 // z jednoho čísla.
-const NOTE_DOT_R_EM = 0.1;
+// Průměr tečky je v notách ~0,4 notové mezery (0,1 em), tedy POLOMĚR 0,05 em.
+// Dřív tu bylo 0,1 em (průměr 0,8 mezery), takže tečka byla skoro tak velká jako
+// hlavička noty (Jan, Nov 2026: „šla by tečka u not trochu zmenšit?“).
+// Font NotyDyn tečku nemá, je to kruh — proto se ladí tady.
+const NOTE_DOT_R_EM = 0.06;
 function noteDotRaw(it) {
   if (!it || it.tool !== 'note' || !it.dot) return null;
   const n = NOTE_LOOKUP.get(noteEffKey(it.text, it.flipY));
@@ -3651,6 +3693,8 @@ const NOTE_LEDGER_STEP_EM = 0.25;   // jedna notová mezera (řádek osnovy → 
 const NOTE_LEDGER_HALF_EM = 0.30;   // přesah linky do stran od hlavičky
 function noteLedgers(it) {
   if (!it || it.tool !== 'note' || it.x == null || it.y == null) return [];
+  // Pomlka nemá nožičku ani výšku — pomocné linky u ní nemají smysl.
+  if (isRestKey(it.text)) return [];
   const n = Math.max(0, Math.min(NOTE_LEDGER_MAX, Math.round(Number(it.ledgers) || 0)));
   if (!n) return [];
   const s = it.size || noteSize.value;
@@ -9682,6 +9726,10 @@ async function deleteBookmark(b) {
 .ap-tool[title^='Vkládání not'] .dyn-ico { --glyph-nudge: 8.5px; }
 /* Tlačítko skupiny notových nástrojů má TAKÉ ikonu noty → stejný posun. */
 .ap-tool.nota-tool .dyn-ico { --glyph-nudge: 8.5px; }
+/* Ikona skupiny notových nástrojů = PÁR OSMIN (dvě noty + trámec) skládaný
+   z glyfů fontu. Je to SVG, takže se neposouvá přes `--glyph-nudge` — flex ho
+   vycentruje sám. Výška 24 px ≈ stejný otisk jako ostatní ikony v řadě. */
+.ico-pair { display: block; width: auto; height: 24px; overflow: visible; }
 .ap-size {
   width: 34px; height: 34px; flex: 0 0 auto; min-width: 0; padding: 0;
   border-radius: 50%; box-sizing: border-box;
@@ -10028,6 +10076,38 @@ async function deleteBookmark(b) {
 .ti-size-sample {
   flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end;
   height: 60px; overflow: hidden;
+}
+/* --- Okno VKLÁDÁNÍ NOTY: dva sloupce ---------------------------------------
+   VLEVO dlaždice a nastavení (velikost, tečka, zrcadlení, linky), VPRAVO náhled
+   přes celou pravou část okna. Náhled má ČÁRKOVANÝ rám a SVĚTLÉ písmo i border
+   (Jan, Nov 2026) — nota se sice vkládá inkoustem, ale v náhledu jde o tvar,
+   a inkoust na tmavém okně není vidět. Okno je širší než ostatní dialogy. */
+.text-input-card.ti-card-note {
+  width: 94vw; max-width: 760px; max-height: 92dvh; overflow-y: auto;
+}
+.ti-note-body {
+  display: grid; grid-template-columns: minmax(0, 300px) 1fr;
+  gap: 14px; align-items: stretch;
+}
+.ti-note-left { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ti-note-prev {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 170px; padding: 12px;
+  border: 2px dashed rgba(231, 226, 220, 0.38); border-radius: 14px;
+}
+/* Náhled v tomto okně nemá papírové podloží — rám dělá čárkovaný box a nota
+   je světlá stejně jako jeho okraj. */
+.ti-note-prev .nota-nahled {
+  background: none; border-radius: 0; padding: 0; box-sizing: border-box;
+  max-width: 100%; max-height: 100%;
+}
+.ti-note-prev .nota-nahled text, .ti-note-prev .nota-nahled circle {
+  fill: var(--text); stroke: var(--text);
+}
+.ti-note-prev .nota-nahled line { stroke: var(--text); }
+@media (max-width: 620px) {
+  .ti-note-body { grid-template-columns: 1fr; }
+  .ti-note-prev { min-height: 130px; }
 }
 /* Náhled velikosti: ukazuje SKUTEČNOU hodnotu font-size, jakou text dostane.
    Řádek má pevnou výšku, aby náhled velkých velikostí neroztlačil dialog;
