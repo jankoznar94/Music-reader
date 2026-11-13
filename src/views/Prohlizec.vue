@@ -8721,25 +8721,49 @@ const bmActiveId = computed(() => {
 });
 
 // Lišta se při skrytí (tap na střed not) z DOM vyhodí a znovu vytvoří —
-// scroll pozice by se tím ztratila (Jan, Nov 2026: „když se spodní bar schová
-// tapnutím na střed, resetuje se scroll pozice“). Držíme si proto poslední
-// scrollLeft a po znovuobjevení lišty ho vrátíme.
+// scroll pozice by se tím ztratila. Držíme proto poslední scrollLeft a po
+// znovuobjevení ho vrátíme. Pokud se ale zatím listovalo (lišta schovaná =
+// nemohla se vycentrovat), po zobrazení se AKTIVNÍ záložka vycentruje —
+// Jan, Nov 2026: „aktivní záložka by měla být na středu, pokud je to možné“.
 let _bmStripScroll = 0;
+let _bmCenterOnShow = true;   // první vložení lišty → hned vycentrovat
 function bmStripOnScroll() {
   const el = bmStripEl.value;
   // Odpojený element hlásí scrollLeft 0 — z takového čtení by se pozice
   // „resetovala“ přesně ve chvíli, kdy lištu schováváme.
   if (el && el.isConnected) _bmStripScroll = el.scrollLeft;
 }
+// Vycentrovat aktivní záložku v liště; na krajích se posun zastaví o doraz.
+// false = není co centrovat (vše se vejde / .on ještě v DOM není / bez layoutu).
+function bmCenterActive(strip, smooth) {
+  if (!strip || !strip.isConnected) return false;
+  const el = strip.querySelector('.bookmark-btn.on');
+  if (!el) return false;
+  const max = strip.scrollWidth - strip.clientWidth;
+  if (max <= 0) return false;
+  const s = strip.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  const delta = (r.left + r.width / 2) - (s.left + strip.clientWidth / 2);
+  const target = Math.min(max, Math.max(0, strip.scrollLeft + delta));
+  if (Math.abs(target - strip.scrollLeft) < 2) return true;
+  if (smooth) strip.scrollTo({ left: target, behavior: 'smooth' });
+  else strip.scrollLeft = target;
+  return true;
+}
 watch(bmStripEl, (el) => {
   if (!el) return;                          // mizí → pozice už je uložená
   let tries = 0;
   const restore = () => {
     if (!el.isConnected) return;
-    const max = Math.max(0, el.scrollWidth - el.clientWidth);
-    // První frame po vložení do DOM ještě nemusí mít layout (max = 0) —
+    // První frame po vložení do DOM ještě nemusí mít layout (scrollWidth = 0) —
     // bez pár pokusů by se pozice „vrátila“ na 0.
-    if (max === 0 && _bmStripScroll > 0 && tries < 12) { tries++; requestAnimationFrame(restore); return; }
+    if (el.scrollWidth === 0 && tries < 12) { tries++; requestAnimationFrame(restore); return; }
+    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+    if (_bmCenterOnShow && max > 0) {
+      if (bmCenterActive(el, false)) { _bmCenterOnShow = false; _bmStripScroll = el.scrollLeft; return; }
+      if (tries < 12) { tries++; requestAnimationFrame(restore); return; }  // .on ještě není v DOM
+    }
+    _bmCenterOnShow = false;
     el.scrollLeft = Math.max(0, Math.min(max, _bmStripScroll));
     if (Math.abs(el.scrollLeft - _bmStripScroll) > 1 && tries < 12) { tries++; requestAnimationFrame(restore); }
   };
@@ -8753,18 +8777,10 @@ watch(bmActiveId, async (id) => {
   if (!id) return;
   await nextTick();
   const strip = bmStripEl.value;
-  if (!strip) return;
-  const el = strip.querySelector('.bookmark-btn.on');
-  if (!el) return;
-  const s = strip.getBoundingClientRect();
-  const r = el.getBoundingClientRect();
-  const delta = (r.left + r.width / 2) - (s.left + s.width / 2);
-  if (Math.abs(delta) < 4) return;                 // už je na středu
-  const max = strip.scrollWidth - strip.clientWidth;
-  if (max <= 0) return;                            // vše se vejde
-  const target = Math.min(max, Math.max(0, strip.scrollLeft + delta));
-  if (Math.abs(target - strip.scrollLeft) < 2) return;
-  strip.scrollTo({ left: target, behavior: 'smooth' });
+  // Lišta je schovaná → vycentrujeme až ve chvíli, kdy se zase objeví.
+  if (!strip) { _bmCenterOnShow = true; return; }
+  if (bmCenterActive(strip, true)) _bmCenterOnShow = false;
+  else _bmCenterOnShow = true;
 });
 
 // --- Listování podle záložek (koncertní pořadí) ---
