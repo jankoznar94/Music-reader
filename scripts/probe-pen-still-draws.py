@@ -59,12 +59,8 @@ async def main():
     h = await fresh_harness()
     async with h:
         await h.open()
-        try:
-            await h.ev("indexedDB.deleteDatabase('noty-app')")
-        except Exception:
-            pass
-        await asyncio.sleep(0.6)
-        await h.open()
+        # DB se NEMAŽE (deleteDatabase nechá pending delete a všechna další
+        # indexedDB.open visí → upload skončí na 0/1). Test jede na čistém profilu.
         await h.open_song(pages=6, reset=False)
 
         await h.ev("document.querySelector('.tb-btn[title=%s]').click()" % json.dumps(ANNOT))

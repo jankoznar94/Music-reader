@@ -124,7 +124,7 @@ async def main():
     pdf = m.make_pdf(PAGES)
     async with (Harness(url=APP) if APP else Harness()) as h:
         await h.open()
-        await h.open_song(pdf, reset=True)
+        await h.open_song(pdf, reset=os.environ.get("NOTY_RESET_DB") == "1")
         await h.ev(SEED)
         # reload, ať se záložky načtou z IndexedDB jako po restartu appky
         await h.cdp("Page.reload")
