@@ -1711,6 +1711,7 @@ import { dbGetSong, dbSaveSong, dbSaveAnnotations, dbGetAnnotations, dbGetGroup,
 import { renderPage, renderPageRegion, getPageWidthHeight, getPageCount, readBarNumbers, readPageTextNumbers } from '../pdf.js';
 import { ocrDigitsFromCanvas, ocrDigitsPerCell, binarizeCanvas, findDigitClusters, cropCanvas, inkBox, normalizeForOcr } from '../ocrDigits.js';
 import { detectBarlines, detectPageSystems } from '../barLines.js';
+import { detectMultiRests } from '../multiRest.js';
 
 import { analyzeContent } from '../contentBounds.js';
 // share.js (pdf-lib + zip) se načítá až při exportu — jinak by ~0,5 MB
@@ -3022,12 +3023,18 @@ async function _fillPageAt() {
     .filter(o => Number.isFinite(o.n) && o.n > 0)
     .sort((a, b) => a.yPdf - b.yPdf);
   const items = [];
+  // Čísla z textové vrstvy PDF — z nich se pozná vícetaktová pomlka (velké
+  // tučné číslo nad prázdným taktem, viz src/multiRest.js). Skeny textovou
+  // vrstvu nemají → seznam je prázdný a počítá se jako dřív.
+  let printedAll = [];
+  try { printedAll = await readPageTextNumbers(song, page + 1); } catch (e) { printedAll = []; }
   // Odkud navazuje číslování: poslední známý index PŘED stránkou (ne pole
   // „Další“) — Jan, listopad 2026: „první systém začalo číslovat podle pole
   // Další a ne podle posledního indexu předchozí stránky“.
   const prevPageIdx = lastBarIndexBefore(page);
   let prevLast = prevPageIdx != null ? prevPageIdx : null;
   let withFirst = 0, fromIndex = 0, resync = 0, mismatch = 0;
+  const rests = [];      // [{ bar: <číslo taktu pomlky>, count }] pro hlášku
   for (const d of systems) {
     const sp = Number.isFinite(d.spacePt) ? d.spacePt : 4;
     const bandTop = d.sysTop - 6 * sp, bandBot = d.sysTop + 1 * sp;
@@ -3041,18 +3048,41 @@ async function _fillPageAt() {
     if (first != null && prevLast != null && first !== prevLast + 1) resync++;
     const firstX = Number.isFinite(d.openingPt) ? d.openingPt
       : (Number.isFinite(d.staffLeftPt) ? d.staffLeftPt + 2 * sp : d.lines[0] - 40);
-    let nums, xs;
+    // Taktové SLOUPCE systému (mezi první čarou a koncem sazby) a kolik taktů
+    // každý zabírá: vícetaktová pomlka jich zabírá N, ne jeden.
+    const closeX = Number.isFinite(d.closingPt) ? d.closingPt
+      : (Number.isFinite(d.staffRightPt) ? d.staffRightPt : d.lines[d.lines.length - 1] + 100);
+    const bx = [firstX].concat(d.lines, [closeX]);
+    const bars = [];
+    for (let i = 0; i + 1 < bx.length; i++) bars.push({ x0: bx[i], x1: bx[i + 1] });
+    const span = bars.map(() => 1);
+    for (const r of detectMultiRests(cv, pxPerPt, { top: d.sysTop, bot: d.sysBot }, bars,
+                                     { sp, printed: printedAll })) {
+      if (span[r.i] != null) span[r.i] = r.count;
+    }
+    let cur;
     if (first != null) {
       fromIndex++;
-      nums = d.lines.map((_, i) => first + 1 + i);
-      xs = d.lines;
-      prevLast = first + d.lines.length;
+      cur = first;
     } else {
-      first = prevLast != null ? prevLast + 1 : Math.max(1, Number(barNext.value) || 1);
       withFirst++;
-      nums = [first].concat(d.lines.map((_, i) => first + 1 + i));
+      cur = prevLast != null ? prevLast + 1 : Math.max(1, Number(barNext.value) || 1);
+    }
+    // Číslo každého sloupce + skok za pomlkou (29 s číslem 6 → další 35).
+    const barNums = [];
+    for (let i = 0; i < bars.length; i++) {
+      barNums.push(cur);
+      if (span[i] > 1) rests.push({ bar: cur, count: span[i] });
+      cur += span[i];
+    }
+    prevLast = cur - 1;
+    let nums, xs;
+    if (first != null) {
+      nums = barNums.slice(1);        // první takt má vytištěné číslo
+      xs = d.lines;
+    } else {
+      nums = barNums;
       xs = [firstX].concat(d.lines);
-      prevLast = first + d.lines.length;
     }
     // Počet taktů systému = vnitřní čáry + 1 (první takt existuje vždy, ať má
     // vytištěné číslo nebo ne). „Krok“ je jen kontrola, do výpočtu nevstupuje.
@@ -3084,11 +3114,13 @@ async function _fillPageAt() {
                             resync, mismatch, count: items.length,
                             first: Number(items[0].text),
                             last: Number(items[items.length - 1].text),
+                            rests,
                             sys: systems.map(d => [Math.round(d.sysTop), Math.round(d.sysBot),
                                                     d.stavesFound, d.bars, d.lines.length]) } });
   const warn = [];
   if (resync) warn.push(resync + '× srovnáno podle vytištěného čísla');
   if (mismatch) warn.push(mismatch + '× Krok nesedí (platí čáry)');
+  if (rests.length) warn.push(rests.map(r => 'pomlka ' + r.bar + '×' + r.count).join(', '));
   showToast('Stránka ' + page + ': ' + systems.length + ' systémů → ' + items.length
     + ' čísel (' + items[0].text + '–' + items[items.length - 1].text + ')'
     + (warn.length ? ' · ' + warn.join(', ') : '')
