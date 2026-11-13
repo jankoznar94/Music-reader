@@ -80,6 +80,21 @@ async def main():
         s0 = await st(h)
         ok("tlačítko A otevře panel Značky", s0["open"] is True, str(s0))
 
+        # Jan: „při vkládání značky se zapíná anotační mód — to bych nedělal.“
+        await h.ev("window.__barDev.startMarkPick()")
+        await asyncio.sleep(0.4)
+        am = await h.ev("(() => window.__barDev.annotMode.value)()")
+        ok("výběr místa značky NEZAPNE anotační mód", am is False, str(am))
+        ap = await h.ev("(() => !!document.querySelector('.annot-panel'))()")
+        ok("anotační panel se u výběru značky neotevře", ap is False, str(ap))
+        lay = await h.ev("(() => { const s=document.querySelector('.annot-layer');"
+                         " return getComputedStyle(s).pointerEvents; })()")
+        ok("vrstva při výběru značky ťuknutí přijme", lay == "auto", str(lay))
+        await h.ev("window.__barDev.startMarkPick()")   # přepínač zpět = zrušit
+        await asyncio.sleep(0.3)
+        am2 = await h.ev("(() => window.__barDev.annotMode.value)()")
+        ok("po zrušení výběru zůstává anotace vypnutá", am2 is False, str(am2))
+
         await add_mark(h, 0, "A")
         await add_mark(h, 2, "C")
         await add_mark(h, 4, "12")

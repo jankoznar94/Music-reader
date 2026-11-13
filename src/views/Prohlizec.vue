@@ -333,7 +333,7 @@
       <svg
         ref="layerSvgEl"
         class="annot-layer"
-        :class="{ active: annotMode || jumpPlaceMode }"
+        :class="{ active: annotMode || jumpPlaceMode || mkPickMode }"
         :width="cssW"
         :height="cssH"
         :viewBox="viewBoxStr"
@@ -6350,6 +6350,7 @@ function closeGesturePanels() {
 function onTap(e) {
   if (annotMode.value) return;
   if (jumpPlaceMode.value) return;   // probíhá umisťování — klepnutí patří vrstvě
+  if (mkPickMode.value) return;      // vybírá se místo značky — klepnutí patří vrstvě
   if (e.pointerType === 'pen') return;   // pero nikdy nelistuje
   if (blockedNav()) return;              // právě kreslilo pero → spíš dlaň než prst
   if (Date.now() < _palmUntil) return;   // opřená dlaň — její dotyk právě skončil
@@ -6384,7 +6385,7 @@ function toggleTopBar() {
   // Ťuknutí, kterým uživatel vybíral místo pro ZNAČKU, nesmí zároveň
   // schovat/ukázat lištu (a tím zavřít panel Značek) — dotyk dorazí i sem.
   if (Date.now() - _mkPickedAt < 600) return;
-  if (annotMode.value || jumpPlaceMode.value) return;   // v anotaci se kreslí
+  if (annotMode.value || jumpPlaceMode.value || mkPickMode.value) return;   // v anotaci se kreslí
   barHidden.value = !barHidden.value;
   try { localStorage.setItem('topbarHidden', barHidden.value ? '1' : '0'); } catch (e) {}
   if (barHidden.value) {
@@ -8623,7 +8624,6 @@ const mkInsertAt = ref(null);        // { page, x, y } — kam se značka vlož�
 const mkLabel = ref('');             // co uživatel opsal
 const mkJumpValue = ref('');
 const mkInputEl = ref(null);
-const mkWasAnnot = ref(false);       // zapnuli jsme anotaci kvůli ťuknutí?
 
 const marks = computed(() => (annotations.value.items || [])
   .filter(it => it && it.mk && Number.isFinite(Number(it.x)) && Number.isFinite(Number(it.y)))
@@ -8680,17 +8680,14 @@ function startMarkPick() {
   if (mkPickMode.value) { cancelMarkPick(); return; }
   mkPickMode.value = true;
   mkInsertAt.value = null;
-  // Vrstva musí přijímat ťuknutí → na dobu výběru zapneme anotaci
-  // (jinak je `.annot-layer` bez pointer-events a klepnutí propadne).
-  mkWasAnnot.value = annotMode.value;
-  annotMode.value = true;
+  // Vrstva musí ťuknutí přijmout, ale BEZ anotačního módu (Jan: „při vkládání
+  // značky se zapíná anotační mód, to bych nedělal“). `.annot-layer` dostane
+  // `active` (pointer-events: auto) přímo přes mkPickMode — viz :class výše.
   showToast('Ťukni na místo značky v notách', 4000);
 }
 function cancelMarkPick() {
   if (!mkPickMode.value) return;
   mkPickMode.value = false;
-  if (!mkWasAnnot.value) annotMode.value = false;
-  mkWasAnnot.value = false;
 }
 function cancelMarkInsert() {
   mkInsertAt.value = null;
@@ -8702,8 +8699,6 @@ function pickMarkAt(p) {
   _mkPickedAt = Date.now();
   mkInsertAt.value = { page: currentPage.value, x: Math.round(p.x), y: Math.round(p.y) };
   mkPickMode.value = false;
-  if (!mkWasAnnot.value) annotMode.value = false;
-  mkWasAnnot.value = false;
   mkLabel.value = '';
   showToast('Opis, co v notách stojí, a ulož', 4000);
   nextTick(() => { const el = mkInputEl.value; if (el) { el.focus(); el.select(); } });
