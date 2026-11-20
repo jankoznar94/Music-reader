@@ -377,8 +377,11 @@
                Rámeček se počítá ze STEJNÉ geometrie jako výběr rukou a hit-test
                (textBorderBox), aby rám seděl na text a prvek šel chytit uvnitř něj. -->
           <g v-else-if="isText(it)">
+            <!-- Značky (mk) mají rámec VŽDY — je to jejich označení; rámeček se
+                 počítá ze stejného (na bod vycentrovaného) otisku jako text,
+                 takže i on sedí středem na bodu ťuknutí (Jan, 20. 11. 2026). -->
             <rect
-              v-for="r in (it.border ? textBorderRects(it) : [])" :key="r.key"
+              v-for="r in ((it.border || it.mk) ? textBorderRects(it) : [])" :key="r.key"
               :x="r.x" :y="r.y" :width="r.width" :height="r.height"
               :stroke-dasharray="r.dash || undefined"
               class="text-border"
@@ -840,6 +843,11 @@
         <input v-model="mkJumpValue" class="jp-input" placeholder="Skok na značku (A, B, 12…)"
                @keydown.enter="goToTypedMark" />
         <button class="jp-btn primary" @click="goToTypedMark">Jdi</button>
+      </div>
+      <div class="jp-row">
+        <span class="jp-lbl">Velikost</span>
+        <button v-for="s in MARK_SIZES" :key="s.k" class="jp-btn sm" :class="{ on: mkSize === s.k }"
+                @click="setMarkSize(s.k)" :title="'Velikost písma značek ' + s.t">{{ s.t }}</button>
       </div>
       <div class="jp-row">
         <button class="jp-btn" :class="{ on: mkVisible }" @click="toggleMarkVisible"
@@ -5312,6 +5320,8 @@ onMounted(async () => {
   if (saved && Array.isArray(saved.items)) annotations.value.items = saved.items;
   mkOrder.value = (saved && Array.isArray(saved.mkOrder)) ? saved.mkOrder : null;
   mkVisible.value = !!(saved && saved.mkVisible);
+  if (saved && Number.isFinite(saved.mkSize)) mkSize.value = saved.mkSize;
+  else syncMkSizeFromItems();
   // Razítko soustavy, ve které jsou anotace uložené (viz rebaseAnnotationRef).
   annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
   jumpsRebased = false;
@@ -6170,6 +6180,8 @@ async function switchSong(idx, toEnd) {
   annotations.value.items = (saved && Array.isArray(saved.items)) ? saved.items : [];
   mkOrder.value = (saved && Array.isArray(saved.mkOrder)) ? saved.mkOrder : null;
   mkVisible.value = !!(saved && saved.mkVisible);
+  if (saved && Number.isFinite(saved.mkSize)) mkSize.value = saved.mkSize;
+  else syncMkSizeFromItems();
   annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
   jumpsRebased = false;
   // Staré noty (směr nožičky v klíči) → nový zápis se `flipY` (viz normalizeNoteFlips)
@@ -8073,7 +8085,11 @@ function textExtents(it) {
 function textBorderBox(it) {
   const e = textExtents(it);
   const pad = textBorderWidthOf(it);
-  const side = Math.max(e.w, e.h) + pad * 2;
+  // Značka má rámeček jako označení, takže musí písmeno opravdu obepnout —
+  // odhad z metrik bývá o pár px menší než skutečný otisk, proto spodní mez
+  // podle velikosti písma (Jan, 20. 11. 2026).
+  const minSide = it.mk ? (it.size || 20) * 1.1 : 0;
+  const side = Math.max(e.w, e.h, minSide) + pad * 2;
   return {
     x: e.x + e.w / 2 - side / 2,
     y: e.y + e.h / 2 - side / 2,
@@ -8532,6 +8548,7 @@ function annotationsForDb(items) {
     songId: song.id, items, ref: annotRefStamp(),
     mkOrder: Array.isArray(mkOrder.value) ? mkOrder.value : null,
     mkVisible: !!mkVisible.value,
+    mkSize: mkSize.value,
   };
 }
 // Přepočet všech druhů anotací jedním měřítkem (ref je vždy stejný poměr stran,
@@ -9195,6 +9212,16 @@ const mkOrder = ref(null);           // pole id v ručním pořadí (null = výc
 // Zobrazit značky v notách jako text (výchozí NE — jsou jen neviditelný index).
 // Ukládá se k anotacím skladby, takže si každá skladba drží svůj stav.
 const mkVisible = ref(false);
+// Velikost písma značek (Jan, 20. 11. 2026) — jedno nastavení pro celou skladbu,
+// stejné tlačítko S/M/L jako u vzhledu skoků. Ukládá se k anotacím (`mkSize`).
+const MARK_SIZES = [{ k: 12, t: 'S' }, { k: 18, t: 'M' }, { k: 26, t: 'L' }];
+const mkSize = ref(12);
+// Po načtení skladby se přepínač nastaví podle skutečné velikosti značek, aby
+// svítilo to, co je v notách (starší data mohla mít jinou velikost).
+function syncMkSizeFromItems() {
+  const m = annotations.value.items.find(i => i && i.mk && Number.isFinite(i.size));
+  if (m) mkSize.value = m.size;
+}
 const mkEditingId = ref(null);
 const mkEditText = ref('');
 const mkEditInput = ref(null);
@@ -9313,7 +9340,7 @@ async function saveMark() {
     items.push({
       id: crypto.randomUUID(), page: at.page,
       tool: 'text', mk: true, hidden: true,
-      text, size: 12, color: '#0b6bff', opacity: 1, border: false,
+      text, size: mkSize.value, color: '#0b6bff', opacity: 1, border: false,
       x: at.x, y: at.y,
     });
     // Ruční pořadí: nová značka jde na konec seznamu (nikdy nepřeskočí
@@ -9325,6 +9352,18 @@ async function saveMark() {
   showToast('Značka „' + text + '“ ' + (dup ? 'přepsána' : 'přidána')
     + ' — str. ' + withOffset(dispPage(at.page)));
 }
+// Velikost písma všech značek skladby (i pro nově přidané).
+async function setMarkSize(k) {
+  if (mkSize.value === k) return;
+  pushHistory();
+  mkSize.value = k;
+  for (const it of annotations.value.items) {
+    if (it && it.mk) it.size = k;
+  }
+  await flushAnnotations();
+  showToast('Velikost značek: ' + (MARK_SIZES.find(s => s.k === k) || {}).t);
+}
+
 // Přepínač „v notách jako text" — ploché tlačítko, stav jen při klepnutí.
 async function toggleMarkVisible() {
   mkVisible.value = !mkVisible.value;

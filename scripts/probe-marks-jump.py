@@ -60,7 +60,9 @@ async def add_mark(h, page_idx, text):
     await asyncio.sleep(0.3)
     c = json.loads(await h.ev(
         "(() => { const r=document.querySelector('.viewer').getBoundingClientRect();"
-        " return JSON.stringify({x: r.x + r.width*0.35, y: r.y + r.height*0.42}); })()"))
+        # MIMO panel Značek (ten sahá do levého horního rohu plátna) — po
+        # přidání řádku „Velikost" je vyšší, takže ťukáme vpravo (Jan: x≈0,6).
+        " return JSON.stringify({x: r.x + r.width*0.62, y: r.y + r.height*0.46}); })()"))
     await h.finger_tap(c["x"], c["y"])
     await asyncio.sleep(0.4)
     await h.ev("window.__barDev.mkLabel.value = " + json.dumps(text))

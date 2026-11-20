@@ -52,7 +52,7 @@ SEED = """(() => {
   const mk = (page, text, y) => ({
     id: 'shot-' + text, page, tool: 'text', mk: true, hidden: true,
     text, size: 12, color: '#0b6bff', opacity: 1, border: false,
-    x: 300, y,
+    x: 420, y,
   });
   // jen samotné značky (žádné zbytky z předchozích běhů)
   d.annotations.value.items = [
