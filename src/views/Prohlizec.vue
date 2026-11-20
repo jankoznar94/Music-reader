@@ -1620,17 +1620,22 @@
         </template>
         <template v-else>
           <button class="eb-btn" @click="editText(editingAnnot)" title="Přepsat text">✏️</button>
-          <span class="eb-size">Velikost</span>
-          <button class="eb-btn" @click="resizeAnnot(editingAnnot, -1)" title="Zmenšit">−</button>
-          <span class="eb-val">{{ editingAnnot ? Math.round(editingAnnot.size) : 0 }}</span>
-          <button class="eb-btn" @click="resizeAnnot(editingAnnot, 1)" title="Zvětšit">+</button>
+          <!-- Značka (A, B, 7…) nemá vlastní velikost ani barvu — velikost je
+               jedna pro celou skladbu (S/M/L v okně Značek) a barvu má danou.
+               Nabízet tu „−/+“ by znamenalo, že se jedna značka vymyká ostatním. -->
+          <template v-if="!(editingAnnot && editingAnnot.mk)">
+            <span class="eb-size">Velikost</span>
+            <button class="eb-btn" @click="resizeAnnot(editingAnnot, -1)" title="Zmenšit">−</button>
+            <span class="eb-val">{{ editingAnnot ? Math.round(editingAnnot.size) : 0 }}</span>
+            <button class="eb-btn" @click="resizeAnnot(editingAnnot, 1)" title="Zvětšit">+</button>
+          </template>
         </template>
         <!-- Rámeček se dá zapnout/vypnout i u UŽ VLOŽENÉHO textu — jinak by uživatel
              musel text smazat a vložit znovu, když si to rozmyslí. Volba se propíše
              i do „další text“ (stejně jako velikost zůstává nastavená).
              Tlačítko zůstává v HLAVNÍM řádku, protože musí být po ruce i tehdy,
              když je rámeček VYPNUTÝ (jinak by nešel zapnout). -->
-        <button v-if="editingAnnot && editingAnnot.tool === 'text'"
+        <button v-if="editingAnnot && editingAnnot.tool === 'text' && !editingAnnot.mk"
                 class="eb-btn" :class="{ on: editingAnnot.border }"
                 @click="toggleTextBorder(editingAnnot)"
                 :title="editingAnnot.border ? 'Zrušit rámeček' : 'Hranatý rámeček kolem textu'">▢</button>
@@ -1707,7 +1712,7 @@
          @pointerdown.capture="dialogArmed = true"
          @click.capture="onDialogClickCapture">
       <div class="text-input-card" :class="{ 'ti-card-note': editingAnnotTool === 'note' }">
-        <span class="ti-label">{{ editingAnnotTool === 'dynamic' ? 'Dynamika' : editingAnnotTool === 'mark' ? 'Značka' : editingAnnotTool === 'note' ? 'Nota' : 'Text' }}</span>
+        <span class="ti-label">{{ editingAnnotIsMark ? 'Značka' : editingAnnotTool === 'dynamic' ? 'Dynamika' : editingAnnotTool === 'mark' ? 'Značka' : editingAnnotTool === 'note' ? 'Nota' : 'Text' }}</span>
 
         <!-- Rychlý výběr: klepni na dynamiku, vyplní se do pole (a rovnou se uloží) -->
         <div v-if="editingAnnotTool === 'dynamic'" class="dyn-grid">
@@ -1838,11 +1843,11 @@
           v-if="editingAnnotTool !== 'note'"
           v-model="annotTextDraft"
           class="ti-input"
-          :placeholder="editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : editingAnnotTool === 'mark' ? 'vyber značku z nabídky výše' : 'Text poznámky'"
+          :placeholder="editingAnnotIsMark ? 'co v notách stojí (A, B, 7…)' : editingAnnotTool === 'dynamic' ? 'nebo napiš vlastní (např. mf)' : editingAnnotTool === 'mark' ? 'vyber značku z nabídky výše' : 'Text poznámky'"
           @keydown.enter="confirmTextAnnot"
         />
 
-        <div v-if="editingAnnotTool === 'text'" class="ti-size-row">
+        <div v-if="editingAnnotTool === 'text' && !editingAnnotIsMark" class="ti-size-row">
           <span class="ti-size-label">Velikost</span>
           <button class="ti-size-btn" @click="bumpTextSize(-1)" title="Menší text">−</button>
           <span class="ti-size-val">{{ textSizeDraft }}</span>
@@ -1858,7 +1863,7 @@
         <!-- Barva textu a rámeček PŘÍMO V TOMTO OKNĚ (Jan, Oct 2026): uživatel
              vybírá velikost i způsob vložení tady, takže barva nemá být jinde.
              Stejná paleta jako pero; volba se pamatuje (stejně jako velikost). -->
-        <div v-if="editingAnnotTool === 'text'" class="ti-row">
+        <div v-if="editingAnnotTool === 'text' && !editingAnnotIsMark" class="ti-row">
           <span class="ti-size-label">Barva</span>
           <div class="ti-colors">
             <button
@@ -1875,7 +1880,7 @@
              styl = plná / čárkovaná / tečkovaná / dvojitá. Vlastní rámeček se
              přitom zvětšuje sám podle textu, takže „velikost“ je jen odstup —
              jinak by delší text přetekl ven. -->
-        <div v-if="editingAnnotTool === 'text'" class="ti-row">
+        <div v-if="editingAnnotTool === 'text' && !editingAnnotIsMark" class="ti-row">
           <span class="ti-size-label">Rámeček</span>
           <button class="ti-toggle" :class="{ on: textBorderDraft }"
                   @click="textBorderDraft = !textBorderDraft"
@@ -1887,7 +1892,7 @@
             <span class="ti-size-aa" :style="textPreviewStyle">{{ annotTextDraft || 'Aa' }}</span>
           </span>
         </div>
-        <template v-if="editingAnnotTool === 'text' && textBorderDraft">
+        <template v-if="editingAnnotTool === 'text' && textBorderDraft && !editingAnnotIsMark">
           <div class="ti-row">
             <span class="ti-size-label">Šířka</span>
             <button
@@ -4245,15 +4250,22 @@ const selectedBox = computed(() => {
     const nb = it.tool === 'note' ? noteInkBox(it) : null;
     if (nb) {
       x1 = nb.x; y1 = nb.y; x2 = nb.x + nb.w; y2 = nb.y + nb.h;
+    } else if (it.tool === 'text' && it.x != null && it.y != null) {
+      // Text I ZNAČKA: přesně tentýž rám jako výběr i kreslení (textBorderBox) —
+      // značka je na bod vycentrovaná, takže levé ukotvení posouvalo rám mimo ni.
+      const r = textBorderBox(it);
+      x1 = r.x; y1 = r.y; x2 = r.x + r.w; y2 = r.y + r.h;
     } else if (it.x != null && it.y != null) {
       const s = it.size || 20;
-      x1 = it.x; y1 = it.y - s;
       // Dynamika/značka = glyf z fontu (šířka z metrik, ne odhad), text = odhad podle znaků
       let w;
       if (it.tool === 'dynamic') w = dynAdvEm(it.text) * s;
       else if (it.tool === 'mark') w = markAdvEm(it.text) * s;
       else w = it.text ? it.text.length * s * 0.6 : s;
-      x2 = it.x + w; y2 = it.y;
+      // Glyfy dynamiky i značek se kreslí `text-anchor: middle` — rám musí být
+      // vycentrovaný na `it.x`, ne od něj doprava.
+      x1 = it.x - w / 2; y1 = it.y - s;
+      x2 = it.x + w / 2; y2 = it.y;
     }
   } else if (isStroke(it)) {
     for (const p of (it.points || [])) {
@@ -4356,6 +4368,9 @@ const editingTypeLabel = computed(() => {
   if (t === 'mark') return 'Značka';
   if (t === 'note') return 'Nota';
   if (it && it.barNum) return 'Číslo taktu';
+  // Značka z okna Značek je uložená jako text (`mk`) — v pásu se musí jmenovat
+  // „Značka“, ne „Text“.
+  if (it && it.mk) return 'Značka';
   return t ? 'Text' : '';
 });
 const wedgePoints = ref([]); // body zobáčku (crescendo/decrescendo), až 3 × {x,y}
@@ -5150,7 +5165,10 @@ const pageItems = computed(() => annotations.value.items.filter(i =>
   // stejně jako běžná textová anotace — a jdou pak i chytit a přesunout.
   // Značky se navíc ukážou VŽDY, když je otevřené okno Značek (Jan, 20. 11. 2026:
   // „aby byly všechny vidět, když je otevřené okno pro vytváření značek“).
-  && (!i.mk || mkVisible.value || mkPanelOpen.value)
+  // A v režimu Ruka VŽDY taky — jinak se existující značka nedá uchopit, posunout
+  // ani přepsat (Jan, 21. 11. 2026: „existující Značky by měly jít uchopit,
+  // přemístit/upravit nástrojem ruka“).
+  && (!i.mk || mkVisible.value || mkPanelOpen.value || tool.value === 'edit')
   // V režimu ČÍSLOVÁNÍ musí být skrytá čísla VIDĚT (jako u nástroje Ruka):
   // jinak uživatel nepozná, co už očísloval a co ne (Jan, Nov 2026).
   && (!(i.barNum && barNumsHidden.value) || tool.value === 'edit' || barnumMode.value)));
@@ -7866,6 +7884,15 @@ const editingAnnotTool = computed(() => {
          || (activeItem.value && activeItem.value.id === editingAnnotationId.value ? activeItem.value : null);
   return it ? it.tool : '';
 });
+// Značka z okna Značek (A, B, 7…) je uložená jako textová anotace s `mk`, takže
+// sdílí dialog s textem — ale nesmí v něm přepisovat velikost/barvu/rámeček,
+// ty patří celé skladbě, ne jedné značce.
+const editingAnnotIsMark = computed(() => {
+  if (!editingAnnotationId.value) return false;
+  const it = annotations.value.items.find(x => x.id === editingAnnotationId.value)
+         || (activeItem.value && activeItem.value.id === editingAnnotationId.value ? activeItem.value : null);
+  return !!(it && it.mk);
+});
 // POZOR: je `async` kvůli `await nextTick()` ve větvi, která přepíná na ruku —
 // bez toho by `watch(tool)` smazal právě nastavený výběr (viz níže).
 // `withHand` je ZÁMĚRNĚ výchozí `true`: po každém vložení se nástroj přepne na
@@ -7878,7 +7905,9 @@ async function confirmTextAnnot(withHand = true) {
   if (it) {
     it.text = annotTextDraft.value.trim();
     // Velikost + barva + rámeček zvolené v dialogu PŘED vložením; volby se pamatují.
-    if (it.tool === 'text') {
+    // Značka (mk) se sem NESMÍ plést: její velikost je jedna pro celou skladbu
+    // (S/M/L) a barvu má danou — přepsáním textu by se jedna značka vymkla.
+    if (it.tool === 'text' && !it.mk) {
       textSize.value = clampTextSize(textSizeDraft.value);
       it.size = textSize.value;
       textColor.value = textColorDraft.value;
@@ -8132,13 +8161,15 @@ function itemBox(it) {
       return { x: r.x - pad, y: r.y - pad, w: r.w + pad * 2, h: r.h + pad * 2 };
     }
     const s = it.size || 20;
-    x1 = it.x; y1 = it.y - s;
-    // Dynamika/značka = šířka glyfu z metrik fontu; text = odhad podle znaků
+    // Dynamika/značka = šířka glyfu z metrik fontu; text = odhad podle znaků.
+    // Glyfy se kreslí `text-anchor: middle`, takže hit-test musí být vycentrovaný
+    // na `it.x` — jinak se chytají jen napravo od skutečného glyfu.
     let w;
     if (it.tool === 'dynamic') w = dynAdvEm(it.text) * s;
     else if (it.tool === 'mark') w = markAdvEm(it.text) * s;
     else w = it.text ? Math.max(s, it.text.length * s * 0.6) : s;
-    x2 = it.x + w; y2 = it.y;
+    x1 = it.x - w / 2; y1 = it.y - s;
+    x2 = it.x + w / 2; y2 = it.y;
   } else if (isStroke(it)) {
     if (!it.points || !it.points.length) return null;
     for (const p of it.points) {
@@ -8247,7 +8278,7 @@ function editText(it) {
   annotTextDraft.value = it.text || '';
   // Do dialogu se načte SOUČASNÁ velikost prvku — jinak by přepsání textu
   // rukou tiše přehodilo velikost na tu, co měl uživatel nastavenou pro nový text.
-  if (it.tool === 'text') {
+  if (it.tool === 'text' && !it.mk) {
     textSizeDraft.value = clampTextSize(it.size || 20);
     // Totéž pro barvu a rámeček — dialog musí ukazovat, jak prvek VYPADÁ TEĎ,
     // ne jak je nastavený „další text“.
