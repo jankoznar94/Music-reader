@@ -841,6 +841,12 @@
                @keydown.enter="goToTypedMark" />
         <button class="jp-btn primary" @click="goToTypedMark">Jdi</button>
       </div>
+      <div class="jp-row">
+        <button class="jp-btn" :class="{ on: mkVisible }" @click="toggleMarkVisible"
+                title="Značky v notách: jako text, nebo jen neviditelný index pro skok">
+          {{ mkVisible ? 'V notách: zobrazené' : 'V notách: jen index' }}
+        </button>
+      </div>
       <div class="jp-hint">{{ mkScopeHint }}</div>
       <!-- Seznam značek — STEJNÝ design i ovládání jako seznam záložek
            (Jan, Nov 2026): táhlo pro pořadí, tužka pro přejmenování na řádku,
@@ -5131,9 +5137,10 @@ const penOnly = ref(false);       // kreslit jen perem (ignorovat dotyk prstem/r
 // „schovat všechno“ nešlo. Příznak `hidden` ze starých dat se proto ignoruje.
 const pageItems = computed(() => annotations.value.items.filter(i =>
   i.page === currentPage.value
-  // Značky jsou jen indexy pro skok — v notách se NIKDY nekreslí (značka tam
-  // už je vytištěná; appka si jen pamatuje, co uživatel opsal).
-  && !i.mk
+  // Značky jsou primárně jen indexy pro skok (značka v notách už je vytištěná).
+  // Když si je ale uživatel chce ZOBRAZIT jako text (mkVisible), kreslí se
+  // stejně jako běžná textová anotace — a jdou pak i chytit a přesunout.
+  && (!i.mk || mkVisible.value)
   // V režimu ČÍSLOVÁNÍ musí být skrytá čísla VIDĚT (jako u nástroje Ruka):
   // jinak uživatel nepozná, co už očísloval a co ne (Jan, Nov 2026).
   && (!(i.barNum && barNumsHidden.value) || tool.value === 'edit' || barnumMode.value)));
@@ -5253,7 +5260,7 @@ onMounted(async () => {
   // DIAG (jen dev): zvenčí se dostat k renderu stránky a detekci čar, aby šla
   // změřit skutečná geometrie skenu bez hádání. V produkci se nepřidává.
   if (import.meta.env.DEV) {
-    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barInsertArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage, marks, mkPanelOpen, openMarks, startMarkPick, mkLabel, mkInsertAt, saveMark, goToTypedMark, mkJumpValue, findMarkTarget, barJumpMark, gotoPage, jumps, jumpMode, jumpStart, jumpEnd, jumpLabel, jumpColor, jumpSize, jumpPlace, jumpPlaceMode, jumpPlacePoints, jumpToMark, jumpTargetMode, jumpEditId, jumpFlash, toggleJumpMode, saveJump, goJump, editJump, startJumpTarget, commitJumpTarget, startJumpPlace, commitJumpPlace, shownTargetMarks, jumpBoxStyle, jumpStripStyle, JUMP_COLORS, jumpMarkStyle,
+    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barInsertArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage, marks, mkPanelOpen, mkVisible, toggleMarkVisible, openMarks, startMarkPick, mkLabel, mkInsertAt, saveMark, goToTypedMark, mkJumpValue, findMarkTarget, barJumpMark, gotoPage, jumps, jumpMode, jumpStart, jumpEnd, jumpLabel, jumpColor, jumpSize, jumpPlace, jumpPlaceMode, jumpPlacePoints, jumpToMark, jumpTargetMode, jumpEditId, jumpFlash, toggleJumpMode, saveJump, goJump, editJump, startJumpTarget, commitJumpTarget, startJumpPlace, commitJumpPlace, shownTargetMarks, jumpBoxStyle, jumpStripStyle, JUMP_COLORS, jumpMarkStyle,
     jumpMarkW, jumpMarkH, jumpMarkShape, jumpMarkBorder, jumpMarkFill, jumpMarkColor,
     JUMP_MARK_SIZES, JUMP_MARK_SHAPES, setJumpMarkSize, selectJumpPart, jumpSel,
     jumpPartGeom, jumpSelOnPage, nextPage, prevPage };
@@ -5302,6 +5309,7 @@ onMounted(async () => {
   const saved = await dbGetAnnotations(props.id);
   if (saved && Array.isArray(saved.items)) annotations.value.items = saved.items;
   mkOrder.value = (saved && Array.isArray(saved.mkOrder)) ? saved.mkOrder : null;
+  mkVisible.value = !!(saved && saved.mkVisible);
   // Razítko soustavy, ve které jsou anotace uložené (viz rebaseAnnotationRef).
   annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
   jumpsRebased = false;
@@ -6159,6 +6167,7 @@ async function switchSong(idx, toEnd) {
   const saved = await dbGetAnnotations(s.id);
   annotations.value.items = (saved && Array.isArray(saved.items)) ? saved.items : [];
   mkOrder.value = (saved && Array.isArray(saved.mkOrder)) ? saved.mkOrder : null;
+  mkVisible.value = !!(saved && saved.mkVisible);
   annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
   jumpsRebased = false;
   // Staré noty (směr nožičky v klíči) → nový zápis se `flipY` (viz normalizeNoteFlips)
@@ -8498,7 +8507,11 @@ function annotRefStamp() {
 }
 function annotationsForDb(items) {
   // mkOrder = ruční pořadí značek (null = výchozí řazení čísla/písmena).
-  return { songId: song.id, items, ref: annotRefStamp(), mkOrder: Array.isArray(mkOrder.value) ? mkOrder.value : null };
+  return {
+    songId: song.id, items, ref: annotRefStamp(),
+    mkOrder: Array.isArray(mkOrder.value) ? mkOrder.value : null,
+    mkVisible: !!mkVisible.value,
+  };
 }
 // Přepočet všech druhů anotací jedním měřítkem (ref je vždy stejný poměr stran,
 // takže x i y se škálují stejně — jinak by se poznámky rozjely po ose).
@@ -9158,6 +9171,9 @@ const mkInputEl = ref(null);
 // Správa značek = stejné ovládání jako u záložek (Jan, Nov 2026):
 // pořadí tažením (mkOrder), přejmenování na řádku, smazání.
 const mkOrder = ref(null);           // pole id v ručním pořadí (null = výchozí řazení)
+// Zobrazit značky v notách jako text (výchozí NE — jsou jen neviditelný index).
+// Ukládá se k anotacím skladby, takže si každá skladba drží svůj stav.
+const mkVisible = ref(false);
 const mkEditingId = ref(null);
 const mkEditText = ref('');
 const mkEditInput = ref(null);
@@ -9184,16 +9200,13 @@ const marksScoped = computed(() => {
   return marks.value.filter(m => pages.has(m.page));
 });
 const isMarkNumber = (t) => /^-?\d+$/.test(String(t).trim());
-// VÝCHOZÍ pořadí v seznamu: čísla číselně, pak písmena abecedně (česky).
-// Jakmile uživatel řádek přetáhne, platí ruční pořadí z `mkOrder` (ukládá se
-// k anotacím, takže přežije reload i přepnutí skladby).
-const marksDefaultOrdered = computed(() => [
-  ...marks.value.filter(m => isMarkNumber(m.text))
-    .sort((a, b) => Number(a.text) - Number(b.text) || a.page - b.page || a.y - b.y),
-  ...marks.value.filter(m => !isMarkNumber(m.text))
-    .sort((a, b) => a.text.localeCompare(b.text, 'cs', { sensitivity: 'base' })
-      || a.page - b.page || a.y - b.y),
-]);
+// VÝCHOZÍ pořadí v seznamu: VZESTUPNĚ PODLE STRÁNEK (Jan, 20. 11. 2026:
+// „značky se nesmí řadit podle abecedy, musí se řadit vzestupně podle stránek“).
+// U značek na stejné stránce rozhoduje jejich výška v notách (y) — tedy to,
+// co je na papíře výš. Ruční přerovnání tažením (`mkOrder`) má přednost a drží
+// se i po reloadu.
+const marksDefaultOrdered = computed(() => [...marks.value]
+  .sort((a, b) => a.page - b.page || a.y - b.y));
 const marksOrdered = computed(() => {
   const byId = new Map(marks.value.map(m => [m.id, m]));
   const ids = [];
@@ -9291,6 +9304,15 @@ async function saveMark() {
   showToast('Značka „' + text + '“ ' + (dup ? 'přepsána' : 'přidána')
     + ' — str. ' + withOffset(dispPage(at.page)));
 }
+// Přepínač „v notách jako text" — ploché tlačítko, stav jen při klepnutí.
+async function toggleMarkVisible() {
+  mkVisible.value = !mkVisible.value;
+  await flushAnnotations();
+  showToast(mkVisible.value
+    ? 'Značky se v notách zobrazují jako text'
+    : 'Značky jsou jen neviditelný index');
+}
+
 function deleteMark(m) {
   if (!m) return;
   pushHistory();
@@ -10816,7 +10838,10 @@ async function deleteBookmark(b) {
   will-change: transform;
   user-select: none;
 }
-.jp-item-label { font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* line-height s rezervou: s `normal` + overflow:hidden se u českých velkých
+   písmen (Č, Ř, Š, Ž) ořezával háček/čárka a první písmeno vypadalo zkoseně
+   a uříznuté (Jan, 20. 11. 2026). */
+.jp-item-label { font-weight: 600; font-size: 0.9rem; line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .jp-item-pages { color: var(--text-dim); font-size: 0.8rem; white-space: nowrap; }
 .jp-del {
   margin-left: auto; width: 30px; height: 30px; flex: 0 0 auto; border-radius: 50%;

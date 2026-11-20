@@ -105,9 +105,9 @@ async def main():
         print("panel:", s1)
         ok("bez záložek je seznam bez nadpisů (jeden seznam)",
            s1["secs"] == [], str(s1["secs"]))
-        # výchozí pořadí: čísla číselně, pak písmena abecedně
-        ok("čísla číselně (7, 12), pak písmena (A, C)",
-           [i["text"] for i in s1["items"]] == ["7", "12", "A", "C"], str(s1["items"]))
+        # výchozí pořadí: VZESTUPNĚ PODLE STRÁNEK (Jan, 20. 11. 2026), ne abecedně
+        ok("řadí se podle stránek (A str. 1, C str. 3, 12 str. 5, 7 str. 6)",
+           [i["text"] for i in s1["items"]] == ["A", "C", "12", "7"], str(s1["items"]))
 
         # v notách se značky nekreslí (žádná anotace s mk v pageItems)
         drawn = await h.ev("(() => window.__barDev.pageItems.value.some(i => i && i.mk))()")
@@ -175,8 +175,8 @@ async def main():
         # skok ale dál hledá jen v rozsahu aktuální záložky (část 1 = str. 1–4).
         ok("seznam je rozdělený podle záložek (statické nadpisy)",
            s2["secs"] == ["Část 1", "Část 2"], str(s2["secs"]))
-        ok("značky jsou pod svou záložkou (část 1: A, C · část 2: 7, 12)",
-           [i["text"] for i in s2["items"]] == ["A", "C", "7", "12"], str(s2["items"]))
+        ok("značky jsou pod svou záložkou (část 1: A, C · část 2: 12, 7)",
+           [i["text"] for i in s2["items"]] == ["A", "C", "12", "7"], str(s2["items"]))
         t7 = json.loads(await h.ev("(() => JSON.stringify(window.__barDev.findMarkTarget('7')))()"))
         ok("skok na „7“ z části 1 zůstane v této záložce",
            t7 and 0 <= t7["page"] <= 3, str(t7))

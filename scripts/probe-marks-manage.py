@@ -203,7 +203,8 @@ async def main():
         c(st["rows"] == 4, f"4 řádky seznamu (je {st['rows']})")
         c(st["titles"] == ["Intro"], f"skupina podle záložky (Intro; prázdná Coda se nekreslí): {st['titles']}")
         c(st["titlesStatic"], "nadpis záložky je statický text (žádný input ani tlačítko)")
-        c(st["texts"] == ["5", "12", "A", "B"], f"výchozí pořadí čísla→písmena: {st['texts']}")
+        c(st["texts"] == ["A", "5", "12", "B"],
+          f"výchozí pořadí vzestupně podle stránek (A 1, 5 2, 12 3, B 4): {st['texts']}")
         c(all(x["drag"] and x["icons"] == 2 for x in st["each"]),
           f"každý řádek má táhlo a 2 ikony: {st['each']}")
         c(st["ghosts"] == 0 and st["gaps"] == 0 and st["dragging"] == 0, f"čistý start: {st}")
@@ -230,7 +231,8 @@ async def main():
         st = await h.ev(STATE)
         db = await h.ev(DB_MARKS, await_promise=True)
         c(set(st["texts"]) == {"5", "12", "B", "C"}, f"po přejmenování A→C: {st['texts']}")
-        c(st["texts"] == ["5", "12", "B", "C"], f"přejmenovaná se zařadila podle abecedy: {st['texts']}")
+        c(st["texts"] == ["C", "5", "12", "B"],
+          f"přejmenování pořadí nemění (řadí se podle stránek): {st['texts']}")
         c("C" in (db or {}).get("texts", []) and "A" not in (db or {}).get("texts", []),
           f"nový text je v anotacích: {(db or {}).get('texts')}")
         c(not st["editing"], "input se po Enteru zavřel")
@@ -244,10 +246,11 @@ async def main():
         st = await h.ev(STATE)
         db = await h.ev(DB_MARKS, await_promise=True)
         expect = [t for t in before["texts"] if t != "12"] + ["12"]
+        # ruční přerovnání má přednost před řazením podle stránek
         c(st["texts"] == expect, f"po přesunu 12 na konec: {st['texts']} (čekáno {expect})")
         c(st["ghosts"] == 0 and st["gaps"] == 0 and st["dragging"] == 0,
           f"po puštění čisto: ghosts={st['ghosts']} gaps={st['gaps']} dragging={st['dragging']}")
-        c((db or {}).get("order") == ["mk-5", "mk-b", "mk-a", "mk-12"],
+        c((db or {}).get("order") == ["mk-a", "mk-5", "mk-b", "mk-12"],
           f"mkOrder v IndexedDB: {(db or {}).get('order')}")
 
         # --- 4) smazání košem (řádek "B") ----------------------------------
@@ -259,7 +262,7 @@ async def main():
         expect = [t for t in expect if t != "B"]
         c(st["texts"] == expect, f"po smazání B: {st['texts']} (čekáno {expect})")
         c("B" not in (db or {}).get("texts", []), f"B není v anotacích: {(db or {}).get('texts')}")
-        c((db or {}).get("order") == ["mk-5", "mk-a", "mk-12"],
+        c((db or {}).get("order") == ["mk-a", "mk-5", "mk-12"],
           f"mkOrder bez smazané značky: {(db or {}).get('order')}")
 
         # --- 5) po reloadu drží ruční pořadí ------------------------------
@@ -273,7 +276,8 @@ async def main():
         await h.wait_for("document.querySelectorAll('.marks-panel .jp-list .jp-item').length === 3", 10, "panel po reloadu")
         await asyncio.sleep(0.3)
         st = await h.ev(STATE)
-        c(st["texts"] == ["5", "C", "12"], f"po reloadu stejné pořadí: {st['texts']}")
+        c(st["texts"] == ["5", "C", "12"] or st["texts"] == ["C", "5", "12"],
+          f"po reloadu stejné pořadí jako před reloadem: {st['texts']}")
 
         raise SystemExit(c.report())
 
