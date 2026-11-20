@@ -333,7 +333,7 @@
       <svg
         ref="layerSvgEl"
         class="annot-layer"
-        :class="{ active: annotMode || jumpPlaceMode || jumpTargetMode || mkPickMode || !!jumpSel }"
+        :class="{ active: annotMode || jumpPlaceMode || jumpTargetMode || mkPickMode || mkPanelOpen || !!jumpSel }"
         :width="cssW"
         :height="cssH"
         :viewBox="viewBoxStr"
@@ -7107,6 +7107,16 @@ function onLayerDown(e) {
   // Okno je KRÁTKÉ (STALE_POINTER_MS), protože uživatel začíná nový tah —
   // pero, které právě kreslí, se tím neuvolní (píše průběžné pointermove).
   _staleGuard(STALE_POINTER_MS);
+  // OKNO ZNAČEK: klepnutí na značku ji ROVNOU označí a přepne na Ruku — uživatel
+  // nemá klikat Ruku a teprve pak na značku (Jan, 21. 11. 2026). Vrstva je kvůli
+  // tomu aktivní i s otevřeným oknem; ťuk mimo značky jen zavře nic (nekreslí se,
+  // dokud se nepřepne nástroj) a krajové listování prochází dál.
+  if (mkPanelOpen.value && !mkPickMode.value) {
+    const p0 = toLayerCoords(e);
+    const mkHit = pageHits(p0);
+    if (mkHit && mkHit.mk) pickMarkForEdit(mkHit);
+    return;
+  }
   if (!annotMode.value) { _logEv('  down: bez anotace'); return; }
   // Nedokončené označení taktu z předchozího nástroje nesmí ovlivnit další tah.
   if (tool.value !== 'barnumber') { _barDrag = null; barDragRect.value = null; }
@@ -8268,6 +8278,9 @@ function pageHits(p) {
     // Číslo taktu je drobné (pár px) — prstem by se trefovalo jen naslepo.
     // V režimu Ruka se mu hit-test zvětší, aby šlo ťuknout a smazat/přesunout.
     if (it.barNum) b = { x: b.x - 10, y: b.y - 10, w: b.w + 20, h: b.h + 20 };
+    // Značka (A, B, 7…) je taky drobná — prstem se trefuje naslepo, proto se jí
+    // plocha pro ťuk rozšíří stejně jako číslu taktu.
+    if (it.mk) b = { x: b.x - 8, y: b.y - 8, w: b.w + 16, h: b.h + 16 };
     if (p.x < b.x || p.y < b.y || p.x > b.x + b.w || p.y > b.y + b.h) continue;
     const area = b.w * b.h;
     if (area < bestArea) { bestArea = area; best = it; }
@@ -9355,6 +9368,15 @@ function pickMarkAt(p) {
   mkLabel.value = '';
   showToast('Opis, co v notách stojí, a ulož', 4000);
   nextTick(() => { const el = mkInputEl.value; if (el) { el.focus(); el.select(); } });
+}
+function pickMarkForEdit(it) {
+  // setTool('edit') sám zavře okno Značek a `watch(tool)` po něm zavolá endEdit —
+  // nastavit výběr hned by ho ten watch smazal (stejná past jako po vložení textu).
+  const id = it.id;
+  setTool('edit');
+  nextTick(() => {
+    if (annotations.value.items.some(x => x.id === id)) editingId.value = id;
+  });
 }
 async function saveMark() {
   const text = String(mkLabel.value || '').trim();

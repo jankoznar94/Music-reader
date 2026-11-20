@@ -171,7 +171,41 @@ async def main():
            "%s -> %s" % (p0 and p0["size"], p2 and p2["size"]))
         ok("značka si drží svou barvu", p2 and p2["color"] == p0["color"], str(p2))
 
-        # --- 7) přesun přežije reload ---------------------------------------
+        # --- 7) okno Značek: klepnutí na značku ji vybere BEZ přepínání Ruky --
+        # (Jan, 21. 11. 2026: „abych nemusel klikat Ruku a pak na značku“)
+        await h.ev("(() => { const b=[...document.querySelectorAll('.annot-panel .ap-tool')]"
+                   ".find(x=>(x.title||'').startsWith('Tužka')); if(b) b.click(); })()")
+        await asyncio.sleep(0.4)
+        await h.click(".tb-mark")
+        await asyncio.sleep(0.6)
+        dom2 = await h.ev(MK_DOM)
+        ok("značka je vidět i s otevřeným oknem Značek", bool(dom2), str(dom2))
+        await h.pen_tap(dom2["x"], dom2["y"])
+        await asyncio.sleep(0.6)
+        st = await h.ev("(() => { const d = window.__barDev;"
+                        " const on = [...document.querySelectorAll('.annot-panel .ap-tool.on')]"
+                        "   .map(x => (x.title || '').trim());"
+                        " return { editing: d.editingId.value, panel: d.mkPanelOpen.value, tools: on }; })()")
+        ok("ťuk na značku ji v okně Značek rovnou označí",
+           st and st["editing"] == p2["id"], str(st))
+        ok("nástroj se sám přepnul na Ruku",
+           st and any(t.startswith("Upravit") for t in st["tools"]), str(st and st["tools"]))
+        ok("okno Značek se zavřelo", st and st["panel"] is False, str(st and st["panel"]))
+        bar2 = await h.ev(EDIT_BAR)
+        ok("pás úprav ukazuje Značku", bar2 and bar2["type"] == "Značka", str(bar2))
+
+        # --- 8) listování krajem displeje nesmí okno Značek zablokovat ------
+        await h.ev("(() => window.__barDev.openMarks())()")
+        await asyncio.sleep(0.6)
+        pg0 = await h.page_text()
+        geo = await h.geo()
+        await h.finger_tap(geo["left"] + geo["w"] - 20, geo["top"] + geo["h"] * 0.6)
+        await asyncio.sleep(0.9)
+        pg1 = await h.page_text()
+        ok("s otevřeným oknem Značek jde krajem displeje listovat", pg0 != pg1,
+           "%s -> %s" % (pg0, pg1))
+
+        # --- 9) přesun přežije reload ---------------------------------------
         await h.open()
         await h.open_song(pdf=None, pages=6, reset=False)
         await asyncio.sleep(1.0)
