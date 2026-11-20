@@ -38,10 +38,11 @@ Harness, Check = m.Harness, m.Check
 PANEL = """(() => {
   const p = document.querySelector('.marks-panel');
   if (!p) return JSON.stringify({ open: false });
-  const secs = [...p.querySelectorAll('.marks-sec')].map(e => e.textContent.trim());
-  const items = [...p.querySelectorAll('.marks-item')].map(e => ({
-    text: e.querySelector('.marks-text').textContent.trim(),
-    page: e.querySelector('.marks-page').textContent.trim(),
+  // Seznam je od Nov 2026 JEDEN (stejný jako u záložek): táhlo + text + ikony.
+  const secs = [...p.querySelectorAll('.jp-list .jp-subtitle')].map(e => e.textContent.trim());
+  const items = [...p.querySelectorAll('.jp-list .jp-item')].map(e => ({
+    text: (e.querySelector('.marks-text') || {}).textContent?.trim() || '',
+    page: (e.querySelector('.jp-item-pages') || {}).textContent?.trim() || '',
   }));
   return JSON.stringify({ open: true, secs, items });
 })()"""
@@ -102,12 +103,10 @@ async def main():
 
         s1 = await st(h)
         print("panel:", s1)
-        ok("panel má DVĚ sekce (Čísla, Písmena)",
-           s1["secs"] == ["Čísla", "Písmena"], str(s1["secs"]))
-        nums = [i["text"] for i in s1["items"] if i["text"].isdigit()]
-        letters = [i["text"] for i in s1["items"] if not i["text"].isdigit()]
-        ok("čísla jdou číselně (7, 12)", nums == ["7", "12"], str(nums))
-        ok("písmena abecedně (A, C)", letters == ["A", "C"], str(letters))
+        ok("seznam značek je jeden (jako u záložek)", s1["secs"] == ["Značky"], str(s1["secs"]))
+        # výchozí pořadí: čísla číselně, pak písmena abecedně
+        ok("čísla číselně (7, 12), pak písmena (A, C)",
+           [i["text"] for i in s1["items"]] == ["7", "12", "A", "C"], str(s1["items"]))
 
         # v notách se značky nekreslí (žádná anotace s mk v pageItems)
         drawn = await h.ev("(() => window.__barDev.pageItems.value.some(i => i && i.mk))()")
@@ -171,10 +170,13 @@ async def main():
             await asyncio.sleep(0.5)
         s2 = await st(h)
         print("v části 1:", s2)
-        # část 1 = str. 1–4 → značky A (str. 1) a C (str. 3); „12“ je na str. 5
-        # a „7“ na str. 6, takže v této záložce být NESMÍ
-        ok("v záložce 1 panel ukazuje jen značky této části (12 i 7 chybí)",
-           [i["text"] for i in s2["items"]] == ["A", "C"], str(s2["items"]))
+        # Seznam (správa) ukazuje VŠECHNY značky díla — skok ale dál hledá jen
+        # v rozsahu aktuální záložky (část 1 = str. 1–4, kde jsou A a C).
+        ok("seznam pro správu ukazuje všechny značky díla",
+           [i["text"] for i in s2["items"]] == ["7", "12", "A", "C"], str(s2["items"]))
+        t7 = json.loads(await h.ev("(() => JSON.stringify(window.__barDev.findMarkTarget('7')))()"))
+        ok("skok na „7“ z části 1 zůstane v této záložce",
+           t7 and 0 <= t7["page"] <= 3, str(t7))
     return ok.report()
 
 

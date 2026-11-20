@@ -3,7 +3,8 @@
 
 Značky se do stránky vloží přímo (dev `__barDev.annotations`) — jde jen o to,
 jak panel vypadá; funkčnost ověřuje `probe-marks-jump.py`.
-Záložky se pro tuto skladbu vynulují (jinak se panel zužuje na jednu část).
+Záložky se pro tuto skladbu vynulují (seznam značek je od Nov 2026 jeden a
+ukazuje všechny značky díla).
 """
 import asyncio
 import base64
@@ -73,8 +74,10 @@ async def main():
         await asyncio.sleep(0.8)
         print("hint:", await h.ev("document.querySelector('.marks-panel .jp-hint').textContent.trim()"))
         print("panel:", await h.ev(
-            "(() => [...document.querySelectorAll('.marks-panel .marks-item .marks-text')]"
-            ".map(e => e.textContent.trim()).join(', '))()"))
+            "(() => [...document.querySelectorAll('.marks-panel .jp-list .jp-item')]"
+            ".map(e => e.querySelector('.marks-text').textContent.trim()"
+            " + ' str.' + e.querySelector('.jp-item-pages').textContent.replace('str. ','').trim())"
+            ".join(' | '))()"))
         await h.cdp("Emulation.setDeviceMetricsOverride",
                     {"width": 820, "height": 1180, "deviceScaleFactor": 2, "mobile": False})
         await asyncio.sleep(0.8)

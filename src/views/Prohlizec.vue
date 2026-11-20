@@ -333,7 +333,7 @@
       <svg
         ref="layerSvgEl"
         class="annot-layer"
-        :class="{ active: annotMode || jumpPlaceMode || jumpTargetMode || mkPickMode }"
+        :class="{ active: annotMode || jumpPlaceMode || jumpTargetMode || mkPickMode || !!jumpSel }"
         :width="cssW"
         :height="cssH"
         :viewBox="viewBoxStr"
@@ -674,16 +674,17 @@
       <!-- NÁHLED umístění: hned po naklepání tří bodů je vidět, kde a jak velké
            tlačítko bude. Dřív se ukázalo až po uložení skoku — uživatel tedy
            po "Umístění: hotovo" neviděl nic a nevěděl, co se stalo. -->
-      <div v-if="jumpPlace" class="jump-on-page" :class="{ 'edit-mode': annotMode && tool === 'edit' }">
+      <div v-if="jumpPlace" class="jump-on-page" :class="{ 'edit-mode': (annotMode && tool === 'edit') || jumpSel }">
         <div class="jump-on-btn preview" :style="jumpBoxStyle({ place: jumpPlace, color: jumpColor })">
           {{ (jumpLabel || '').trim() || 'Skok' }}
         </div>
       </div>
-      <div v-if="placerJumps.length" class="jump-on-page" :class="{ 'edit-mode': annotMode && tool === 'edit' }">
+      <div v-if="placerJumps.length" class="jump-on-page" :class="{ 'edit-mode': (annotMode && tool === 'edit') || jumpSel }">
         <button
           v-for="j in placerJumps"
           :key="j.id"
           class="jump-on-btn"
+          :class="{ selected: jumpSel && jumpSel.id === j.id && jumpSel.part === 'btn' }"
           :style="jumpBoxStyle(j)"
           @click="goJump(j)"
           :title="'Skok na str. ' + withOffset(dispPage(j.toPage))"
@@ -696,7 +697,7 @@
            má začít. Po použití skoku se na 4 s rozsvítí plnou barvou. -->
       <div v-if="shownTargetMarks.length" class="jump-on-page">
         <div v-for="m in shownTargetMarks" :key="'tm-' + m.id" class="jump-target-mark"
-             :class="{ preview: m.preview }" :style="jumpMarkStyle(m)" />
+             :class="{ preview: m.preview, selected: m.sel }" :style="jumpMarkStyle(m)" />
       </div>
       <div v-if="jumpFlashOnPage" class="jump-on-page">
         <div class="jump-target-mark flash" :style="jumpMarkStyle(jumpFlashOnPage)" />
@@ -804,6 +805,11 @@
       <span>Ťukni na místo, kde máš po skoku začít{{ jumpEnd !== null ? ' (cíl je str. ' + withOffset(dispPage(jumpEnd)) + ')' : '' }}</span>
       <button class="jp-btn" @click="jumpTargetMode = false">Zrušit</button>
     </div>
+    <!-- Prvek skoku označený z okna Skoky — dá se táhnout po notách -->
+    <div v-if="jumpSel && !jumpPlaceMode && !jumpTargetMode" class="jp-place-hint">
+      <span>{{ jumpSel.part === 'btn' ? 'Tlačítko skoku' : 'Značka cíle' }} — tažením přesuň, vzhled měň v okně Skoky</span>
+      <button class="jp-btn" @click="jumpSel = null">Hotovo</button>
+    </div>
 
     <!-- Panel pro vytváření skoku (při umisťování se schová — jinak zakrývá noty) -->
     <!-- ZNAČKY — skoky na písmena/čísla záchytných bodů (Jan, listopad 2026).
@@ -836,32 +842,71 @@
         <button class="jp-btn primary" @click="goToTypedMark">Jdi</button>
       </div>
       <div class="jp-hint">{{ mkScopeHint }}</div>
-      <template v-if="marksNumbers.length">
-        <div class="jp-subtitle marks-sec">Čísla</div>
-        <div class="marks-list">
-          <div v-for="m in marksNumbers" :key="m.id" class="marks-item">
-            <button class="marks-go" @click="goMark(m)" :title="'Skoč na značku ' + m.text">
-              <span class="marks-text">{{ m.text }}</span>
-              <span class="marks-page">str. {{ withOffset(dispPage(m.page)) }}</span>
+      <!-- Seznam značek — STEJNÝ design i ovládání jako seznam záložek
+           (Jan, Nov 2026): táhlo pro pořadí, tužka pro přejmenování na řádku,
+           koš pro smazání. Řazení tažením se ukládá (mkOrder u anotací), do té
+           doby platí výchozí pořadí: čísla číselně, pak písmena abecedně. -->
+      <div v-if="marksOrdered.length" class="jp-list">
+        <div class="jp-subtitle">Značky</div>
+        <template v-for="row in mkRowsView" :key="row.k">
+          <div v-if="row.gap" class="jp-gap" :style="{ height: mkRowH + 'px' }" />
+          <div v-else class="jp-item" :class="{ dragging: mkDragId === row.m.id }">
+            <button
+              class="jp-drag"
+              title="Přetáhnout pro změnu pořadí"
+              @pointerdown="mkDragStart($event, row.m)"
+              @touchstart.stop.prevent="mkNoop"
+              @touchmove.stop.prevent="mkNoop"
+              @touchend.stop="mkNoop"
+              @touchcancel.stop="mkNoop"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/></svg>
             </button>
-            <button class="marks-del" @click="deleteMark(m)" title="Smazat značku">✕</button>
+
+            <!-- Režim úpravy: název značky se mění PŘÍMO na řádku (jako záložky).
+                 Enter/Blur uloží, Escape zavře bez uložení. -->
+            <template v-if="mkEditingId === row.m.id">
+              <span class="jp-item-label dim">str. {{ withOffset(dispPage(row.m.page)) }}</span>
+              <input
+                :ref="setMkEditInput"
+                v-model="mkEditText"
+                class="jp-input jp-input-edit"
+                placeholder="Co je v notách? (A, B, 7…)"
+                @keyup.enter="commitMarkEdit"
+                @keyup.esc="cancelMarkEdit"
+                @blur="commitMarkEdit"
+                @touchstart.stop
+                @touchmove.stop
+                @touchend.stop
+              />
+              <span class="jp-actions">
+                <button class="jp-icon" @mousedown.prevent @click="commitMarkEdit" title="Uložit">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                </button>
+                <button class="jp-icon del" @mousedown.prevent @click="cancelMarkEdit" title="Zrušit">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+                </button>
+              </span>
+            </template>
+            <template v-else>
+              <button class="jp-item-label mk-label" @click="goMark(row.m)" :title="'Skoč na značku ' + row.m.text">
+                <span class="marks-text">{{ row.m.text }}</span>
+                <span class="jp-item-pages">str. {{ withOffset(dispPage(row.m.page)) }}</span>
+              </button>
+              <span class="jp-actions">
+                <button class="jp-icon" @click="startMarkEdit(row.m)" title="Přejmenovat">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+                </button>
+                <button class="jp-icon del" @click="deleteMark(row.m)" title="Smazat">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                </button>
+              </span>
+            </template>
           </div>
-        </div>
-      </template>
-      <template v-if="marksLetters.length">
-        <div class="jp-subtitle marks-sec">Písmena</div>
-        <div class="marks-list">
-          <div v-for="m in marksLetters" :key="m.id" class="marks-item">
-            <button class="marks-go" @click="goMark(m)" :title="'Skoč na značku ' + m.text">
-              <span class="marks-text">{{ m.text }}</span>
-              <span class="marks-page">str. {{ withOffset(dispPage(m.page)) }}</span>
-            </button>
-            <button class="marks-del" @click="deleteMark(m)" title="Smazat značku">✕</button>
-          </div>
-        </div>
-      </template>
-      <div v-if="!marksNumbers.length && !marksLetters.length" class="jp-hint">
-        Zatím žádné značky{{ marksSection ? ' v této záložce' : '' }} — přidej je tlačítkem „Přidat značku“.
+        </template>
+      </div>
+      <div v-else class="jp-hint">
+        Zatím žádné značky — přidej je tlačítkem „Přidat značku“.
       </div>
       <button class="jp-close" @click="closeMarks">Zavřít</button>
     </div>
@@ -887,7 +932,7 @@
       </div>
       <!-- VZHLED: barva a velikost tlačítka (Jan, 18. 11. 2026). Každý skok si
            nese vlastní — VIDE a Da Capo se pak poznají na první pohled. -->
-      <div class="jp-row jp-swatches">
+      <div class="jp-row jp-swatches" data-cfg="btn-color">
         <span class="jp-lbl">Barva</span>
         <button v-for="c in JUMP_COLORS" :key="c" class="jp-sw" :class="{ on: jumpColor === c }"
                 :style="{ background: c, borderColor: c }" @click="jumpColor = c"
@@ -907,15 +952,55 @@
         <button v-if="jumpPlace" class="jp-btn" @click="jumpPlace = null" title="Zrušit umístění">✕</button>
       </div>
       <div v-if="jumpPlaceMode" class="jp-hint">{{ jumpPlaceHint }}</div>
-      <!-- CÍL: kde přesně na cílové stránce začít hrát -->
+      <!-- CÍL: kde přesně na cílové stránce začít hrát. Značka je NEPOVINNÁ —
+           bez ní skok jen otevře cílovou stránku. Když je na cílové stránce
+           umístěná, po skoku se rozsvítí. -->
       <div class="jp-row">
         <button class="jp-btn" @click="startJumpTarget" :class="{ on: jumpTargetMode }">
           {{ jumpToMark ? 'Cíl: str. ' + withOffset(dispPage(jumpToMark.page)) : 'Označit cíl na stránce' }}
         </button>
         <button v-if="jumpToMark" class="jp-btn" @click="jumpToMark = null" title="Zrušit cíl">✕</button>
       </div>
-      <div class="jp-hint">
-        Cíl = místo na cílové stránce, kde po skoku začínáš.
+      <!-- VZHLED ZNAČKY CÍLE: velikost, tvar, barva, tloušťka, výplň.
+           Ukládá se u každého skoku zvlášť. -->
+      <div v-if="jumpToMark" class="jp-mark-cfg">
+        <div class="jp-row">
+          <span class="jp-lbl">Velikost</span>
+          <button v-for="s in JUMP_MARK_SIZES" :key="'ms' + s.k" class="jp-btn sm"
+                  :class="{ on: jumpMarkW === s.w && jumpMarkH === s.h }"
+                  @click="setJumpMarkSize(s)">{{ s.t }}</button>
+        </div>
+        <div class="jp-row">
+          <span class="jp-lbl">Šířka</span>
+          <input type="range" class="jp-range" min="24" max="260" step="2" v-model.number="jumpMarkW" />
+        </div>
+        <div class="jp-row">
+          <span class="jp-lbl">Výška</span>
+          <input type="range" class="jp-range" min="12" max="180" step="2" v-model.number="jumpMarkH" />
+        </div>
+        <div class="jp-row jp-swatches">
+          <span class="jp-lbl">Tvar</span>
+          <button v-for="s in JUMP_MARK_SHAPES" :key="'msh' + s.k" class="jp-btn sm"
+                  :class="{ on: jumpMarkShape === s.k }" @click="jumpMarkShape = s.k">{{ s.t }}</button>
+        </div>
+        <div class="jp-row jp-swatches" data-cfg="mark-color">
+          <span class="jp-lbl">Barva</span>
+          <button class="jp-sw mark-sw same" :class="{ on: !jumpMarkColor }" :style="{ borderColor: jumpColor }"
+                  @click="jumpMarkColor = ''" title="Stejná jako tlačítko">=</button>
+          <button v-for="c in JUMP_COLORS" :key="'mc' + c" class="jp-sw mark-sw"
+                  :class="{ on: jumpMarkColor === c }" :style="{ background: c, borderColor: c }"
+                  @click="jumpMarkColor = c" title="Barva značky cíle"></button>
+        </div>
+        <div class="jp-row jp-swatches">
+          <span class="jp-lbl">Tloušťka</span>
+          <button v-for="b in [1, 2, 3, 4]" :key="'mb' + b" class="jp-btn sm"
+                  :class="{ on: jumpMarkBorder === b }" @click="jumpMarkBorder = b">{{ b }}</button>
+          <button class="jp-btn sm" :class="{ on: jumpMarkFill }" @click="jumpMarkFill = !jumpMarkFill"
+                  :title="'Výplň značky barvou'">{{ jumpMarkFill ? 'Výplň' : 'Bez výplně' }}</button>
+        </div>
+      </div>
+      <div v-if="!jumpToMark" class="jp-hint">
+        Bez značky skok jen otevře cílovou stránku.
       </div>
       <div class="jp-row">
         <span class="jp-item-pages">Str. {{ withOffset(dispPage(currentPage)) }}</span>
@@ -926,12 +1011,34 @@
       <button v-if="jumpEditId" class="jp-close" @click="resetJumpDraft">Zrušit úpravu</button>
       <div v-if="jumps.length" class="jp-list">
         <div class="jp-subtitle">Existující skoky</div>
-        <div v-for="j in jumps" :key="j.id" class="jp-item">
-          <span class="jp-dot" :style="{ background: j.color || JUMP_COLORS[0] }" />
-          <span class="jp-item-label">{{ j.label }}</span>
-          <span class="jp-item-pages">str. {{ withOffset(dispPage(j.fromPage)) }} → {{ withOffset(dispPage(j.toPage)) }}{{ j.toMark ? ' · cíl' : '' }}</span>
-          <button class="jp-del" @click="editJump(j)" title="Upravit skok (text, barvu, velikost, cíl)">✎</button>
-          <button class="jp-del" @click="deleteJump(j)" title="Smazat skok">🗑</button>
+        <!-- Každý skok má pod sebou SVÉ prvky jako samostatné objekty:
+             tlačítko a značku cíle. Klepnutí = skoč tam a označ prvek. -->
+        <div v-for="j in jumps" :key="j.id" class="jp-jump-card" :class="{ editing: jumpEditId === j.id }">
+          <div class="jp-item">
+            <span class="jp-dot" :style="{ background: j.color || JUMP_COLORS[0] }" />
+            <span class="jp-item-label">{{ j.label }}</span>
+            <span class="jp-item-pages">str. {{ withOffset(dispPage(j.fromPage)) }} → {{ withOffset(dispPage(j.toPage)) }}</span>
+            <button class="jp-del" @click="editJump(j)" title="Upravit skok (text, barvu, velikost, cíl)">✎</button>
+            <button class="jp-del" @click="deleteJump(j)" title="Smazat skok">🗑</button>
+          </div>
+          <div class="jp-parts">
+            <button class="jp-part"
+                    :class="{ on: jumpSel && jumpSel.id === j.id && jumpSel.part === 'btn' }"
+                    @click="selectJumpPart(j, 'btn')"
+                    :title="j.place ? 'Skočit na tlačítko a označit ho' : 'Tlačítko je zatím na okraji displeje — klepnutím ho umístíš na noty'">
+              <span class="jp-part-ic">▭</span>
+              <span class="jp-part-name">Tlačítko</span>
+              <span class="jp-part-where">{{ j.place ? 'str. ' + withOffset(dispPage(j.place.page != null ? j.place.page : j.fromPage)) : 'na okraji displeje' }}</span>
+            </button>
+            <button class="jp-part"
+                    :class="{ on: jumpSel && jumpSel.id === j.id && jumpSel.part === 'mark' }"
+                    @click="selectJumpPart(j, 'mark')"
+                    :title="j.toMark ? 'Skočit na značku cíle a označit ji' : 'Značka cíle není — klepnutím ji umístíš'">
+              <span class="jp-part-ic">◎</span>
+              <span class="jp-part-name">Značka cíle</span>
+              <span class="jp-part-where">{{ j.toMark ? 'str. ' + withOffset(dispPage(j.toMark.page)) : 'není' }}</span>
+            </button>
+          </div>
         </div>
       </div>
       <button class="jp-close" @click="toggleJumpMode">Zavřít</button>
@@ -4830,9 +4937,35 @@ const jumpEditId = ref(null);       // id skoku, který se právě upravuje (jin
 // skoku se na 4 s rozsvítí plnou barvou.
 const jumpToMark = ref(null);      // { page, x, y } v souřadnicích anotační vrstvy
 const jumpTargetMode = ref(false); // probíhá ťuknutí na cíl
-const JUMP_MARK_W = 92;            // šířka rámečku cíle v referenčních px stránky
+const JUMP_MARK_W = 92;            // výchozí šířka rámečku cíle v referenčních px stránky
 const JUMP_MARK_H = 56;
-const jumpFlash = ref(null);       // { page, x, y, color } — rozsvícení po skoku
+// VZHLED ZNAČKY CÍLE (Jan, 18. 11. 2026: „tato značka by se však měla dát různě
+// upravit. Velikost, tvar, barva, atd.“). Geometrie se ukládá U KAŽDÉHO SKOKU
+// (`toMark.w/h/shape/border/fill/color`), takže VIDE a Da Capo můžou mít každý
+// jinou. Starší skoky bez těchto polí dostanou výchozí hodnoty (viz
+// `jumpMarkGeom`) — nic se nerozbije.
+const JUMP_MARK_SIZES = [
+  { k: 's', t: 'Malá', w: 62, h: 36 },
+  { k: 'm', t: 'Střední', w: 92, h: 56 },
+  { k: 'l', t: 'Velká', w: 148, h: 88 },
+];
+const JUMP_MARK_SHAPES = [
+  { k: 'rect', t: 'Rámeček' },
+  { k: 'round', t: 'Zaoblený' },
+  { k: 'ellipse', t: 'Elipsa' },
+  { k: 'line', t: 'Podtržení' },
+];
+const jumpMarkW = ref(JUMP_MARK_W);
+const jumpMarkH = ref(JUMP_MARK_H);
+const jumpMarkShape = ref('rect');
+const jumpMarkBorder = ref(2);     // tloušťka linky v ref. px
+const jumpMarkFill = ref(true);    // jemná výplň barvou
+const jumpMarkColor = ref('');     // '' = stejná barva jako tlačítko skoku
+function setJumpMarkSize(s) { jumpMarkW.value = s.w; jumpMarkH.value = s.h; }
+// Prvek skoku označený klepnutím v okně Skoky ({ id, part: 'btn'|'mark' }).
+// Dokud je nastavený, je anotační vrstva aktivní a prvek se dá táhnout po notách.
+const jumpSel = ref(null);
+const jumpFlash = ref(null);       // rozsvícení značky po skoku (plná geometrie)
 let jumpFlashTimer = null;
 // Umístění tlačítka přímo na noty. Sběr tří bodů jako u zvýrazňovače:
 //   1) levý horní   2) levý spodní (spolu s 1. dávají horní a spodní stěnu)
@@ -4852,6 +4985,7 @@ function startJumpPlace() {
   jumpPlaceMode.value = true;
   jumpPlacePoints.value = [];
   jumpPlace.value = null;
+  jumpSel.value = null;   // umisťování a označený prvek se nesmí míchat
   // POZOR: annotMode se tu ZÁMĚRNĚ NEMĚNÍ. Dřív se vypínal, jenže tím se spustil
   // watch na annotMode, který umisťování hned zrušil — a když uživatel měl otevřené
   // anotace, nemohl umístit vůbec nic. Anotační panel se při umisťování jen schová
@@ -4876,6 +5010,7 @@ function startJumpTarget() {
   if (jumpTargetMode.value) { jumpTargetMode.value = false; return; }
   // Sběr bodů pro tlačítko a pro cíl se nesmí míchat
   jumpPlaceMode.value = false; jumpPlacePoints.value = [];
+  jumpSel.value = null;
   jumpTargetMode.value = true;
   // Cíl se klepe na CÍLOVÉ stránce — připomeneme, na kterou že to je
   if (jumpEnd.value !== null && jumpEnd.value !== currentPage.value) {
@@ -4886,26 +5021,78 @@ function commitJumpTarget(p) {
   jumpToMark.value = { page: currentPage.value, x: p.x, y: p.y };
   jumpTargetMode.value = false;
 }
-// Rámeček cíle v CSS px (souřadnice anotační vrstvy → displej)
+// Geometrie značky cíle s podporou starých dat (bez w/h/shape).
+function jumpMarkGeom(m) {
+  const w = Math.max(12, Number(m && m.w) || JUMP_MARK_W);
+  const h = Math.max(12, Number(m && m.h) || JUMP_MARK_H);
+  return {
+    w, h,
+    shape: (m && m.shape) || 'rect',
+    border: Math.max(1, Number(m && m.border) || 2),
+  };
+}
+// Barva s průhledností (výplň značky) — vstup i výstup hex.
+function jumpHexA(hex, a) {
+  const h = String(hex || '').replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  if (full.length < 6) return `rgba(201,168,124,${a})`;
+  const r = parseInt(full.slice(0, 2), 16), g = parseInt(full.slice(2, 4), 16), b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+// Rámeček cíle v CSS px (souřadnice anotační vrstvy → displej).
+// Tvar i tloušťka jdou z dat skoku; `preview`/`flash` řeší CSS jen stylem linky.
 function jumpMarkStyle(m) {
   const s = cssW.value / (cropBox.value.w || 1);
-  const w = JUMP_MARK_W * s, h = JUMP_MARK_H * s;
-  return {
+  const g = jumpMarkGeom(m);
+  const w = g.w * s, h = g.h * s;
+  const color = (m && m.color) || jumpColor.value || JUMP_COLORS[0];
+  const st = {
     left: (m.x - cropBox.value.x) * s - w / 2 + 'px',
     top: (m.y - cropBox.value.y) * s - h / 2 + 'px',
     width: w + 'px', height: h + 'px',
-    borderColor: m.color,
+    borderColor: color,
+    borderRadius: '4px',
+    background: 'transparent',
   };
+  if (g.shape === 'line') {
+    // Podtržení = tlustá linka u spodní hrany obdélníku (výška obdélníku
+    // jen posouvá linku pod označený systém, nekreslí se celý rámeček).
+    st.borderStyle = 'solid';
+    st.borderWidth = `0 0 ${Math.max(2, g.border + 1)}px 0`;
+    st.borderRadius = '2px';
+  } else {
+    st.borderStyle = 'dashed';
+    st.borderWidth = g.border + 'px';
+    if (g.shape === 'ellipse') st.borderRadius = '50%';
+    else if (g.shape === 'round') st.borderRadius = Math.round(Math.min(w, h) * 0.3) + 'px';
+    if (m && m.fill) st.background = jumpHexA(color, 0.16);
+  }
+  return st;
 }
 // Cíle všech skoků na této stránce + rozpracovaný cíl (náhled před uložením)
 const shownTargetMarks = computed(() => {
+  const draft = jumpToMark.value;
   const out = jumps.value
     .filter(j => j.toMark && j.toMark.page === currentPage.value)
-    .map(j => ({ id: j.id, x: j.toMark.x, y: j.toMark.y, color: j.color || JUMP_COLORS[0], preview: false }));
-  const t = jumpToMark.value;
-  if (t && t.page === currentPage.value
-      && !out.some(m => Math.abs(m.x - t.x) < 3 && Math.abs(m.y - t.y) < 3)) {
-    out.push({ id: '__draft', x: t.x, y: t.y, color: jumpColor.value, preview: true });
+    // Právě upravovaný skok kreslí NÁHLED (draft) — jinak by změna velikosti
+    // nebo barvy v panelu na stránce nebyla vidět.
+    .filter(j => !(draft && j.id === jumpEditId.value))
+    .map(j => ({
+      id: j.id, x: j.toMark.x, y: j.toMark.y,
+      w: j.toMark.w, h: j.toMark.h, shape: j.toMark.shape,
+      border: j.toMark.border, fill: j.toMark.fill,
+      color: j.toMark.color || j.color || JUMP_COLORS[0],
+      preview: false,
+      sel: !!(jumpSel.value && jumpSel.value.id === j.id && jumpSel.value.part === 'mark'),
+    }));
+  if (draft && draft.page === currentPage.value
+      && !out.some(m => Math.abs(m.x - draft.x) < 3 && Math.abs(m.y - draft.y) < 3)) {
+    out.push({
+      id: '__draft', x: draft.x, y: draft.y,
+      w: jumpMarkW.value, h: jumpMarkH.value, shape: jumpMarkShape.value,
+      border: jumpMarkBorder.value, fill: jumpMarkFill.value,
+      color: jumpMarkColor.value || jumpColor.value, preview: true, sel: false,
+    });
   }
   return out;
 });
@@ -5059,7 +5246,10 @@ onMounted(async () => {
   // DIAG (jen dev): zvenčí se dostat k renderu stránky a detekci čar, aby šla
   // změřit skutečná geometrie skenu bez hádání. V produkci se nepřidává.
   if (import.meta.env.DEV) {
-    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barInsertArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage, marks, mkPanelOpen, openMarks, startMarkPick, mkLabel, mkInsertAt, saveMark, goToTypedMark, mkJumpValue, findMarkTarget, barJumpMark, gotoPage, jumps, jumpMode, jumpStart, jumpEnd, jumpLabel, jumpColor, jumpSize, jumpPlace, jumpPlaceMode, jumpPlacePoints, jumpToMark, jumpTargetMode, jumpEditId, jumpFlash, toggleJumpMode, saveJump, goJump, editJump, startJumpTarget, commitJumpTarget, startJumpPlace, commitJumpPlace, shownTargetMarks, jumpBoxStyle, jumpStripStyle, JUMP_COLORS, nextPage, prevPage };
+    window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barInsertArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage, marks, mkPanelOpen, openMarks, startMarkPick, mkLabel, mkInsertAt, saveMark, goToTypedMark, mkJumpValue, findMarkTarget, barJumpMark, gotoPage, jumps, jumpMode, jumpStart, jumpEnd, jumpLabel, jumpColor, jumpSize, jumpPlace, jumpPlaceMode, jumpPlacePoints, jumpToMark, jumpTargetMode, jumpEditId, jumpFlash, toggleJumpMode, saveJump, goJump, editJump, startJumpTarget, commitJumpTarget, startJumpPlace, commitJumpPlace, shownTargetMarks, jumpBoxStyle, jumpStripStyle, JUMP_COLORS, jumpMarkStyle,
+    jumpMarkW, jumpMarkH, jumpMarkShape, jumpMarkBorder, jumpMarkFill, jumpMarkColor,
+    JUMP_MARK_SIZES, JUMP_MARK_SHAPES, setJumpMarkSize, selectJumpPart, jumpSel,
+    jumpPartGeom, jumpSelOnPage, nextPage, prevPage };
   }
   await nextTick();
   loadPanelOffsets();   // panely tam, kam si je uživatel odtáhl
@@ -5104,6 +5294,7 @@ onMounted(async () => {
 
   const saved = await dbGetAnnotations(props.id);
   if (saved && Array.isArray(saved.items)) annotations.value.items = saved.items;
+  mkOrder.value = (saved && Array.isArray(saved.mkOrder)) ? saved.mkOrder : null;
   // Razítko soustavy, ve které jsou anotace uložené (viz rebaseAnnotationRef).
   annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
   jumpsRebased = false;
@@ -5960,6 +6151,7 @@ async function switchSong(idx, toEnd) {
   loading.value = true; // loading overlay při přechodu mezi skladbami
   const saved = await dbGetAnnotations(s.id);
   annotations.value.items = (saved && Array.isArray(saved.items)) ? saved.items : [];
+  mkOrder.value = (saved && Array.isArray(saved.mkOrder)) ? saved.mkOrder : null;
   annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
   jumpsRebased = false;
   // Staré noty (směr nožičky v klíči) → nový zápis se `flipY` (viz normalizeNoteFlips)
@@ -6830,6 +7022,36 @@ function onLayerDown(e) {
     if (jumpPlacePoints.value.length === 3) commitJumpPlace();
     return;
   }
+  // Prvek skoku označený z okna Skoky (Tlačítko / Značka cíle): tažení = posun,
+  // ťuknutí mimo = zrušit označení. Běží NEZÁVISLE na nástroji, protože okno
+  // Skoky zůstává otevřené a uživatel v něm rovnou mění vzhled.
+  if (jumpSel.value) {
+    const p3 = toLayerCoords(e);
+    const cur = jumpSelOnPage();
+    const inside = cur && p3.x >= cur.g.x - 6 && p3.x <= cur.g.x + cur.g.w + 6
+      && p3.y >= cur.g.y - 6 && p3.y <= cur.g.y + cur.g.h + 6;
+    if (inside) {
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) { /* starší prohlížeč */ }
+      _activePointerId = e.pointerId;
+      _lastLayerAt = Date.now();
+      if (cur.part === 'btn') {
+        const b = cur.j.place;
+        // Úchop mimo obdélník = posun celého tlačítka (stejné jako ruka)
+        _dragJumpPart = { id: cur.j.id, part: 'btn', from: { x: p3.x, y: p3.y }, snap: { ...b } };
+      } else {
+        _dragJumpPart = {
+          id: cur.j.id, part: 'mark', from: { x: p3.x, y: p3.y },
+          snap: { x: cur.j.toMark.x, y: cur.j.toMark.y },
+        };
+      }
+      _logEv('  jumpSel: tažení ' + cur.part);
+      _prev = p3;
+      return;
+    }
+    jumpSel.value = null;   // ťuknutí mimo označený prvek
+    editingId.value = null;
+    return;
+  }
   // POZOR: úklid mrtvého tahu musí být PŘED větví `penOnly`. Když se dělal až
   // za ní, první dotek prstu s mrtvým pointerem zůstal na `penOnly` větvi
   // (return) a teprve DRUHÝ dotek se dostal k úklidu — přesně Jan: „první
@@ -7187,6 +7409,9 @@ let _lastLayerAt = 0;   // čas posledního pohybu na anotační vrstvě (viz _s
 let _dragAnnot = null;
 // Tažení tlačítka skoku po notách (režim Ruka) — aby si uživatel doladil umístění
 let _dragJump = null, _dragJumpFrom = null, _dragJumpSnap = null;   // prvek přetahovaný v režimu Upravit (ruka)
+// Prvek skoku označený z okna Skoky a tažený po notách (bez ohledu na nástroj):
+// { id, part:'btn'|'mark', from:{x,y}, snap: {...} }
+let _dragJumpPart = null;
 let _dragFrom = null;    // výchozí bod přetažení (x,y)
 let _dragSnap = null;    // snapshot geometrie prvku na začátku přetažení
 // Přesun označeného prvku: rozlišení ťuknutí vs. tah. Ťuknutí (bez pohybu)
@@ -7268,6 +7493,7 @@ function resetGestureState() {
   _dragMoved = false; _dragOff = false; _dragPushed = false;
   _hlEdit = null;
   _dragJump = null; _dragJumpFrom = null; _dragJumpSnap = null;
+  _dragJumpPart = null;
   _prev = null;
   activeItem.value = null;
   _lastLayerAt = 0;
@@ -7303,6 +7529,25 @@ function isFreehand() {
 }
 function onLayerMove(e) {
   _lastLayerAt = Date.now();   // viz _staleGuard — živý tah se pozná podle pohybu
+  // Prvek skoku označený z okna Skoky — posun tlačítka i značky cíle
+  if (_dragJumpPart) {
+    if (_activePointerId !== null && e.pointerId !== _activePointerId) return;
+    const p2 = toLayerCoords(e);
+    const d = _dragJumpPart;
+    const dx = Math.round(p2.x - d.from.x), dy = Math.round(p2.y - d.from.y);
+    const j = jumps.value.find(x => x.id === d.id);
+    if (j && d.part === 'btn' && d.snap) {
+      j.place = { ...d.snap, x: d.snap.x + dx, y: d.snap.y + dy };
+    } else if (j && d.part === 'mark' && j.toMark) {
+      j.toMark = { ...j.toMark, x: d.snap.x + dx, y: d.snap.y + dy };
+      // náhled v panelu držet v synchronu, ať se po uložení neposune jinam
+      if (jumpToMark.value) {
+        jumpToMark.value = { page: jumpToMark.value.page, x: j.toMark.x, y: j.toMark.y };
+      }
+    }
+    _prev = p2;
+    return;
+  }
   // Režim "Upravit": přetahování tlačítka skoku po notách
   if (tool.value === 'edit' && _dragJump && _dragJumpSnap) {
     const p2 = toLayerCoords(e);
@@ -7453,10 +7698,18 @@ function onLayerUp(e) {
   // `pointerleave` NESMÍ ukončit rozpracované tažení v režimu Ruka — jinak se
   // přesun/změna rozměru utrhne ve chvíli, kdy prst přejede přes plovoucí panel.
   // (Pointer capture v onLayerDown dělá totéž; tohle je pojistka.)
-  if (e && e.type === 'pointerleave' && (_hlEdit || _dragAnnot || _dragJump)) return;
+  if (e && e.type === 'pointerleave' && (_hlEdit || _dragAnnot || _dragJump || _dragJumpPart)) return;
   // Pero ukončilo tah → drž krátký ochranný interval, po který dotyk
   // (opřená ruka se zpožděným touchendem) nesmí otočit stránku.
   if (e && e.pointerType === 'pen') markPen();
+  // Tažení prvku skoku označeného z okna Skoky → uložit novou pozici
+  if (_dragJumpPart) {
+    dbSaveJumps({ songId: song.id, items: jumps.value });
+    _dragJumpPart = null;
+    _activePointerId = null;
+    _prev = null;
+    return;
+  }
   // Režim "Upravit": ukončit přetahování, uložit novou pozici
   if (tool.value === 'edit') {
     // Přesun tlačítka skoku → uložit nové umístění do DB
@@ -8237,7 +8490,8 @@ function annotRefStamp() {
   return { w: Math.round(refW.value), h: Math.round(refH.value) };
 }
 function annotationsForDb(items) {
-  return { songId: song.id, items, ref: annotRefStamp() };
+  // mkOrder = ruční pořadí značek (null = výchozí řazení čísla/písmena).
+  return { songId: song.id, items, ref: annotRefStamp(), mkOrder: Array.isArray(mkOrder.value) ? mkOrder.value : null };
 }
 // Přepočet všech druhů anotací jedním měřítkem (ref je vždy stejný poměr stran,
 // takže x i y se škálují stejně — jinak by se poznámky rozjely po ose).
@@ -8516,6 +8770,11 @@ function resetJumpDraft() {
   jumpColor.value = JUMP_COLORS[0]; jumpSize.value = 'm';
   jumpPlace.value = null; jumpPlaceMode.value = false; jumpPlacePoints.value = [];
   jumpToMark.value = null; jumpTargetMode.value = false;
+  // vzhled značky cíle zpět na výchozí
+  jumpMarkW.value = JUMP_MARK_W; jumpMarkH.value = JUMP_MARK_H;
+  jumpMarkShape.value = 'rect'; jumpMarkBorder.value = 2;
+  jumpMarkFill.value = true; jumpMarkColor.value = '';
+  jumpSel.value = null;
 }
 function toggleJumpMode() {
   if (jumpMode.value) { jumpMode.value = false; resetJumpDraft(); return; }
@@ -8550,7 +8809,13 @@ function editJump(j) {
   jumpSize.value = j.size || 'm';
   jumpPlace.value = j.place ? { ...j.place } : null;
   jumpPlaceMode.value = false; jumpPlacePoints.value = [];
-  jumpToMark.value = j.toMark ? { ...j.toMark } : null;
+  jumpToMark.value = j.toMark ? { page: j.toMark.page, x: j.toMark.x, y: j.toMark.y } : null;
+  // vzhled značky cíle z dat skoku (starší skoky bez polí → výchozí hodnoty)
+  const mg = jumpMarkGeom(j.toMark);
+  jumpMarkW.value = mg.w; jumpMarkH.value = mg.h;
+  jumpMarkShape.value = mg.shape; jumpMarkBorder.value = mg.border;
+  jumpMarkFill.value = j.toMark ? !!j.toMark.fill : true;
+  jumpMarkColor.value = (j.toMark && j.toMark.color) || '';
   jumpTargetMode.value = false;
   jumpMode.value = true;
   showToast('Úprava skoku — změň a ulož');
@@ -8565,7 +8830,17 @@ async function saveJump() {
     color: jumpColor.value, size: jumpSize.value,
     // Umístění na stránce (nepovinné) — kde přesně má tlačítko na notách stát
     place: jumpPlace.value ? { ...jumpPlace.value } : null,
-    toMark: jumpToMark.value ? { ...jumpToMark.value } : null,
+    // Cíl = pozice + CELÝ vzhled značky (velikost, tvar, barva, tloušťka, výplň).
+    // Bez cíle skok jen otevře cílovou stránku — to je platný stav.
+    toMark: jumpToMark.value ? {
+      page: jumpToMark.value.page,
+      x: Math.round(jumpToMark.value.x), y: Math.round(jumpToMark.value.y),
+      w: Math.round(jumpMarkW.value), h: Math.round(jumpMarkH.value),
+      shape: jumpMarkShape.value,
+      border: jumpMarkBorder.value,
+      fill: !!jumpMarkFill.value,
+      color: jumpMarkColor.value || '',
+    } : null,
   };
   const i = jumpEditId.value ? jumps.value.findIndex(x => x.id === jumpEditId.value) : -1;
   if (i >= 0) jumps.value[i] = { ...jumps.value[i], ...item };   // id zůstává
@@ -8579,7 +8854,12 @@ async function goJump(j) {
   await gotoPage(j.toPage);
   const t = j.toMark;
   if (t && t.page === j.toPage) {
-    jumpFlash.value = { page: j.toPage, x: t.x, y: t.y, color: j.color || JUMP_COLORS[0] };
+    // Rozsvítí se STEJNÝ tvar/velikost/barva, jakou má značka uložená
+    jumpFlash.value = {
+      page: j.toPage, x: t.x, y: t.y,
+      w: t.w, h: t.h, shape: t.shape, border: t.border, fill: t.fill,
+      color: t.color || j.color || JUMP_COLORS[0],
+    };
     if (jumpFlashTimer) clearTimeout(jumpFlashTimer);
     jumpFlashTimer = setTimeout(() => { jumpFlash.value = null; }, 4000);
   }
@@ -8587,8 +8867,58 @@ async function goJump(j) {
 async function deleteJump(j) {
   if (confirm(`Smazat skok „${j.label}"?`)) {
     jumps.value = jumps.value.filter(x => x.id !== j.id);
+    if (jumpSel.value && jumpSel.value.id === j.id) jumpSel.value = null;
     await dbSaveJumps({ songId: song.id, items: jumps.value });
   }
+}
+
+// --- Prvky skoku jako samostatné objekty v okně Skoky (Jan, 18. 11. 2026) ----
+// Pod každým skokem jsou dva zanořené řádky: „Tlačítko“ a „Značka cíle“.
+// Klepnutí na ně = appka skočí na stránku, kde prvek leží, a ROVNOU ho označí
+// (rámeček + lze ho táhnout po notách). Když prvek ještě neexistuje, nabídne
+// se jeho vytvoření — tři body pro tlačítko, ťuknutí pro značku.
+function jumpPartGeom(j, part) {
+  if (!j) return null;
+  if (part === 'btn') return j.place ? { ...j.place } : null;
+  if (!j.toMark) return null;
+  const g = jumpMarkGeom(j.toMark);
+  return { x: j.toMark.x - g.w / 2, y: j.toMark.y - g.h / 2, w: g.w, h: g.h, page: j.toMark.page };
+}
+// Označený prvek, pokud opravdu leží na PRÁVĚ zobrazené stránce
+function jumpSelOnPage() {
+  const sel = jumpSel.value;
+  if (!sel) return null;
+  const j = jumps.value.find(x => x.id === sel.id);
+  if (!j) return null;
+  const g = jumpPartGeom(j, sel.part);
+  if (!g) return null;
+  const pg = g.page != null ? g.page : (sel.part === 'btn' ? j.fromPage : j.toPage);
+  if (pg !== currentPage.value) return null;
+  return { j, g, part: sel.part, page: pg };
+}
+async function selectJumpPart(j, part) {
+  resetJumpDraft();
+  editJump(j);                 // panel = úprava TOHOTO skoku (včetně vzhledu cíle)
+  const g = jumpPartGeom(j, part);
+  if (!g) {
+    // prvek ještě není umístěný → nabídni rovnou jeho vytvoření
+    if (part === 'btn') {
+      jumpStart.value = j.fromPage; jumpEnd.value = j.toPage;
+      startJumpPlace();
+      showToast('Tlačítko leží na okraji displeje — naklepej 3 body, kam ho chceš');
+    } else {
+      jumpStart.value = j.fromPage; jumpEnd.value = j.toPage;
+      if (j.toPage !== currentPage.value) await gotoPage(j.toPage);
+      startJumpTarget();
+    }
+    return;
+  }
+  const pg = g.page != null ? g.page : (part === 'btn' ? j.fromPage : j.toPage);
+  jumpSel.value = { id: j.id, part };
+  if (pg !== currentPage.value) await gotoPage(pg);
+  showToast(part === 'btn'
+    ? 'Tlačítko označeno — tažením ho přesuň'
+    : 'Značka cíle označena — tažením ji přesuň');
 }
 
 // --- Ruční zadání čísla stránky (indikátor nahoře) ---
@@ -8818,6 +9148,16 @@ const mkInsertAt = ref(null);        // { page, x, y } — kam se značka vlož�
 const mkLabel = ref('');             // co uživatel opsal
 const mkJumpValue = ref('');
 const mkInputEl = ref(null);
+// Správa značek = stejné ovládání jako u záložek (Jan, Nov 2026):
+// pořadí tažením (mkOrder), přejmenování na řádku, smazání.
+const mkOrder = ref(null);           // pole id v ručním pořadí (null = výchozí řazení)
+const mkEditingId = ref(null);
+const mkEditText = ref('');
+const mkEditInput = ref(null);
+const mkDragId = ref(null);
+const mkGapIndex = ref(-1);
+const mkRowH = ref(0);
+let _mkDrag = null;
 
 const marks = computed(() => (annotations.value.items || [])
   .filter(it => it && it.mk && Number.isFinite(Number(it.x)) && Number.isFinite(Number(it.y)))
@@ -8837,18 +9177,34 @@ const marksScoped = computed(() => {
   return marks.value.filter(m => pages.has(m.page));
 });
 const isMarkNumber = (t) => /^-?\d+$/.test(String(t).trim());
-// Dvě sekce: čísla (číselně) a písmena (abecedně, česky).
-const marksNumbers = computed(() => marksScoped.value.filter(m => isMarkNumber(m.text))
-  .sort((a, b) => Number(a.text) - Number(b.text) || a.page - b.page || a.y - b.y));
-const marksLetters = computed(() => marksScoped.value.filter(m => !isMarkNumber(m.text))
-  .sort((a, b) => a.text.localeCompare(b.text, 'cs', { sensitivity: 'base' })
-    || a.page - b.page || a.y - b.y));
+// VÝCHOZÍ pořadí v seznamu: čísla číselně, pak písmena abecedně (česky).
+// Jakmile uživatel řádek přetáhne, platí ruční pořadí z `mkOrder` (ukládá se
+// k anotacím, takže přežije reload i přepnutí skladby).
+const marksDefaultOrdered = computed(() => [
+  ...marks.value.filter(m => isMarkNumber(m.text))
+    .sort((a, b) => Number(a.text) - Number(b.text) || a.page - b.page || a.y - b.y),
+  ...marks.value.filter(m => !isMarkNumber(m.text))
+    .sort((a, b) => a.text.localeCompare(b.text, 'cs', { sensitivity: 'base' })
+      || a.page - b.page || a.y - b.y),
+]);
+const marksOrdered = computed(() => {
+  const byId = new Map(marks.value.map(m => [m.id, m]));
+  const ids = [];
+  const seen = new Set();
+  for (const id of (Array.isArray(mkOrder.value) ? mkOrder.value : [])) {
+    if (byId.has(id) && !seen.has(id)) { seen.add(id); ids.push(id); }
+  }
+  for (const m of marksDefaultOrdered.value) {
+    if (!seen.has(m.id)) { seen.add(m.id); ids.push(m.id); }
+  }
+  return ids.map(id => byId.get(id)).filter(Boolean);
+});
 const mkScopeHint = computed(() => {
   const sec = marksSection.value;
-  const n = marksScoped.value.length;
-  if (!sec) return 'Bez záložek se hledá v celém díle · značek celkem ' + n + '.';
-  return 'Hledá v této záložce (od str. ' + withOffset(dispPage(visiblePages.value[sec.start]))
-    + ' do ' + withOffset(dispPage(visiblePages.value[sec.end])) + ') · značek ' + n + '.';
+  const n = marks.value.length;
+  if (!sec) return 'Bez záložek se skok hledá v celém díle · značek celkem ' + n + '.';
+  return 'Skok hledá v této záložce (od str. ' + withOffset(dispPage(visiblePages.value[sec.start]))
+    + ' do ' + withOffset(dispPage(visiblePages.value[sec.end])) + ') · značek celkem ' + n + '.';
 });
 
 function openMarks() {
@@ -8864,8 +9220,12 @@ function openMarks() {
   endEdit();
   cancelMarkPick();
   cancelMarkInsert();
+  cancelMarkEdit();
 }
 async function closeMarks() {
+  // Rozepsané přejmenování se při zavření uloží (zavření panelu = potvrzení),
+  // stejně jako u záložek.
+  if (mkEditingId.value) await commitMarkEdit();
   mkPanelOpen.value = false;
   cancelMarkPick();
   cancelMarkInsert();
@@ -8915,6 +9275,9 @@ async function saveMark() {
       text, size: 12, color: '#0b6bff', opacity: 1, border: false,
       x: at.x, y: at.y,
     });
+    // Ruční pořadí: nová značka jde na konec seznamu (nikdy nepřeskočí
+    // značky, které si uživatel přerovnal).
+    if (Array.isArray(mkOrder.value)) mkOrder.value = [...mkOrder.value, items[items.length - 1].id];
   }
   saveAnnotations();
   cancelMarkInsert();
@@ -8925,6 +9288,9 @@ function deleteMark(m) {
   if (!m) return;
   pushHistory();
   annotations.value.items = annotations.value.items.filter(it => !(it && it.id === m.id));
+  // Pořadí drží jen existující značky (mrtvé id by se jinak hromadily).
+  if (Array.isArray(mkOrder.value)) mkOrder.value = mkOrder.value.filter(id => id !== m.id);
+  if (mkEditingId.value === m.id) cancelMarkEdit();
   saveAnnotations();
   showToast('Značka „' + m.text + '“ smazána');
 }
@@ -8998,6 +9364,153 @@ function goMark(m) {
   markMarkJump(m);
   showToast('Značka ' + m.text + ' — str. ' + withOffset(dispPage(m.page)));
 }
+
+// --- Správa značek: stejné ovládání jako u záložek ---
+// (táhlo pro pořadí, přejmenování přímo na řádku, koš). Záměrně zkopírovaná
+// logika bm* (ne sdílená abstrakce) — seznam záložek je odladěný a nemá se
+// čeho dotknout; tady jde jen o jiná data.
+function mkNoop() {}
+
+const mkRowsView = computed(() => {
+  const arr = marksOrdered.value || [];
+  const dragId = mkDragId.value;
+  const plain = () => arr.map(m => ({ k: m.id, m, gap: false }));
+  if (!dragId || mkGapIndex.value < 0) return plain();
+  const di = arr.findIndex(x => x.id === dragId);
+  if (di < 0) return plain();
+  const rest = arr.filter((_, i) => i !== di).map(m => ({ k: m.id, m, gap: false }));
+  const gi = Math.max(0, Math.min(rest.length, mkGapIndex.value));
+  rest.splice(gi, 0, { k: '__mk_gap__', m: null, gap: true });
+  return rest;
+});
+
+function setMkEditInput(el) { mkEditInput.value = el; }
+function startMarkEdit(m) {
+  if (!m) return;
+  mkEditingId.value = m.id;
+  mkEditText.value = m.text || '';
+  nextTick(() => {
+    const el = mkEditInput.value;
+    if (el) { el.focus(); el.select?.(); }
+  });
+}
+function cancelMarkEdit() {
+  mkEditingId.value = null;
+  mkEditText.value = '';
+}
+async function commitMarkEdit() {
+  const id = mkEditingId.value;
+  if (!id) return;
+  const it = annotations.value.items.find(x => x && x.id === id);
+  const text = String(mkEditText.value || '').trim();
+  // Prázdný text by značku z rejstříku vyhodil (nemá co hledat) — zahodit.
+  if (it && text && String(it.text == null ? '' : it.text).trim() !== text) {
+    pushHistory();
+    it.text = text;
+    await flushAnnotations();
+    showToast('Značka přejmenována na „' + text + '“');
+  }
+  cancelMarkEdit();
+}
+
+function mkDetach() {
+  window.removeEventListener('pointermove', mkDragMove, true);
+  window.removeEventListener('pointerup', mkDragEnd, true);
+  window.removeEventListener('pointercancel', mkDragCancel, true);
+}
+function mkCleanup() {
+  const d = _mkDrag;
+  _mkDrag = null;
+  mkDetach();
+  if (d) {
+    if (d.ghost && d.ghost.parentNode) d.ghost.parentNode.removeChild(d.ghost);
+    if (d.handle && d.pointerId != null) {
+      try { d.handle.releasePointerCapture(d.pointerId); } catch (err) { /* ignorovat */ }
+    }
+  }
+  mkDragId.value = null;
+  mkGapIndex.value = -1;
+}
+function mkMakeGhost(d) {
+  const g = d.row.cloneNode(true);
+  g.classList.add('jp-ghost');
+  g.style.position = 'fixed';
+  g.style.left = d.rect.left + 'px';
+  g.style.top = d.rect.top + 'px';
+  g.style.width = d.rect.width + 'px';
+  g.style.height = d.rect.height + 'px';
+  g.style.margin = '0';
+  g.style.pointerEvents = 'none';
+  g.style.zIndex = '9999';
+  g.style.transform = 'translate3d(0, 0, 0)';
+  document.body.appendChild(g);
+  return g;
+}
+function mkDragStart(e, m) {
+  if (_mkDrag) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  const handle = e.currentTarget;
+  const row = handle.closest('.jp-item');
+  const list = handle.closest('.jp-list');
+  if (!row || !list) return;
+  const els = Array.from(list.querySelectorAll('.jp-item'));
+  const rect = row.getBoundingClientRect();
+  _mkDrag = {
+    id: m.id, handle, row, list, pointerId: e.pointerId,
+    startY: e.clientY, rect, grab: e.clientY - rect.top,
+    from: els.indexOf(row),
+    rows: els.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, h: r.height }; }),
+    moved: false, ghost: null,
+  };
+  try { handle.setPointerCapture(e.pointerId); } catch (err) { /* ignorovat */ }
+  window.addEventListener('pointermove', mkDragMove, { capture: true, passive: false });
+  window.addEventListener('pointerup', mkDragEnd, true);
+  window.addEventListener('pointercancel', mkDragCancel, true);
+  e.stopPropagation();
+  e.preventDefault();
+}
+function mkDragMove(e) {
+  const d = _mkDrag;
+  if (!d) return;
+  if (d.pointerId != null && e.pointerId != null && e.pointerId !== d.pointerId) return;
+  if (e.cancelable) e.preventDefault();
+  if (!d.moved) {
+    if (Math.abs(e.clientY - d.startY) < 6) return;
+    d.moved = true;
+    mkRowH.value = d.rect.height;
+    d.ghost = mkMakeGhost(d);
+    mkDragId.value = d.id;
+    mkGapIndex.value = d.from;
+  }
+  if (d.ghost) d.ghost.style.transform = `translate3d(0, ${e.clientY - d.startY}px, 0)`;
+  const center = e.clientY - d.grab + d.rect.height / 2;
+  let target = 0;
+  for (let k = 0; k < d.rows.length; k++) {
+    if (k === d.from) continue;
+    if (d.rows[k].top + d.rows[k].h / 2 < center) target++;
+  }
+  if (target !== mkGapIndex.value) mkGapIndex.value = target;
+}
+async function mkDragEnd(e) {
+  const d = _mkDrag;
+  if (!d) return;
+  if (e && d.pointerId != null && e.pointerId != null && e.pointerId !== d.pointerId) return;
+  const moved = d.moved;
+  const id = d.id;
+  const target = mkGapIndex.value;
+  mkCleanup();
+  if (!moved) return;
+  const arr = marksOrdered.value.map(m => m.id);
+  const from = arr.indexOf(id);
+  if (from < 0) return;
+  const [item] = arr.splice(from, 1);
+  const to = Math.max(0, Math.min(arr.length, target));
+  arr.splice(to, 0, item);
+  if (to === from) return;
+  mkOrder.value = arr;      // ruční pořadí → drží se i po reloadu
+  await flushAnnotations();
+}
+function mkDragCancel() { mkCleanup(); }
 
 // --- Záložky (konkrétní stránky) ---
 function resetBookmarkEdit() {
@@ -9911,8 +10424,16 @@ async function deleteBookmark(b) {
 }
 /* Rozpracovaný cíl (ještě neuložený) = tečkovaně a výrazněji */
 .jump-target-mark.preview { border-style: dotted; opacity: 0.85; }
-/* Po použití skoku se cíl na 4 s rozsvítí plnou barvou, aby ho oko našlo */
-.jump-target-mark.flash { border-style: solid; border-width: 3px; opacity: 1; }
+/* Po použití skoku se cíl na 4 s rozsvítí plnou barvou, aby ho oko našlo.
+   Tloušťka i tvar zůstávají z dat skoku — CSS jen zjasní linku. */
+.jump-target-mark.flash { border-style: solid; opacity: 1; }
+/* Označený prvek skoku (klepnutí na „Tlačítko“ / „Značku cíle“ v okně Skoky).
+   Plný akcentní rámeček mimo prvek — žádný glow (mobilní PWA, Jan). */
+.jump-target-mark.selected,
+.jump-on-btn.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 
 /* --- PŘETAHOVÁNÍ PANELŮ (Jan, Oct 2026) ---
    Panely (anotace, zvětšení, rotace, odebrání stránek, skoky, záložky) se dají
@@ -9963,6 +10484,29 @@ async function deleteBookmark(b) {
   padding: 0; cursor: pointer; touch-action: manipulation;
 }
 .jp-sw.on { box-shadow: 0 0 0 2px var(--text); }
+/* „Stejná barva jako tlačítko“ — jen obrys v barvě tlačítka */
+.jp-sw.same {
+  background: var(--bg-elev2); color: var(--text); font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  border-width: 2px; border-style: solid;
+}
+/* Posuvníky šířky/výšky značky cíle */
+.jp-range { flex: 1; min-width: 0; accent-color: var(--accent); height: 24px; }
+.jp-mark-cfg { display: flex; flex-direction: column; gap: 6px; }
+/* --- Prvky skoku zanořené pod skokem v seznamu (tlačítko / značka cíle) --- */
+.jp-jump-card { display: flex; flex-direction: column; gap: 5px; }
+.jp-jump-card.editing > .jp-item { border-color: var(--accent); }
+.jp-parts { display: flex; flex-direction: column; gap: 4px; padding-left: 20px; }
+.jp-part {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: transparent; border: 1px dashed var(--border); border-radius: 9px;
+  padding: 6px 9px; color: var(--text-dim); font-size: 0.78rem;
+  text-align: left; cursor: pointer; touch-action: manipulation;
+}
+.jp-part.on { border-style: solid; border-color: var(--accent); color: var(--text); }
+.jp-part-ic { flex: 0 0 auto; font-size: 0.95rem; }
+.jp-part-name { font-weight: 600; flex: 0 0 auto; }
+.jp-part-where { margin-left: auto; font-size: 0.72rem; opacity: 0.9; white-space: nowrap; }
 /* Barevná tečka u položky v seznamu skoků */
 .jp-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .jp-input {
@@ -10208,8 +10752,20 @@ async function deleteBookmark(b) {
   border: 1px dashed var(--accent); border-radius: 10px;
   background: transparent;
 }
-/* Duch taženého řádku: plave pod prstem, nesahá na události. */
-.jp-item.bm-ghost {
+/* Značky — seznam má stejný vzhled jako seznam záložek (jp-item).
+   Jen popisek je tlačítko (klepnutí = skok na značku). */
+.mk-label {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center;
+  justify-content: space-between; gap: 8px;
+  background: transparent; border: none; padding: 0; margin: 0;
+  color: var(--text); font: inherit; text-align: left;
+  cursor: pointer; touch-action: manipulation;
+}
+.mk-label:active { color: var(--accent); }
+
+/* Duch taženého řádku (záložky i značky) — plave pod prstem. */
+.jp-item.bm-ghost,
+.jp-item.jp-ghost {
   border-color: var(--accent);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
   will-change: transform;
