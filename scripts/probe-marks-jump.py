@@ -103,7 +103,8 @@ async def main():
 
         s1 = await st(h)
         print("panel:", s1)
-        ok("seznam značek je jeden (jako u záložek)", s1["secs"] == ["Značky"], str(s1["secs"]))
+        ok("bez záložek je seznam bez nadpisů (jeden seznam)",
+           s1["secs"] == [], str(s1["secs"]))
         # výchozí pořadí: čísla číselně, pak písmena abecedně
         ok("čísla číselně (7, 12), pak písmena (A, C)",
            [i["text"] for i in s1["items"]] == ["7", "12", "A", "C"], str(s1["items"]))
@@ -170,10 +171,12 @@ async def main():
             await asyncio.sleep(0.5)
         s2 = await st(h)
         print("v části 1:", s2)
-        # Seznam (správa) ukazuje VŠECHNY značky díla — skok ale dál hledá jen
-        # v rozsahu aktuální záložky (část 1 = str. 1–4, kde jsou A a C).
-        ok("seznam pro správu ukazuje všechny značky díla",
-           [i["text"] for i in s2["items"]] == ["7", "12", "A", "C"], str(s2["items"]))
+        # Seznam (správa) ukazuje VŠECHNY značky díla, rozdělené podle záložek;
+        # skok ale dál hledá jen v rozsahu aktuální záložky (část 1 = str. 1–4).
+        ok("seznam je rozdělený podle záložek (statické nadpisy)",
+           s2["secs"] == ["Část 1", "Část 2"], str(s2["secs"]))
+        ok("značky jsou pod svou záložkou (část 1: A, C · část 2: 7, 12)",
+           [i["text"] for i in s2["items"]] == ["A", "C", "7", "12"], str(s2["items"]))
         t7 = json.loads(await h.ev("(() => JSON.stringify(window.__barDev.findMarkTarget('7')))()"))
         ok("skok na „7“ z části 1 zůstane v této záložce",
            t7 and 0 <= t7["page"] <= 3, str(t7))

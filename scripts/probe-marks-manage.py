@@ -81,8 +81,11 @@ new Promise((resolve) => {
 STATE = r"""
 (() => {
   const rows = [...document.querySelectorAll('.marks-panel .jp-list .jp-item')];
+  const titles = [...document.querySelectorAll('.marks-panel .jp-list .mk-group-title')];
   return {
     rows: rows.length,
+    titles: titles.map(e => e.textContent.trim()),
+    titlesStatic: titles.every(e => !e.querySelector('input, button') && e.tagName === 'DIV'),
     texts: rows.map(el => (el.querySelector('.marks-text') || {}).textContent?.trim() || null),
     each: rows.map(el => ({
       drag: !!el.querySelector('.jp-drag'),
@@ -198,6 +201,8 @@ async def main():
         await asyncio.sleep(0.3)
         st = await h.ev(STATE)
         c(st["rows"] == 4, f"4 řádky seznamu (je {st['rows']})")
+        c(st["titles"] == ["Intro"], f"skupina podle záložky (Intro; prázdná Coda se nekreslí): {st['titles']}")
+        c(st["titlesStatic"], "nadpis záložky je statický text (žádný input ani tlačítko)")
         c(st["texts"] == ["5", "12", "A", "B"], f"výchozí pořadí čísla→písmena: {st['texts']}")
         c(all(x["drag"] and x["icons"] == 2 for x in st["each"]),
           f"každý řádek má táhlo a 2 ikony: {st['each']}")

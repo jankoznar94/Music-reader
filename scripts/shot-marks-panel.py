@@ -3,8 +3,8 @@
 
 Značky se do stránky vloží přímo (dev `__barDev.annotations`) — jde jen o to,
 jak panel vypadá; funkčnost ověřuje `probe-marks-jump.py`.
-Záložky se pro tuto skladbu vynulují (seznam značek je od Nov 2026 jeden a
-ukazuje všechny značky díla).
+Záložky se nasadí dvě (Intro / Coda) — seznam značek je od 20. 11. 2026
+rozděluje na skupiny se statickým nadpisem záložky.
 """
 import asyncio
 import base64
@@ -28,15 +28,19 @@ def _load():
 
 m = _load()
 
-CLEAR_BM = """(async () => {
+# Záložky se nasadí dvě — seznam značek je rozděluje na skupiny (statické
+# nadpisy), tak je na screenshotu vidět skutečné chování.
+SEED_BM = """(async () => {
   const songId = location.pathname.split('/').pop();
   const db = await new Promise((res, rej) => {
     const r = indexedDB.open('noty-app');
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
   await new Promise((res, rej) => {
+    const items = [{ id: 'shot-bm-1', page: 0, label: 'Intro' },
+                   { id: 'shot-bm-2', page: 4, label: 'Coda' }];
     const tx = db.transaction('bookmarks', 'readwrite');
-    tx.objectStore('bookmarks').put({ songId, items: [], manualOrder: false });
+    tx.objectStore('bookmarks').put({ songId, items, manualOrder: true });
     tx.oncomplete = () => res(1); tx.onerror = () => rej(tx.error);
   });
   db.close();
@@ -63,7 +67,7 @@ async def main():
         await h.open()
         await h.open_song(m.make_pdf(8), reset=False)
         await asyncio.sleep(1.0)
-        print("song:", await h.ev(CLEAR_BM, await_promise=True))
+        print("song:", await h.ev(SEED_BM, await_promise=True))
         await h.cdp("Page.reload")
         await h.wait_for("!!document.querySelector('.tb-page')", 40, "znovu prohlížeč")
         await asyncio.sleep(1.5)

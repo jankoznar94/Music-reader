@@ -847,61 +847,68 @@
            koš pro smazání. Řazení tažením se ukládá (mkOrder u anotací), do té
            doby platí výchozí pořadí: čísla číselně, pak písmena abecedně. -->
       <div v-if="marksOrdered.length" class="jp-list">
-        <div class="jp-subtitle">Značky</div>
-        <template v-for="row in mkRowsView" :key="row.k">
-          <div v-if="row.gap" class="jp-gap" :style="{ height: mkRowH + 'px' }" />
-          <div v-else class="jp-item" :class="{ dragging: mkDragId === row.m.id }">
-            <button
-              class="jp-drag"
-              title="Přetáhnout pro změnu pořadí"
-              @pointerdown="mkDragStart($event, row.m)"
-              @touchstart.stop.prevent="mkNoop"
-              @touchmove.stop.prevent="mkNoop"
-              @touchend.stop="mkNoop"
-              @touchcancel.stop="mkNoop"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/></svg>
-            </button>
-
-            <!-- Režim úpravy: název značky se mění PŘÍMO na řádku (jako záložky).
-                 Enter/Blur uloží, Escape zavře bez uložení. -->
-            <template v-if="mkEditingId === row.m.id">
-              <span class="jp-item-label dim">str. {{ withOffset(dispPage(row.m.page)) }}</span>
-              <input
-                :ref="setMkEditInput"
-                v-model="mkEditText"
-                class="jp-input jp-input-edit"
-                placeholder="Co je v notách? (A, B, 7…)"
-                @keyup.enter="commitMarkEdit"
-                @keyup.esc="cancelMarkEdit"
-                @blur="commitMarkEdit"
-                @touchstart.stop
-                @touchmove.stop
-                @touchend.stop
-              />
-              <span class="jp-actions">
-                <button class="jp-icon" @mousedown.prevent @click="commitMarkEdit" title="Uložit">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-                </button>
-                <button class="jp-icon del" @mousedown.prevent @click="cancelMarkEdit" title="Zrušit">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
-                </button>
-              </span>
-            </template>
-            <template v-else>
-              <button class="jp-item-label mk-label" @click="goMark(row.m)" :title="'Skoč na značku ' + row.m.text">
-                <span class="marks-text">{{ row.m.text }}</span>
-                <span class="jp-item-pages">str. {{ withOffset(dispPage(row.m.page)) }}</span>
+        <!-- Značky jsou vizuálně rozdělené podle ZÁLOŽEK (Jan, 20. 11. 2026).
+             Nadpis skupiny je statický text záložky — needituje se tu, záložky
+             se spravují ve svém panelu; mění se jen značky pod ním. -->
+        <template v-for="g in mkGroupsView" :key="g.key">
+          <div v-if="g.title" class="jp-subtitle mk-group-title">{{ g.title }}</div>
+          <div class="mk-group">
+          <template v-for="row in g.rows" :key="row.k">
+            <div v-if="row.gap" class="jp-gap" :style="{ height: mkRowH + 'px' }" />
+            <div v-else class="jp-item" :data-mk-id="row.m.id" :class="{ dragging: mkDragId === row.m.id }">
+              <button
+                class="jp-drag"
+                title="Přetáhnout pro změnu pořadí"
+                @pointerdown="mkDragStart($event, row.m)"
+                @touchstart.stop.prevent="mkNoop"
+                @touchmove.stop.prevent="mkNoop"
+                @touchend.stop="mkNoop"
+                @touchcancel.stop="mkNoop"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9h16"/><path d="M4 15h16"/></svg>
               </button>
-              <span class="jp-actions">
-                <button class="jp-icon" @click="startMarkEdit(row.m)" title="Přejmenovat">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+
+              <!-- Režim úpravy: název značky se mění PŘÍMO na řádku (jako záložky).
+                   Enter/Blur uloží, Escape zavře bez uložení. -->
+              <template v-if="mkEditingId === row.m.id">
+                <span class="jp-item-label dim">str. {{ withOffset(dispPage(row.m.page)) }}</span>
+                <input
+                  :ref="setMkEditInput"
+                  v-model="mkEditText"
+                  class="jp-input jp-input-edit"
+                  placeholder="Co je v notách? (A, B, 7…)"
+                  @keyup.enter="commitMarkEdit"
+                  @keyup.esc="cancelMarkEdit"
+                  @blur="commitMarkEdit"
+                  @touchstart.stop
+                  @touchmove.stop
+                  @touchend.stop
+                />
+                <span class="jp-actions">
+                  <button class="jp-icon" @mousedown.prevent @click="commitMarkEdit" title="Uložit">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                  </button>
+                  <button class="jp-icon del" @mousedown.prevent @click="cancelMarkEdit" title="Zrušit">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+                  </button>
+                </span>
+              </template>
+              <template v-else>
+                <button class="jp-item-label mk-label" @click="goMark(row.m)" :title="'Skoč na značku ' + row.m.text">
+                  <span class="marks-text">{{ row.m.text }}</span>
+                  <span class="jp-item-pages">str. {{ withOffset(dispPage(row.m.page)) }}</span>
                 </button>
-                <button class="jp-icon del" @click="deleteMark(row.m)" title="Smazat">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                </button>
-              </span>
-            </template>
+                <span class="jp-actions">
+                  <button class="jp-icon" @click="startMarkEdit(row.m)" title="Přejmenovat">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+                  </button>
+                  <button class="jp-icon del" @click="deleteMark(row.m)" title="Smazat">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                  </button>
+                </span>
+              </template>
+            </div>
+          </template>
           </div>
         </template>
       </div>
@@ -9371,18 +9378,43 @@ function goMark(m) {
 // čeho dotknout; tady jde jen o jiná data.
 function mkNoop() {}
 
-const mkRowsView = computed(() => {
-  const arr = marksOrdered.value || [];
+// Skupiny seznamu = ZÁLOŽKY (Jan, 20. 11. 2026: „statické názvy záložek a pod
+// nimi jednotlivé značky“). Nadpis je jen text záložky, needituje se tu.
+// Bez záložek je jeden seznam bez nadpisu; prázdné skupiny se nevykreslují.
+const mkGroups = computed(() => {
+  const ordered = marksOrdered.value;
+  const secs = bmSections.value;
+  if (!secs.length) return [{ key: 'all', title: '', marks: ordered }];
+  const groups = [];
+  const used = new Set();
+  for (const sec of secs) {
+    const pages = new Set(visiblePages.value.slice(sec.start, sec.end + 1));
+    const ms = ordered.filter(m => pages.has(m.page));
+    for (const m of ms) used.add(m.id);
+    if (!ms.length) continue;                      // prázdná záložka = jen šum
+    const b = (bookmarks.value || []).find(x => x && x.page === sec.page);
+    const label = b && b.label ? String(b.label).trim() : '';
+    groups.push({
+      key: 'sec-' + sec.page,
+      title: label || 'str. ' + withOffset(dispPage(sec.page)),
+      marks: ms,
+    });
+  }
+  const rest = ordered.filter(m => !used.has(m.id));   // značky před 1. záložkou
+  if (rest.length) groups.push({ key: 'rest', title: 'Mimo záložky', marks: rest });
+  return groups;
+});
+// Řádky pro vykreslení — prázdný slot (gap) patří do skupiny tažené značky.
+const mkGroupsView = computed(() => mkGroups.value.map((g) => {
   const dragId = mkDragId.value;
-  const plain = () => arr.map(m => ({ k: m.id, m, gap: false }));
-  if (!dragId || mkGapIndex.value < 0) return plain();
-  const di = arr.findIndex(x => x.id === dragId);
-  if (di < 0) return plain();
-  const rest = arr.filter((_, i) => i !== di).map(m => ({ k: m.id, m, gap: false }));
+  const di = dragId ? g.marks.findIndex(m => m.id === dragId) : -1;
+  const rows = g.marks.map(m => ({ k: m.id, m, gap: false }));
+  if (di < 0 || mkGapIndex.value < 0) return { ...g, rows };
+  const rest = rows.filter((_, i) => i !== di);
   const gi = Math.max(0, Math.min(rest.length, mkGapIndex.value));
   rest.splice(gi, 0, { k: '__mk_gap__', m: null, gap: true });
-  return rest;
-});
+  return { ...g, rows: rest };
+}));
 
 function setMkEditInput(el) { mkEditInput.value = el; }
 function startMarkEdit(m) {
@@ -9451,7 +9483,9 @@ function mkDragStart(e, m) {
   if (e.pointerType === 'mouse' && e.button !== 0) return;
   const handle = e.currentTarget;
   const row = handle.closest('.jp-item');
-  const list = handle.closest('.jp-list');
+  // Pořadí se přerovnává JEN UVNITŘ skupiny (záložky) — přetažení do cizí
+  // záložky by značku posunulo jinam, než kde v notách opravdu je.
+  const list = handle.closest('.mk-group');
   if (!row || !list) return;
   const els = Array.from(list.querySelectorAll('.jp-item'));
   const rect = row.getBoundingClientRect();
@@ -9459,6 +9493,7 @@ function mkDragStart(e, m) {
     id: m.id, handle, row, list, pointerId: e.pointerId,
     startY: e.clientY, rect, grab: e.clientY - rect.top,
     from: els.indexOf(row),
+    groupIds: els.map(el => el.getAttribute('data-mk-id')).filter(Boolean),
     rows: els.map(el => { const r = el.getBoundingClientRect(); return { top: r.top, h: r.height }; }),
     moved: false, ghost: null,
   };
@@ -9498,16 +9533,23 @@ async function mkDragEnd(e) {
   const moved = d.moved;
   const id = d.id;
   const target = mkGapIndex.value;
+  const groupIds = d.groupIds.slice();
   mkCleanup();
   if (!moved) return;
-  const arr = marksOrdered.value.map(m => m.id);
-  const from = arr.indexOf(id);
+  const from = groupIds.indexOf(id);
   if (from < 0) return;
-  const [item] = arr.splice(from, 1);
-  const to = Math.max(0, Math.min(arr.length, target));
-  arr.splice(to, 0, item);
+  const [item] = groupIds.splice(from, 1);
+  const to = Math.max(0, Math.min(groupIds.length, target));
+  groupIds.splice(to, 0, item);
   if (to === from) return;
-  mkOrder.value = arr;      // ruční pořadí → drží se i po reloadu
+  // Nové pořadí skupiny se vloží na místa, kde ty značky v globálním pořadí
+  // stojí — ostatní záložky si tím drží svoje.
+  const full = marksOrdered.value.map(m => m.id);
+  const set = new Set(groupIds);
+  const pos = [];
+  full.forEach((x, i) => { if (set.has(x)) pos.push(i); });
+  pos.forEach((p, i) => { full[p] = groupIds[i]; });
+  mkOrder.value = full;     // ruční pořadí → drží se i po reloadu
   await flushAnnotations();
 }
 function mkDragCancel() { mkCleanup(); }
@@ -10753,7 +10795,10 @@ async function deleteBookmark(b) {
   background: transparent;
 }
 /* Značky — seznam má stejný vzhled jako seznam záložek (jp-item).
-   Jen popisek je tlačítko (klepnutí = skok na značku). */
+   Skupina = jedna záložka: statický nadpis + řádky pod ním. */
+.mk-group { display: flex; flex-direction: column; gap: 4px; }
+.mk-group-title { margin-top: 2px; }
+/* Popisek značky je tlačítko (klepnutí = skok na značku). */
 .mk-label {
   flex: 1 1 auto; min-width: 0; display: flex; align-items: center;
   justify-content: space-between; gap: 8px;
