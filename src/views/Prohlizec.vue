@@ -386,12 +386,12 @@
               :opacity="it.opacity != null ? it.opacity : 1"
             />
             <text
-              :x="it.x" :y="it.y"
+              :x="it.x" :y="textRenderY(it)"
               :fill="it.color"
               :font-size="it.size"
               font-family="system-ui, sans-serif"
               :opacity="it.opacity != null ? it.opacity : 1"
-              text-anchor="start"
+              :text-anchor="it.mk ? 'middle' : 'start'"
             >{{ it.text }}</text>
           </g>
           <!-- Dynamika (p, f, mp...) — notační font NotyDyn (SMuFL glyfy) -->
@@ -5140,7 +5140,9 @@ const pageItems = computed(() => annotations.value.items.filter(i =>
   // Značky jsou primárně jen indexy pro skok (značka v notách už je vytištěná).
   // Když si je ale uživatel chce ZOBRAZIT jako text (mkVisible), kreslí se
   // stejně jako běžná textová anotace — a jdou pak i chytit a přesunout.
-  && (!i.mk || mkVisible.value)
+  // Značky se navíc ukážou VŽDY, když je otevřené okno Značek (Jan, 20. 11. 2026:
+  // „aby byly všechny vidět, když je otevřené okno pro vytváření značek“).
+  && (!i.mk || mkVisible.value || mkPanelOpen.value)
   // V režimu ČÍSLOVÁNÍ musí být skrytá čísla VIDĚT (jako u nástroje Ruka):
   // jinak uživatel nepozná, co už očísloval a co ne (Jan, Nov 2026).
   && (!(i.barNum && barNumsHidden.value) || tool.value === 'edit' || barnumMode.value)));
@@ -8033,6 +8035,23 @@ watch(measurableTexts, () => {
 // Kolik místa si text vyžádá (bez okraje rámečku). Jeden zdroj pravdy pro
 // vykreslení rámečku i pro hit-test rukou — jinak by se rám a klikatelná
 // plocha rozešly (Jan to pozná: „chytím to jen někde").
+// Značky (mk) se kreslí STŘEDEM na bod ťuknutí — vodorovně `text-anchor:
+// middle`, svisle posunem účaří tak, aby střed otisku písmen ležel na bodu
+// (Jan, 20. 11. 2026). Ostatní texty zůstávají ukotvené vlevo na účaří.
+function mkTextInk(it) {
+  const s = it.size || 20;
+  const m = textMetrics.value[it.id];
+  const w = (m && m.w) || (it.text ? Math.max(s, it.text.length * s * TEXT_ADV_EM) : s);
+  const inkAsc = (m && m.inkAsc != null) ? m.inkAsc : s * TEXT_LINE_ASC;
+  const inkDesc = (m && m.inkDesc != null) ? m.inkDesc : s * TEXT_LINE_DESC;
+  return { w, inkAsc, inkDesc };
+}
+// Y účaří pro <text>: u značky posunuté tak, aby byl střed písma na it.y.
+function textRenderY(it) {
+  if (!it || !it.mk || it.y == null) return it ? it.y : 0;
+  const { inkAsc, inkDesc } = mkTextInk(it);
+  return Number(it.y) + (inkAsc - inkDesc) / 2;
+}
 function textExtents(it) {
   const s = it.size || 20;
   const m = textMetrics.value[it.id];
@@ -8044,7 +8063,9 @@ function textExtents(it) {
   const inkAsc  = (m && m.inkAsc)  != null ? m.inkAsc  : s * TEXT_LINE_ASC;
   const inkDesc = (m && m.inkDesc) != null ? m.inkDesc : s * TEXT_LINE_DESC;
   const h = inkAsc + inkDesc;
-  // Účaří je v `it.y`; horní hrana otisku je nad ním o `inkAsc`.
+  // Účaří je v `it.y`; horní hrana otisku je nad ním o `inkAsc`. U značek je
+  // `it.y` STŘED písma (kreslí se středem na bod), takže se box centruje.
+  if (it.mk) return { x: it.x - w / 2, y: it.y - h / 2, w, h };
   return { x: it.x, y: it.y - inkAsc, w, h };
 }
 // Čtvercový rám: hrana = max(šířka, výška) + okraje na obou stranách; středem se

@@ -90,6 +90,10 @@ async def tap_visible(h):
     await asyncio.sleep(0.7)
 
 
+CLOSE_PANEL = ("(() => { const b = document.querySelector('.marks-panel .jp-close');"
+               " if (b) b.click(); return 1; })()")
+
+
 async def main():
     c = Check()
     async with Harness(APP) as h:
@@ -106,42 +110,53 @@ async def main():
         await h.wait_for("!!document.querySelector('.tb-page')", 40, "viewer")
         await asyncio.sleep(1.2)
 
+        # 1) zavřené okno + vypnutý přepínač = neviditelný index
+        s0 = await h.ev(STATE)
+        c("se zavřeným oknem jsou značky neviditelný index",
+          s0["pageMarks"] == 0 and not s0["drawn"], str(s0))
+
+        # 2) otevřené okno Značek = všechny značky stránky VIDĚT (i s vypnutým přepínačem)
         await h.ev("document.querySelector('.tb-mark').click()")
         await h.wait_for("!!document.querySelector('.marks-panel')", 10, "panel")
-        await asyncio.sleep(0.3)
-
-        s0 = await h.ev(STATE)
-        c("výchozí stav = neviditelný index", s0["pageMarks"] == 0 and not s0["drawn"], str(s0))
-        c("tlačítko hlásí „jen index“", "jen index" in (s0["btn"] or ""), str(s0["btn"]))
-
-        await tap_visible(h)
+        await asyncio.sleep(0.4)
         s1 = await h.ev(STATE)
-        c("po přepnutí jdou značky do not", s1["pageMarks"] == 2, str(s1))
-        # každá anotace se kreslí dvěma elementy (text + podklad/halo) → unikátní texty
-        c("v notách je vidět jejich text", sorted(set(s1["drawn"])) == ["A", "B"] and len(s1["drawn"]) >= 2,
-          str(s1["drawn"]))
-        c("tlačítko hlásí „zobrazené“", "zobrazené" in (s1["btn"] or ""), str(s1["btn"]))
-        c("stav se uložil (mkVisible = true)", (await h.ev(DB_VIS, await_promise=True)) is True, "DB")
+        c("s otevřeným oknem jsou značky vidět v notách", s1["pageMarks"] == 2, str(s1))
+        c("a je vidět jejich text", sorted(set(s1["drawn"])) == ["A", "B"], str(s1["drawn"]))
+        c("přepínač je pořád na „jen index“", "jen index" in (s1["btn"] or ""), str(s1["btn"]))
 
-        # reload → drží
+        # 3) přepínač „zobrazené" = vidět i po zavření okna, stav v DB
+        await tap_visible(h)
+        s2 = await h.ev(STATE)
+        c("přepínač hlásí „zobrazené“", "zobrazené" in (s2["btn"] or ""), str(s2["btn"]))
+        c("stav se uložil (mkVisible = true)", (await h.ev(DB_VIS, await_promise=True)) is True, "DB")
+        await h.ev(CLOSE_PANEL)
+        await asyncio.sleep(0.6)
+        s3 = await h.ev(STATE)
+        c("po zavření okna zůstávají vidět (přepínač zapnutý)",
+          s3["pageMarks"] == 2 and sorted(set(s3["drawn"])) == ["A", "B"], str(s3))
+
+        # 4) reload → drží
         await h.open()
         await h.ev(Harness.expand_authors_js())
         await h.wait_for("document.querySelectorAll('li.song').length > 0", 15, "expand 2")
         await h.click(".song-name")
         await h.wait_for("!!document.querySelector('.tb-page')", 40, "viewer 2")
         await asyncio.sleep(1.2)
-        s2 = await h.ev(STATE)
+        s4 = await h.ev(STATE)
         c("po reloadu zůstávají vidět",
-           s2["pageMarks"] == 2 and sorted(set(s2["drawn"])) == ["A", "B"], str(s2))
+          s4["pageMarks"] == 2 and sorted(set(s4["drawn"])) == ["A", "B"], str(s4))
 
-        # zpět na index
+        # 5) zpět na index → po zavření okna zase neviditelné
         await h.ev("document.querySelector('.tb-mark').click()")
         await h.wait_for("!!document.querySelector('.marks-panel')", 10, "panel 2")
         await asyncio.sleep(0.4)
         await tap_visible(h)
-        s3 = await h.ev(STATE)
-        c("přepnutí zpět = zase neviditelné", s3["pageMarks"] == 0 and not s3["drawn"], str(s3))
         c("do DB jde false", (await h.ev(DB_VIS, await_promise=True)) is False, "DB 2")
+        await h.ev(CLOSE_PANEL)
+        await asyncio.sleep(0.6)
+        s5 = await h.ev(STATE)
+        c("se zavřeným oknem a vypnutým přepínačem zase neviditelné",
+          s5["pageMarks"] == 0 and not s5["drawn"], str(s5))
 
         raise SystemExit(c.report())
 

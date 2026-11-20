@@ -109,9 +109,18 @@ async def main():
         ok("řadí se podle stránek (A str. 1, C str. 3, 12 str. 5, 7 str. 6)",
            [i["text"] for i in s1["items"]] == ["A", "C", "12", "7"], str(s1["items"]))
 
-        # v notách se značky nekreslí (žádná anotace s mk v pageItems)
-        drawn = await h.ev("(() => window.__barDev.pageItems.value.some(i => i && i.mk))()")
-        ok("značky se v notách nekreslí", drawn is False, str(drawn))
+        # S otevřeným oknem Značek jsou značky VIDĚT (Jan, 20. 11. 2026);
+        # se zavřeným oknem a vypnutým přepínačem jsou jen neviditelný index.
+        vis_open = await h.ev("(() => window.__barDev.pageItems.value.filter(i => i && i.mk).length)()")
+        # vidět jsou značky ZOBRAZENÉ STRÁNKY (aktuální je str. 1 → jedna značka, A)
+        ok("s otevřeným oknem Značek jsou značky v notách vidět", vis_open == 1, str(vis_open))
+        await h.ev("(() => { const b = document.querySelector('.marks-panel .jp-close'); b && b.click(); return 1; })()")
+        await asyncio.sleep(0.6)
+        vis_closed = await h.ev("(() => window.__barDev.pageItems.value.filter(i => i && i.mk).length)()")
+        ok("se zavřeným oknem jsou zase neviditelný index", vis_closed == 0, str(vis_closed))
+        await h.ev("document.querySelector('.tb-mark').click()")
+        await h.wait_for("!!document.querySelector('.marks-panel')", 8, "panel znovu")
+        await asyncio.sleep(0.4)
 
         # --- skok na existující značku ---
         await h.ev("(() => { window.__barDev.currentPage.value = 0; return 1; })()")
