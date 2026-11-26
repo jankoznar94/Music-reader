@@ -142,7 +142,7 @@ async def main():
         st = await state(h)
         ok("podržení otevřelo lištu", st["menu"], st)
         ok("duch tlačítka je vidět", st["ghost"], st)
-        ok("lišta má 9 koleček", st["items"] == 9, st["items"])
+        ok("lišta má 10 koleček (9 nástrojů + ✕ Konec anotace)", st["items"] == 10, st["items"])
         col = await rect(h, ".gm-col")
         ok("lišta stojí HNED NALEVO od tlačítka ✏️ (ne v rohu)",
            col["left"] > 12 and abs(col["right"] - btn["left"]) <= 2,

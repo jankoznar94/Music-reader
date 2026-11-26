@@ -164,8 +164,11 @@
             :x="p.cx" :y="p.cy - p.r1 - 12" text-anchor="middle">{{ p.label }}</text>
       <g v-for="(p, pi) in pie.pies" :key="p.key"
          :data-pie="pi" :data-cx="p.cx" :data-cy="p.cy" :data-r0="p.r0" :data-r1="p.r1">
-        <path v-for="(s, i) in p.sectors" :key="s.key" :d="s.d" class="pie-sec"
-              :class="{ hover: pie.hoverPie === pi && pie.hoverIdx === i, on: p.items[i].on, off: s.disabled }"
+        <path v-for="(s, i) in p.sectors" :key="s.key" :d="s.d"
+              class="pie-sec" :class="{ col: s.kind === 'color',
+                                        hover: pie.hoverPie === pi && pie.hoverIdx === i,
+                                        on: p.items[i].on, off: s.disabled }"
+              :style="s.kind === 'color' ? { fill: s.color } : null"
               @pointerdown.stop.prevent="pieTapSector(pi, i)" />
         <template v-for="(s, i) in p.sectors" :key="'ic' + s.key">
           <svg v-if="s.kind === 'glyph'" class="pie-glyph"
@@ -176,15 +179,16 @@
           <text v-else-if="s.kind === 'text'" class="pie-ico txt" :x="s.ix" :y="s.iy"
                 text-anchor="middle" dominant-baseline="central">{{ s.text }}</text>
           <g v-else>
-            <circle class="pie-dot" :cx="s.ix" :cy="s.iy" :r="Math.max(9, s.isz * 0.4)" :fill="s.color" />
-            <circle v-if="p.items[i].on" class="pie-dot-sel" :cx="s.ix" :cy="s.iy"
-                    :r="Math.max(12, s.isz * 0.4) + 4" />
+            <!-- Barva = CELÁ výseč je tou barvou (Jan, listopad 2026: „při
+                 vybírání barev bych spíš vybarvil danou barvou celou výseč“),
+                 takže žádné malé kolečko uvnitř. Vybranou barvu drží akcentový
+                 obrys výseče (třída `on`). -->
           </g>
         </template>
         <!-- Střed samostatného koláče = právě vybraná hodnota parametru -->
         <g v-if="p.hub" class="pie-hub">
           <circle class="pie-hub-bg" :cx="p.cx" :cy="p.cy" :r="p.r0 - 3" />
-          <circle v-if="p.hub.kind === 'color'" :cx="p.cx" :cy="p.cy" :r="(p.r0 - 3) * 0.62"
+          <circle v-if="p.hub.kind === 'color'" :cx="p.cx" :cy="p.cy" :r="p.r0 - 7"
                   :fill="p.hub.color" stroke="rgba(231,226,220,0.9)" stroke-width="3" />
           <svg v-else-if="p.hub.kind === 'glyph'"
                :x="p.cx - p.hub.isz / 2" :y="p.cy - p.hub.isz / 2"
@@ -6933,8 +6937,20 @@ const PLACE_HINTS = {
   dynamic: 'Klepni do not — vyber místo pro dynamiku',
   mark: 'Klepni do not — vyber místo pro značku',
 };
+// Hláška se ukazuje u VŠECH anotačních nástrojů — u kreslicích říká, jak
+// kreslit, u vkládacích, že se čeká na místo. Jan (listopad 2026): „zpráva
+// o ‚Klepni do not‘ by měla být například i u zvýrazňovače“.
 function showPlaceHint() {
-  placeHint.value = PLACE_HINTS[tool.value] || '';
+  const t = tool.value;
+  let msg = PLACE_HINTS[t];
+  if (!msg && t === 'pencil') msg = 'Kresli prstem do not';
+  if (!msg && t === 'highlighter') {
+    msg = hlMode.value === 'free' ? 'Přejeď prstem po notách a zvýrazni je'
+      : hlMode.value === 'rect' ? 'Klepni levý a pravý okraj — obdélník se doplní'
+        : 'Klepni tři body: levý spodní, levý horní, pravý';
+  }
+  if (!msg && t === 'eraser') msg = 'Přejeď prstem po anotaci, kterou chceš smazat';
+  placeHint.value = msg || '';
 }
 
 // --- Ikony notovým fontem ----------------------------------------------------
@@ -6984,6 +7000,10 @@ const gmItems = computed(() => {
     { key: 'mark',        label: 'Značky',       glyph: markGlyph('k').text, vb: glyphBox('mark', 'k'), sel: cur === 'mark' },
     { key: 'edit',        label: 'Ruka',         icon: '✋', sel: cur === 'edit' },
     { key: 'actions',     label: 'Akce',         icon: '↺', sel: false },
+    // UKONČENÍ ANOTACE — viditelné tlačítko s křížkem (Jan, listopad 2026:
+    // „měla by být i jiná možnost, někde nějaké tlačítko s křížkem“). Jinak se
+    // režim vypínal jen ťuknutím na ✏️ a uživatel na to musel přijít.
+    { key: 'exit',        label: 'Konec anotace', icon: '✕', cls: 'x', sel: false },
   ];
 });
 
@@ -7088,6 +7108,13 @@ function gmHaptic(ms = 8) {
 
 function onAnnotBtnClick() {
   if (Date.now() < gmSuppressClickUntil) return;   // klik po gestu nesmí režim vypnout
+  annotTap();
+}
+
+// JEDNO ťuknutí na ✏️ — společná logika pro skutečný klik i pro puštění prstu
+// po podržení, které se netáhlo (jinak se první ťuknutí „ztratilo“: podržení
+// otevřelo lištu, puštění ji zavřelo a klik spolkl `gmSuppressClickUntil`).
+function annotTap() {
   // Nabídka otevřená → ťuknutí ji ZAVŘE (a když ji ťuknutí i zapnulo, vypne se
   // s ní i anotační režim, aby tlačítko nezůstalo svítit).
   if (gm.open) {
@@ -7219,6 +7246,7 @@ function gmApplyTool(i) {
   const it = gmList.value[i];
   if (!it) return;
   if (gm.mode === 'panel') { if (it.action) it.action(); return; }
+  if (it.key === 'exit') { annotMode.value = false; return; }   // ✕ = konec anotace
   if (it.key === 'actions') return;
   setTool(it.key);
 }
@@ -7257,8 +7285,12 @@ function gmUp() {
   }
   if (gm.moved) gmFinishTool();
   else {
-    if (!annotMode.value) annotMode.value = true;   // pouhé podržení = zapnout anotaci
+    // Puštění bez tahu = OBYČEJNÉ ŤUKNUTÍ na tlačítko, i když podržení trvalo
+    // déle než práh otevření lišty. Dřív se tu lišta jen zavřela a klik spolkl
+    // `gmSuppressClickUntil`, takže první ťuknutí „nic neudělalo“ a anotace
+    // šla vypnout až na druhý pokus (Jan, listopad 2026).
     gmClose();
+    window.setTimeout(annotTap, 180);   // až lišta doopravdy zmizí
   }
 }
 
@@ -12352,30 +12384,29 @@ async function deleteBookmark(b) {
 }
 .place-hint-scrim {
   position: absolute; inset: 0;
-  background: rgba(10, 8, 7, 0.24);
+  background: rgba(10, 8, 7, 0.34);
 }
 .place-hint {
   position: absolute;
-  /* ⚠️ Ne `left: 50% + translateX` — u absolutně pozicovaného prvku je
-     dostupná šířka jen od `left` k pravému okraji (tedy půlka displeje)
-     a hláška se zbytečně láme do dvou řádků. `left:0; right:0; margin:auto`
-     dá celou šířku a vycentruje podle obsahu. */
+  /* UPROSTŘED obrazovky — dole na velkém tabletu hlášku nikdo neviděl
+     (Jan, listopad 2026). Stejné místo jako koláč voleb, takže oko zůstává. */
   left: 0; right: 0;
   margin: 0 auto;
   width: fit-content;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+  top: 50%;
+  transform: translateY(-50%);
   max-width: 92vw;
   box-sizing: border-box;
-  padding: 15px 20px;
+  padding: 18px 24px;
   background: var(--accent);
-  border: 2px solid #e2c69c;
-  border-radius: 14px;
+  border: 3px solid #e2c69c;
+  border-radius: 16px;
   color: #1c1410;
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 700;
   line-height: 1.25;
   text-align: center;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
 
@@ -12410,6 +12441,7 @@ async function deleteBookmark(b) {
 .gm-item.dim { opacity: 0.4; }
 .gm-item.dim .gm-circle.sel { opacity: 1; }
 .gm-ico { font-size: 1.1rem; }
+.gm-ico.x { color: var(--danger); font-weight: 700; }
 .gm-ico.t { font-weight: 700; font-family: Georgia, 'Times New Roman', serif; }
 .gm-glyph-svg { width: 30px; height: 30px; display: block; fill: currentColor; pointer-events: none; }
 .gm-glyph-svg text { fill: inherit; }
@@ -12443,6 +12475,10 @@ async function deleteBookmark(b) {
 .pie-sec.on { fill: rgba(201, 168, 124, 0.30); stroke: var(--accent); stroke-width: 1.5; }
 .pie-sec.hover { fill: rgba(201, 168, 124, 0.52); stroke: var(--accent); stroke-width: 2; }
 .pie-sec.off { opacity: 0.35; }
+/* Barevná výseč: barva je CELÁ plocha (inline fill), takže obrys drží výběr. */
+.pie-sec.col { stroke: rgba(0, 0, 0, 0.35); stroke-width: 1.5; }
+.pie-sec.col.on { stroke: var(--accent); stroke-width: 3; }
+.pie-sec.col.hover { stroke: #fff; stroke-width: 3; }
 .pie-title {
   fill: var(--text-dim); font-size: 12px; letter-spacing: 0.06em;
   text-transform: uppercase; pointer-events: none;

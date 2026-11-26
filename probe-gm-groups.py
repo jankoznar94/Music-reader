@@ -72,7 +72,7 @@ async def main():
         await h.touch("touchStart", [(annot["x"], annot["y"], 12)])
         await asyncio.sleep(0.4)
         st = await gm_state(h)
-        ok("lišta nástrojů se otevřela", st["open"] and len(st["items"]) == 9, st["items"])
+        ok("lišta nástrojů se otevřela", st["open"] and len(st["items"]) == 10, st["items"])
         ok("ve sloupci pod tlačítkem je pruh (oblast pro puntík)",
            bool(st["band"]) and abs(st["band"]["l"] + st["band"]["r"]) / 2 == 0 or bool(st["band"]), st["band"])
         ok("pruh stojí pod tlačítkem ✏️",
@@ -190,7 +190,7 @@ async def main():
         await h.finger_tap(annot["x"], annot["y"])
         await asyncio.sleep(0.5)
         st = await gm_state(h)
-        ok("ťuknutí na ✏️ otevře nabídku nástrojů", st["open"] and len(st["items"]) == 9, st["items"])
+        ok("ťuknutí na ✏️ otevře nabídku nástrojů", st["open"] and len(st["items"]) == 10, st["items"])
         ok("lišta stojí PŘÍMO POD tlačítkem (ne vlevo)",
            bool(st["col"]) and abs((st["col"]["l"] + st["col"]["r"]) / 2 - annot["x"]) < 3,
            {"col": st["col"], "btn_x": annot["x"]})
@@ -236,6 +236,55 @@ async def main():
         ok("druhé ťuknutí: nabídka zmizí", not lit2["menu"], lit2)
         ok("druhé ťuknutí: tlačítko přestane svítit", not lit2["lit"], lit2)
         ok("druhé ťuknutí: anotační režim se vypne", lit2["annot"] is False, lit2)
+
+        # --- 9) ✕ v liště ukončí anotační režim ------------------------------
+        await h.finger_tap(annot["x"], annot["y"])
+        await asyncio.sleep(0.45)
+        last = await h.ev("(() => { const a = document.querySelectorAll('.gm-item');"
+                          " const e = a[a.length - 1]; const r = e.getBoundingClientRect();"
+                          " return { x: r.left + r.width / 2, y: r.top + r.height / 2, title: e.title }; })()")
+        ok("poslední kolečko lišty je Konec anotace", last["title"] == "Konec anotace", last)
+        await h.finger_tap(last["x"], last["y"])
+        await asyncio.sleep(0.45)
+        st = await h.ev("(() => ({ annot: window.__barDev.annotMode.value,"
+                        " menu: !!document.querySelector('.gm-root'),"
+                        " lit: document.querySelector(\".tb-btn[title^='Anotace']\").classList.contains('on') }))()")
+        ok("✕ vypne anotační režim", st["annot"] is False, st)
+        ok("✕ zavře lištu i zhasne tlačítko", (not st["menu"]) and (not st["lit"]), st)
+
+        # --- 10) Barevný koláč: celá výseč má barvu, střed taky --------------
+        await h.finger_tap(annot["x"], annot["y"])
+        await asyncio.sleep(0.45)
+        i0 = await rect(h, ".gm-item", 0)      # Tužka
+        await h.finger_tap(i0["x"], i0["y"])
+        await asyncio.sleep(0.6)
+        cols = await h.ev("(() => ([...document.querySelectorAll('.pie-sec.col')].map(e => ({\n"
+                          "  fill: e.style.fill, w: e.getAttribute('stroke-width') }))))()")
+        ok("barevné výseče jsou vyplněné BARVOU (ne malé kroužky)",
+           bool(cols) and all(c["fill"] for c in cols), cols[:4])
+        dots = await h.ev("document.querySelectorAll('.pie-dot').length")
+        ok("v barevných výsečích nejsou žádné malé kroužky", dots == 0, dots)
+        hub = await h.ev("(() => { const g = document.querySelector('g[data-pie=\"0\"]');"
+                         " const c = [...g.querySelectorAll('circle')].find(x => x.getAttribute('fill') && x.getAttribute('fill') !== 'none');"
+                         " const bg = g.querySelector('.pie-hub-bg');"
+                         " return c ? { r: +c.getAttribute('r'), bgR: +bg.getAttribute('r'), fill: c.getAttribute('fill') } : null; })()")
+        ok("střed koláče je CELÝ ve vybrané barvě",
+           bool(hub) and hub["r"] >= hub["bgR"] - 8, hub)
+        hub_px = await h.ev("(() => { const l = document.querySelector('.pie-check-bg'); const r = l.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()")
+        await h.finger_tap(hub_px["x"], hub_px["y"])
+        await asyncio.sleep(0.5)
+
+        # --- 11) Hláška u tužky je uprostřed a velká --------------------------
+        hint = await h.ev("(() => { const e = document.querySelector('.place-hint'); if (!e) return null;"
+                          " const r = e.getBoundingClientRect(); const cs = getComputedStyle(e);"
+                          " return { text: e.textContent, cy: r.top + r.height / 2, fs: parseFloat(cs.fontSize),"
+                          "          scrim: !!document.querySelector('.place-hint-scrim') }; })()")
+        ok("hláška se ukáže i u tužky", bool(hint) and "not" in hint["text"].lower(), hint)
+        ok("hláška je UPROSTŘED obrazovky", bool(hint) and abs(hint["cy"] - 640) < 6, hint and hint["cy"])
+        ok("hláška je velká (≥ 18 px)", bool(hint) and hint["fs"] >= 18, hint and hint["fs"])
+        ok("hláška má lehké ztmavení", bool(hint) and hint["scrim"], hint)
+        await h.finger_tap(400, 1000)
+        await asyncio.sleep(0.4)
 
     ok.report()
 
