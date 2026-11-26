@@ -10,6 +10,16 @@
           <span v-if="checking" class="update-spinner" />
           <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
         </button>
+        <!-- NASTAVENÍ (ozubené kolo) — první volba je režim ovládání čtečky.
+             Výchozí „Tlačítkový“ = dnešní plovoucí panel, „Animovaný“ = nabídka
+             tahem z tlačítka ✏️. Volba se ukládá do localStorage, takže se
+             uživatelům nic nemění pod rukama. -->
+        <button class="btn gear-btn" @click="settingsOpen = true" title="Nastavení">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3.2"/>
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
         <input ref="fileInput" type="file" accept="application/pdf" multiple hidden @change="onFiles" />
         <input ref="importInput" type="file" accept=".zip,.pdf,application/zip,application/pdf" multiple hidden @change="onImport" />
       </div>
@@ -330,6 +340,25 @@
       <span v-if="dropTargetLabel" class="dg-target">→ {{ dropTargetLabel }}</span>
     </div>
 
+    <!-- NASTAVENÍ KNIHOVNY — plovoucí okno s volbami, které platí pro celou appku.
+         Zatím jediná volba: režim ovládání čtečky (tlačítkový / animovaný). -->
+    <div v-if="settingsOpen" class="set-overlay" @click.self="settingsOpen = false">
+      <div class="set-card">
+        <div class="set-head">
+          <span class="set-title">Nastavení</span>
+          <button class="set-close" @click="settingsOpen = false">Zavřít</button>
+        </div>
+        <div class="set-block">
+          <div class="set-label">Ovládání čtečky</div>
+          <div class="set-hint">Tlačítkový = plovoucí panel nástrojů jako dosud. Animovaný = nabídka se rozbalí podržením tlačítka ✏️ a nástroj se volí tahem prstu.</div>
+          <div class="set-seg">
+            <button :class="{ on: controlMode === 'button' }" @click="setControlMode('button')">Tlačítkový</button>
+            <button :class="{ on: controlMode === 'gesture' }" @click="setControlMode('gesture')">Animovaný</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Loading overlay při nahrávání not -->
     <div v-if="uploading" class="upload-overlay">
       <div class="upload-box">
@@ -372,6 +401,14 @@ const sortBy = ref(libState.sortBy);
 // ne autora. Stav se drží v libraryState, takže přežije cestu do prohlížeče.
 const groupByComposer = ref(libState.groupByComposer);
 const tab = ref(libState.tab);
+// Nastavení (ozubené kolo). Režim ovládání čtečky je společný s prohlížečem:
+// čte se ze stejného klíče localStorage, takže volba platí i po přechodu.
+const settingsOpen = ref(false);
+const controlMode = ref(localStorage.getItem('noty.controlMode') === 'gesture' ? 'gesture' : 'button');
+function setControlMode(m) {
+  controlMode.value = m;
+  try { localStorage.setItem('noty.controlMode', m); } catch (e) { /* privátní režim */ }
+}
 // Kde v souborovém systému právě jsem (null = kořen). Nahrazuje dřívější
 // `folderFilter` — teď to není filtr nad plochým seznamem, ale skutečná
 // navigace: seznam ukazuje OBSAH této složky.
@@ -1146,6 +1183,39 @@ async function checkAndApply() {
 }
 .topbar h1 { margin: 0; font-size: 1.4rem; font-weight: 700; }
 .top-actions { display: flex; gap: 8px; }
+/* Ozubené kolo — ikonové tlačítko stejné výšky jako ostatní v liště */
+.gear-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0 12px; }
+.gear-btn:active { background: var(--bg-elev2); }
+
+/* --- Nastavení: plovoucí okno (ploché, bez karet a stínů do strany) --- */
+.set-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(12, 10, 9, 0.62);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 64px 16px 16px;
+}
+.set-card {
+  width: min(560px, 100%);
+  background: var(--bg-elev); border: 1px solid var(--accent);
+  border-radius: 18px; padding: 14px 16px 18px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.6);
+}
+.set-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.set-title { font-size: 1.1rem; font-weight: 700; }
+.set-close {
+  background: var(--bg-elev2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 14px; font-size: 0.9rem;
+}
+.set-block { display: flex; flex-direction: column; gap: 8px; }
+.set-label { font-size: 0.95rem; font-weight: 700; }
+.set-hint { color: var(--text-dim); font-size: 0.85rem; line-height: 1.4; }
+.set-seg { display: flex; gap: 8px; margin-top: 4px; }
+.set-seg button {
+  flex: 1; padding: 12px 10px; font-size: 0.95rem; font-weight: 600;
+  background: var(--bg-elev2); border: 1px solid var(--border); border-radius: 12px;
+  color: var(--text);
+}
+.set-seg button.on { background: var(--accent); border-color: var(--accent); color: #17130f; }
 
 .toolbar { display: flex; gap: 8px; padding: 10px 16px; }
 .search { flex: 1; }
