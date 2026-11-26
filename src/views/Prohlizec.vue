@@ -31,15 +31,14 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
             </button>
           </div>
-          <button class="tb-btn" @click="openBookmark" :class="{ on: bookmarkMode }" title="Přidat záložku na tuto stránku">🔖</button>
-          <!-- ZNAČKY (písmena/čísla záchytných bodů) — Jan, listopad 2026:
-               skoky v rámci záložky, ruční indexace (appka značky nečte, jen
-               si pamatuje, co uživatel opsal a kam ťukl). -->
-          <button class="tb-btn tb-mark" @click="openMarks" :class="{ on: mkPanelOpen }"
-                  title="Značky — skoky na písmena a čísla záchytných bodů">A</button>
-          <button class="tb-btn" @click="toggleJumpMode" :class="{ on: jumpMode }" title="Vytvořit skok (Da Capo / VIDE)">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M7 7h10v10"/></svg>
-          </button>
+          <!-- SKUPINA „ORIENTACE V NOTÁCH“ — záložky, značky, skoky a čísla taktů
+               v jedné svislé liště (Jan, listopad 2026: „horní lišta už je
+               přeplněná“). Dotek lištu rozbalí, tah vybírá, puštění otevře
+               okno, které dřív dělalo kliknutí na jednotlivé tlačítko. -->
+          <button class="tb-btn" data-gm-group="navig"
+                  @pointerdown.prevent="onGroupDown($event, 'navig')"
+                  :class="{ on: (gm.open && gm.mode === 'panel' && gm.groupKey === 'navig') || bookmarkMode || mkPanelOpen || jumpMode || barnumMode }"
+                  title="Záložky, značky, skoky a čísla taktů">🔖</button>
         </div>
         <!-- Rezerva: drží místo pro počítadlo, které je na přesném středu lišty -->
         <div class="tb-mid-space" />
@@ -69,15 +68,9 @@
                 @pointerdown="onAnnotBtnDown" @pointerup="onAnnotBtnUp" @pointercancel="onAnnotBtnUp"
                 :class="{ on: (annotMode && !barnumMode) || gm.open, 'gm-armed': isGestureMode }"
                 title="Anotace / listování">✏️</button>
-        <!-- ČÍSLOVÁNÍ TAKTŮ MÁ VLASTNÍ TLAČÍTKO (Jan, Nov 2026: „číslování bychom
-             měli dát úplně mimo anotační menu — bude mít svoje vlastní tlačítko
-             na hlavní liště“). Otevírá JEN malý panel čísel (Další / Krok /
-             Velikost / lupa); velký anotační panel zůstává zavřený, takže noty
-             jsou vidět a takty se dají počítat. -->
-        <button class="tb-btn" @click="toggleBarnum" :class="{ on: barnumMode }"
-                title="Číslování taktů — vkládat čísla a číst vytištěná (lupa)">
-          <span class="tb-glyph-1">1</span>
-        </button>
+        <!-- ČÍSLOVÁNÍ TAKTŮ SE PŘESUNULO DO SKUPINY „ORIENTACE V NOTÁCH“ vedle
+             záložek, značek a skoků (Jan, listopad 2026) — na hlavní liště
+             zůstala jedna ikona pro celou skupinu. -->
         <!-- ULOŽENÍ / SDÍLENÍ — vlastní tlačítko s ikonou diskety na HLAVNÍ LIŠTĚ
              (Jan, Nov 2026: „sekci Sdílet vyndáme z Anotačního okna. Dáme na
              hlavní lištu vlastní tlačítko s ikonou pro uložení.“). Panel nabídne
@@ -94,20 +87,14 @@
         <!-- Jedno tlačítko pro veškeré uložené zobrazení: po klepnutí se
              otevře menu preferencí (stránka / celá skladba / rám) s vlastním
              košem u každé skupiny. -->
-        <button class="tb-btn sm" :class="{ on: prefsPanelOpen }" @click="togglePrefsPanel"
-                title="Vycentrovat a preference zobrazení">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
-        </button>
-        <!-- Zvětšení a posun — vlastní nabídka (dropdown). Gesto se v ní věnuje
-             JEN zoomu a posunu, nikdy rotaci. -->
-        <button class="tb-btn zoom-btn" @click="toggleZoomPanel" :class="{ on: zoomPanelOpen }" title="Zvětšení a posun">
+        <!-- SKUPINA „ZOBRAZENÍ“ — zvětšení, rotace a vycentrování v jedné svislé
+             liště (Jan, listopad 2026). Na tlačítku zůstává VIDĚT zvětšení,
+             takže se uživatel nemusí ptát, jak je stránka velká. -->
+        <button class="tb-btn zoom-btn" data-gm-group="view"
+                @pointerdown.prevent="onGroupDown($event, 'view')"
+                :class="{ on: (gm.open && gm.mode === 'panel' && gm.groupKey === 'view') || zoomPanelOpen || rotPanelOpen || prefsPanelOpen }"
+                title="Zobrazení — zvětšení, rotace a vycentrování">
           {{ Math.round(zoom * 100) }}%
-        </button>
-        <!-- Rotace — samostatná nabídka s vlastními tlačítky. Gesto se v ní věnuje
-             JEN rotaci (žádný zoom ani posun). -->
-        <button class="tb-btn zoom-btn" @click="toggleRotPanel" :class="{ on: rotPanelOpen }" title="Rotace stránky">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
-          <span class="tb-rot-deg">{{ rotLabel }}</span>
         </button>
         <button class="tb-btn" @click="toggleSlider" :class="{ on: sliderOpen }" title="Slider stránek">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
@@ -126,17 +113,33 @@
          a tam se hned rozbalí svislá lišta nástrojů (ne pod tlačítkem — zakrýval
          by ji prst). Tahem svisle se vybírá nástroj; puštění ho potvrdí
          a otevře kruhový výběr voleb uprostřed stránky. -->
-    <div v-if="gm.open" class="gm-root" :class="{ closing: gm.closing }">
+    <div v-if="gm.open" class="gm-root" :class="{ closing: gm.closing, panel: gm.mode === 'panel' }">
+      <!-- Zachytávač dotyků pro režim skupiny: lišta stojí otevřená a čeká na
+           volbu, takže dotyk mimo ni ji musí zavřít (jinak by spadl do not
+           a něco nakreslil). -->
+      <div v-if="gm.mode === 'panel' && !gm.holding" class="gm-catch"
+           @pointerdown.stop.prevent="gmClose" />
       <div v-if="gm.ghost" class="gm-ghost"
            :style="{ left: gm.ghostX + 'px', top: gm.ghostY + 'px',
                      '--gx': (gm.btnCx - gm.ghostX) + 'px',
                      '--gy': (gm.btnCy - gm.ghostY) + 'px' }">
-        <span class="gm-ghost-ico">✏️</span>
+        <span class="gm-ghost-ico">{{ gm.ghostIco }}</span>
       </div>
+      <!-- SLOUPEC POD TLAČÍTKEM: prázdná plocha, ve které se pohybuje puntík
+           podle svislé polohy prstu; spojka z puntíku do vybraného kolečka
+           ukazuje, že výběr patří prstu, který drží tlačítko. -->
+      <svg v-if="gm.colH" class="gm-track" :class="{ closing: gm.closing }">
+        <rect class="gm-track-band" :x="gm.btnCx - gm.btnW / 2" :y="gm.colY"
+              :width="gm.btnW" :height="gm.colH" :rx="gm.btnW / 2" />
+        <line class="gm-track-link" :x1="gmDotX" :y1="gmDotY"
+              :x2="gmLinkX2" :y2="gmItemCy" />
+        <circle class="gm-track-dot" :cx="gmDotX" :cy="gmDotY" r="10" />
+      </svg>
       <div class="gm-col" :style="{ left: gm.colX + 'px', top: gm.colY + 'px' }">
-        <button v-for="(it, i) in gmItems" :key="it.key" class="gm-item"
+        <button v-for="(it, i) in gmList" :key="it.key" class="gm-item"
                 :class="{ active: gm.active === i }"
-                :style="{ '--i': i, '--n': gmItems.length }"
+                :style="{ '--i': i, '--n': gmList.length }"
+                :title="it.label || ''"
                 @pointerdown.stop.prevent="gmTapItem(i)"
                 @touchstart.stop.prevent="noopTouch" @touchend.stop="noopTouch">
           <span class="gm-circle" :class="{ sel: it.sel }">
@@ -2036,6 +2039,10 @@
         <span class="wedge-cancel" @click="wedgePoints = []; hlPoints = []">Zrušit</span>
       </div>
     </div>
+
+    <!-- HLÁŠKA „VYBER MÍSTO“ — po potvrzení voleb (fajfka) se čeká na klepnutí
+         do not; bez ní to vypadá, že se jen zavřela okna. -->
+    <div v-if="placeHint" class="place-hint">{{ placeHint }}</div>
 
   </div>
 </template>
@@ -6882,12 +6889,25 @@ const GM_STEP = 50;       // krok mezi kolečky (46 px + 4 mezera)
 
 const gm = reactive({
   open: false, closing: false,
-  colX: 8, colY: 60, active: 0,
+  // 'tools' = lišta nástrojů (po puštění koláč voleb);
+  // 'panel' = skupina nástrojů hlavní lišty (po puštění se otevře její okno).
+  mode: 'tools',
+  groupKey: '',
+  items: [],                // položky skupiny (mode === 'panel'); nástroje řeší gmItems
+  colX: 8, colY: 60, colH: 0, active: 0,
   moved: false, startX: 0, startY: 0,
-  ghost: false, ghostX: 0, ghostY: 0, btnCx: 0, btnCy: 0,
+  ghost: false, ghostIco: '✏️', ghostX: 0, ghostY: 0, btnCx: 0, btnCy: 0, btnW: 48,
+  fingerY: 0,            // svislá poloha prstu (pro puntík ve sloupci pod tlačítkem)
+  holding: false,        // drží uživatel prst? (v režimu skupiny se bez držení jen čeká na volbu)
 });
 let gmTimer = null;
 let gmSuppressClickUntil = 0;
+
+// Puntík (prst) a spojka k vybranému kolečku — souřadnice v px stránky.
+const gmDotY = computed(() => Math.max(gm.colY + 8, Math.min(gm.colY + gm.colH - 8, gm.fingerY)));
+const gmItemCy = computed(() => gm.colY + 5 + 23 + gm.active * GM_STEP);
+const gmDotX = computed(() => gm.btnCx);
+const gmLinkX2 = computed(() => gm.colX + GM_W - 4);
 
 // Kruhový výběr voleb nástroje (koláč uprostřed stránky).
 const pie = reactive({
@@ -6897,6 +6917,21 @@ const pie = reactive({
   checkD: '', title: '',
 });
 let pieSuppressDownUntil = 0;
+
+// HLÁŠKA „VYBER MÍSTO“ — po potvrzení voleb (fajfka) appka čeká na klepnutí do
+// not. Všechna okna zmizí a bez hlášky to vypadá, že se nic nestalo (Jan,
+// listopad 2026). Hláška visí, dokud uživatel neklepne do not nebo nezmění
+// nástroj; sahá na nástroje, které se do not VKLÁDAJÍ klepnutím.
+const placeHint = ref('');
+const PLACE_HINTS = {
+  text: 'Klepni do not — vyber místo pro text',
+  note: 'Klepni do not — vyber místo pro notu',
+  dynamic: 'Klepni do not — vyber místo pro dynamiku',
+  mark: 'Klepni do not — vyber místo pro značku',
+};
+function showPlaceHint() {
+  placeHint.value = PLACE_HINTS[tool.value] || '';
+}
 
 // --- Ikony notovým fontem ----------------------------------------------------
 // Notační glyfy (noty, dynamika, značky) se NESMÍ centrovat podle em-boxu:
@@ -6947,6 +6982,34 @@ const gmItems = computed(() => {
     { key: 'actions',     label: 'Akce',         icon: '↺', sel: false },
   ];
 });
+
+// Aktuálně zobrazená lišta: buď nástroje (s koláčem), nebo skupina hlavní lišty.
+const gmList = computed(() => (gm.mode === 'panel' ? gm.items : gmItems.value));
+
+// SKUPINY NÁSTROJŮ HLAVNÍ LIŠTY — horní lišta byla přeplněná, takže se
+// příbuzné nástroje schovají do jedné svislé lišty. Po puštění prstu se
+// neotevírá koláč, ale rovnou okno, které dřív dělalo kliknutí na tlačítko.
+// `on` rozhoduje o zvýraznění kolečka (jeho okno/režim je zrovna otevřený).
+const gmGroups = computed(() => ({
+  navig: [
+    { key: 'bookmark', label: 'Záložky', icon: '🔖', on: bookmarkMode.value, action: openBookmark },
+    { key: 'marks', label: 'Značky', icon: 'A', cls: 't', on: mkPanelOpen.value, action: openMarks },
+    { key: 'jumps', label: 'Skoky', icon: '↗', on: jumpMode.value, action: toggleJumpMode },
+    { key: 'barnum', label: 'Čísla taktů', icon: '1', cls: 't', on: barnumMode.value, action: toggleBarnum },
+  ],
+  view: [
+    { key: 'zoom', label: 'Zvětšení', icon: '⌕', on: zoomPanelOpen.value, action: toggleZoomPanel },
+    { key: 'rot', label: 'Rotace', icon: '⟳', on: rotPanelOpen.value, action: toggleRotPanel },
+    { key: 'center', label: 'Vycentrovat', icon: '⌖', on: prefsPanelOpen.value, action: togglePrefsPanel },
+  ],
+}));
+
+function gmGroupItems(key) {
+  const g = gmGroups.value[key] || [];
+  // `sel` = kolečko je „vybrané“ (jeho okno je otevřené) — stejná vizuální
+  // logika jako u nástrojů, jen se stav čte z `on`.
+  return g.map(x => ({ ...x, sel: !!x.on }));
+}
 
 // Poslední zvolená dynamika / značka — animovaná nabídka je předvolí, takže
 // koláč má hned od otevření ZVÝRAZNĚNOU vybranou výseč (a vloží se tatáž
@@ -7039,35 +7102,53 @@ function onAnnotBtnUp() {
 // tlačítkem by ji zakrýval prst, kterým uživatel drží a táhne (Jan).
 // Animace je záměrně KRÁTKÁ — duch doletí a lišta stojí hned; delší prodleva
 // působila jako „zaseknuté“ gesto.
-function gmOpen() {
-  if (!isGestureMode.value || gm.open) return;
-  const el = annotBtnEl.value;
+function gmOpen(mode = 'tools', items = [], el = annotBtnEl.value, groupKey = '') {
+  if (gm.open) return;
+  if (mode === 'tools' && !isGestureMode.value) return;
   if (!el) return;
   const vh = window.innerHeight;
   const r = el.getBoundingClientRect();
   const bar = document.querySelector('.top-bar');
   const barBottom = bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 56;
-  const colH = gmItems.value.length * GM_STEP + 12;
-  // Lišta nestojí v rohu, ale HNED NALEVO od tlačítka ✏️ (Jan, listopad 2026:
-  // „místo úplně do levého rohu, tak jen nalevo od prstu"). Pod tlačítkem tak
-  // zůstane prázdný sloupec a lišta je u prstu, který ji drží — prst ji
-  // nezakrývá a nemusí se přes obrazovku do rohu.
+  gm.mode = mode;
+  gm.groupKey = groupKey;
+  gm.items = mode === 'panel' ? items : [];
+  const list = mode === 'panel' ? gm.items : gmItems.value;
+  const colH = list.length * GM_STEP + 12;
+  gm.colH = colH;
+  // Lišta nestojí v rohu, ale HNED NALEVO od stisknutého tlačítka (Jan,
+  // listopad 2026: „místo úplně do levého rohu, tak jen nalevo od prstu“).
   gm.colX = Math.max(4, Math.round(r.left - GM_W));
   gm.colY = Math.max(8, Math.min(barBottom + 8, vh - 12 - colH));
   gm.btnCx = r.left + r.width / 2;
   gm.btnCy = r.top + r.height / 2;
+  gm.btnW = r.width;
   gm.ghostX = gm.colX + GM_W / 2;
   gm.ghostY = gm.colY + 5 + 23;
+  gm.ghostIco = (el.textContent || '').trim().slice(0, 2) || '✏️';
   gm.ghost = true;
-  gm.open = true; gm.closing = false; gm.moved = false;
-  const cur = gmItems.value.findIndex(x => x.sel);
+  gm.open = true; gm.closing = false; gm.moved = false; gm.holding = true;
+  const cur = list.findIndex(x => x.sel);
   gm.active = cur >= 0 ? cur : 0;
+  // Puntík ve sloupci pod tlačítkem startuje na vybraném kolečku, aby spojka
+  // nevisela odnikud dřív, než uživatel pohne prstem.
+  gm.fingerY = gm.colY + 5 + 23 + gm.active * GM_STEP;
   gmSuppressClickUntil = Date.now() + 1000;
   gmHaptic(15);
   window.setTimeout(() => { gm.ghost = false; }, 240);
   window.addEventListener('pointermove', gmMove, { passive: true });
   window.addEventListener('pointerup', gmUp, true);
   window.addEventListener('pointercancel', gmCancel, true);
+}
+
+// Otevření skupiny z hlavní lišty: lišta se rozbalí HNED při doteku (tlačítko
+// nemá druhý význam jako ✏️) a prst rovnou vybírá tahem. Puštění bez pohybu
+// jen lištu nechá otevřenou — teprve klepnutí na kolečko otevře okno.
+function onGroupDown(e, key) {
+  if (gm.open) return;
+  const items = gmGroupItems(key);
+  if (!items.length) return;
+  gmOpen('panel', items, e.currentTarget, key);
 }
 
 // Nejbližší kolečko lišty podle SVISLÉ polohy (x se ignoruje — prst nemusí
@@ -7079,21 +7160,26 @@ function gmOpen() {
 function gmNearestY(y) {
   const top = gm.colY + 5 + 23;
   const i = Math.round((y - top) / GM_STEP);
-  return Math.max(0, Math.min(gmItems.value.length - 1, i));
+  return Math.max(0, Math.min(gmList.value.length - 1, i));
 }
 
 function gmMove(e) {
   if (!gm.open || gm.closing) return;
   const x = e.clientX, y = e.clientY;
   if (Math.hypot(x - gm.startX, y - gm.startY) > 6) gm.moved = true;
+  // Puntík ve sloupci pod tlačítkem sleduje prst (i když je prst vedle lišty) —
+  // spojka od něj k vybranému kolečku dělá vizuální návaznost „prst → volba“.
+  gm.fingerY = Math.max(gm.colY, Math.min(gm.colY + gm.colH, y));
   if (y < gm.colY - 4) return;   // nad lištou (u tlačítka) se nevybírá
   const i = gmNearestY(y);
   if (i >= 0 && i !== gm.active) { gm.active = i; gmHaptic(); }
 }
 
 function gmApplyTool(i) {
-  const it = gmItems.value[i];
-  if (!it || it.key === 'actions') return;
+  const it = gmList.value[i];
+  if (!it) return;
+  if (gm.mode === 'panel') { if (it.action) it.action(); return; }
+  if (it.key === 'actions') return;
   setTool(it.key);
 }
 function gmApplyOption(o) {
@@ -7113,7 +7199,7 @@ function gmApplyOption(o) {
   pieRefresh();
 }
 
-// Ťuknutí přímo na kolečko lišty = výběr nástroje (+ koláč voleb).
+// Ťuknutí přímo na kolečko lišty = výběr nástroje (+ koláč voleb) / otevření okna skupiny.
 function gmTapItem(i) {
   if (gm.closing) return;
   gm.active = i;
@@ -7122,6 +7208,14 @@ function gmTapItem(i) {
 
 function gmUp() {
   if (!gm.open || gm.closing) return;
+  gm.holding = false;
+  if (gm.mode === 'panel') {
+    // Skupina: puštění prstu po TAŽENÍ potvrdí volbu a otevře okno. Puštění bez
+    // pohybu (obyčejné ťuknutí na tlačítko) lištu nechá otevřenou — uživatel
+    // pak klepne na kolečko, které chce.
+    if (gm.moved) gmFinishTool();
+    return;
+  }
   if (gm.moved) gmFinishTool();
   else {
     if (!annotMode.value) annotMode.value = true;   // pouhé podržení = zapnout anotaci
@@ -7131,7 +7225,12 @@ function gmUp() {
 
 // Vybere nástroj, zavře lištu a (pokud nástroj nějaké volby má) otevře koláč.
 function gmFinishTool() {
-  const item = gmItems.value[gm.active] || {};
+  const item = gmList.value[gm.active] || {};
+  if (gm.mode === 'panel') {
+    gmClose();
+    if (item.action) item.action();
+    return;
+  }
   // ⚠️ Volby se musí spočítat AŽ PO přepnutí nástroje (`gmApplyTool`). Když se
   // `gmParams` volaly před ním, nesly příznaky `on` ze STARÉHO nástroje — koláč
   // se otevřel bez vyznačené vybrané výseče (a se špatnou hodnotou ve středu)
@@ -7328,7 +7427,7 @@ function pieUp(e) {
   if (!pie.open || pie.closing) return;
   const p = piePickAt(e.clientX, e.clientY);
   if (!p) { pieClose(); return; }
-  if (p.hub) { pieClose(); return; }          // fajfka = hotovo
+  if (p.hub) { pieClose(); showPlaceHint(); return; }   // fajfka = hotovo → čeká se na místo v notách
   if (p.pie != null && p.idx >= 0) gmApplyOption(pie.pies[p.pie].items[p.idx]);
   pie.hoverPie = p.pie; pie.hoverIdx = p.idx; pie.hubHover = false;
 }
@@ -7375,6 +7474,7 @@ watch(annotMode, (on) => {
   if (on && !barnumMode.value) showTopBar();   // v anotaci musí být lišta vidět (východ z režimu)
   if (!on) {
     endEdit();
+    placeHint.value = '';   // mimo anotaci nemá co vybírat
     // Přerušené umisťování skončí — jinak by zůstal viset režim sběru bodů
     if (jumpPlaceMode.value) { jumpPlaceMode.value = false; jumpPlacePoints.value = []; }
     if (jumpTargetMode.value) jumpTargetMode.value = false;
@@ -7389,6 +7489,7 @@ watch(tool, () => endEdit());
 
 function setTool(t) {
   endEdit();
+  placeHint.value = '';   // jiný nástroj = jiná hláška (a stará už neplatí)
   // Přepnutí mezi tužkou a zvýrazňovačem musí přehodit i barvu — palety jsou
   // různé, jinak by zvýrazňovač kreslil černou (a tužka křiklavě žlutou).
   // Index v paletě drží odstín: červená zůstane červená.
@@ -7646,6 +7747,8 @@ function hlResizeQuad(quad, edge, dx, dy, minSide) {
 
 function onLayerDown(e) {
   _logEv('down ' + e.pointerType + ' tool=' + tool.value + ' annot=' + annotMode.value);
+  // Uživatel klepl do not → hláška „vyber místo“ splnila účel.
+  if (placeHint.value) placeHint.value = '';
   // Vybírání místa pro ZNAČKU (písmeno/číslo záchytného bodu): ťuknutí jen
   // určí místo, text se opíše ručně v panelu. Musí být PŘED anotací i skokem.
   if (mkPickMode.value) {
@@ -12179,6 +12282,50 @@ async function deleteBookmark(b) {
   from { opacity: 0; transform: scaleY(0.72); }
   to   { opacity: 1; transform: scaleY(1); }
 }
+/* Puntík prstu ve sloupci pod tlačítkem + spojka k vybranému kolečku.
+   Ploché, teplé, žádný glow — jen aby bylo vidět, že výběr patří prstu. */
+.gm-track {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 1;
+}
+.gm-track-band {
+  fill: rgba(231, 226, 220, 0.035);
+  stroke: rgba(201, 168, 124, 0.30);
+  stroke-width: 1;
+}
+.gm-track-link {
+  stroke: rgba(201, 168, 124, 0.8);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.gm-track-dot {
+  fill: var(--accent);
+  stroke: #17130f;
+  stroke-width: 2.5;
+}
+.gm-catch { position: fixed; left: 0; right: 0; top: 60px; bottom: 0; z-index: 1; pointer-events: auto; }
+
+/* HLÁŠKA „VYBER MÍSTO“ — plochý pruh u spodní hrany, nesahá na noty
+   (pointer-events: none), takže klepnutí projde do stránky. */
+.place-hint {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+  transform: translateX(-50%);
+  max-width: 88vw;
+  box-sizing: border-box;
+  padding: 11px 16px;
+  background: rgba(38, 34, 32, 0.96);
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.25;
+  text-align: center;
+  pointer-events: none;
+  z-index: 58;
+}
+
 .gm-item {
   pointer-events: auto;
   width: 46px; height: 46px; padding: 0; margin: 0;
