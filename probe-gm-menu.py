@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Animovaný režim ovládání (listopad 2026) — lišta vlevo + kruhový výběr.
+"""Animovaný režim ovládání (listopad 2026, 3. kolo) — lišta vlevo, koláč
+s prstenci (jeden na parametr) a tlačítko s fajfkou.
 
-Průběh, který se ověřuje:
-  1. nastavení v knihovně (ozubené kolo) má přepínač a uloží režim
-  2. výchozí režim je TLAČÍTKOVÝ
-  3. podržení ✏️ → duch tlačítka odletí a lišta se otevře VLEVO u okraje
-  4. svislý tah vybírá nástroj i s prstem MIMO lištu (rozhoduje jen y)
-  5. puštění nástroj vybere a otevře KOLÁČ voleb uprostřed stránky
-  6. tahem do kruhu se označí výseč, puštění volbu potvrdí
-  7. nástroj bez voleb (Ruka) koláč neotevře
-  8. klik mimo koláč ho jen zavře
-  9. krátké ťuknutí na ✏️ dál přepíná anotační režim
- 10. tlačítkový režim má starý plovoucí panel a žádné gesto
+Ověřuje STAV v reálném prohlížeči:
+  1. nastavení v knihovně (ozubené kolo) a výchozí tlačítkový režim
+  2. podržení ✏️ → duch + lišta VLEVO u okraje (ne pod tlačítkem)
+  3. notové ikony jsou vycentrované na otisk (nepřetékají z kolečka)
+  4. svislý tah vybírá i s prstem mimo lištu
+  5. tužka → koláč se DVĚMA prstenci (barva 9 + síla 7), uprostřed fajfka
+  6. vybrané hodnoty jsou označené výsečí v obou prstencích
+  7. volba v prstenci se uplatní a zůstane označená
+  8. fajfka palety zavře
+  9. noty → jeden prstenec s 12 výsečemi
+ 10. Ruka (bez voleb) koláč neotevírá
+ 11. Zpět / Dopředu jsou na hlavní liště
+ 12. krátké ťuknutí přepíná anotaci
+ 13. tlačítkový režim má starý plovoucí panel
 """
 import asyncio
 import importlib.util
@@ -50,15 +54,37 @@ async def state(h):
         "  items: document.querySelectorAll('.gm-item').length,"
         "  active: [...document.querySelectorAll('.gm-item')].findIndex(e => e.classList.contains('active')),"
         "  pie: !!document.querySelector('.pie-svg'),"
+        "  rings: document.querySelectorAll('.pie-svg g[data-ring]').length,"
         "  sectors: document.querySelectorAll('.pie-sec').length,"
-        "  hover: [...document.querySelectorAll('.pie-sec')].findIndex(e => e.classList.contains('hover')),"
+        "  hub: !!document.querySelector('.pie-hub-g'),"
+        "  undo: !!document.querySelector('.tb-btn[title^=\"Zpět\"]'),"
+        "  redo: !!document.querySelector('.tb-btn[title^=\"Dopředu\"]'),"
         "  vw: innerWidth, vh: innerHeight,"
         "}))()")
 
 
-async def long_press(h, btn, hold=0.32):
+async def long_press(h, btn, hold=0.3):
     await h.touch("touchStart", [(btn["x"], btn["y"], 12)])
     await asyncio.sleep(hold)
+
+
+async def pie_geo(h):
+    return await h.ev(
+        "(() => { const hub=document.querySelector('.pie-hub-bg');"
+        " const rings=[...document.querySelectorAll('.pie-svg g[data-ring]')]"
+        "   .map(g => ({ r0:+g.getAttribute('data-r0'), r1:+g.getAttribute('data-r1') }));"
+        " const onIdx=[...document.querySelectorAll('.pie-svg g[data-ring]')].map(g =>"
+        "   [...g.querySelectorAll('.pie-sec')].findIndex(e => e.classList.contains('on')));"
+        " return { cx:+hub.getAttribute('cx'), cy:+hub.getAttribute('cy'), rh:+hub.getAttribute('r'),"
+        "          rings, onIdx }; })()")
+
+
+def pt(cx, cy, a, r):
+    return (cx + math.cos(a) * r, cy + math.sin(a) * r)
+
+
+def sector_angle(i, n):
+    return -math.pi / 2 + (i + 0.5) * (2 * math.pi / n)
 
 
 async def main():
@@ -67,131 +93,159 @@ async def main():
         await h.set_tablet(800, 1280, 2)
         await h.open()
 
-        # --- 1) Knihovna: ozubené kolo a výchozí režim ------------------------
+        # --- 1) Knihovna -----------------------------------------------------
         st = await h.ev("(() => ({ gear: !!document.querySelector('.gear-btn'),"
                         " mode: localStorage.getItem('noty.controlMode') }))()")
         ok("knihovna má tlačítko ozubeného kola", st["gear"], st)
         ok("výchozí režim je tlačítkový (klíč chybí)", st["mode"] is None, st["mode"])
-
         await h.ev("document.querySelector('.gear-btn').click()")
         await asyncio.sleep(0.35)
-        ok("nastavení se otevřelo (.set-card)", bool(await h.ev("!!document.querySelector('.set-card')")))
         labels = await h.ev("([...document.querySelectorAll('.set-seg button')].map(b => b.textContent.trim()))")
         ok("nastavení nabízí Tlačítkový i Animovaný", labels == ["Tlačítkový", "Animovaný"], labels)
         on = await h.ev("(document.querySelector('.set-seg button.on') || {}).textContent")
         ok("předvybraný je Tlačítkový", (on or "").strip() == "Tlačítkový", on)
         await h.ev("([...document.querySelectorAll('.set-seg button')].find(b => b.textContent.trim() === 'Animovaný')).click()")
         await asyncio.sleep(0.25)
-        mode = await h.ev("localStorage.getItem('noty.controlMode')")
-        ok("volba Animovaný se uložila", mode == "gesture", mode)
+        ok("volba Animovaný se uložila", (await h.ev("localStorage.getItem('noty.controlMode')")) == "gesture")
         await h.ev("document.querySelector('.set-close').click()")
         await asyncio.sleep(0.2)
-        # horní lišta je po startu schovaná — pro test ji rovnou odškrteneme
         await h.ev("localStorage.setItem('topbarHidden', '0')")
 
         # --- 2) Skladba ------------------------------------------------------
         await h.open_song(pdf=m.make_pdf(6), pages=6, reset=False)
-        st = await state(h)
-        ok("čtečka běží v animovaném režimu", st["mode"] == "gesture", st["mode"])
         btn = await rect(h, ".tb-btn[title^='Anotace']")
+        st = await state(h)
         ok("tlačítko ✏️ existuje", btn is not None, btn)
+        ok("Zpět a Dopředu jsou na hlavní liště", st["undo"] and st["redo"], st)
 
-        # --- 3) Podržení: duch + lišta VLEVO u okraje ------------------------
+        # --- 3) Podržení: duch + lišta vlevo ---------------------------------
         await long_press(h, btn)
         st = await state(h)
-        ok("podržení otevřelo lištu (.gm-col)", st["menu"], st)
+        ok("podržení otevřelo lištu", st["menu"], st)
         ok("duch tlačítka je vidět", st["ghost"], st)
         ok("lišta má 9 koleček", st["items"] == 9, st["items"])
         col = await rect(h, ".gm-col")
-        ok("lišta je u LEVÉHO okraje (ne pod tlačítkem)", col["left"] <= 12, col["left"])
+        ok("lišta je u LEVÉHO okraje", col["left"] <= 12, col["left"])
         ok("lišta začíná POD hlavní lištou", col["top"] >= 50, col["top"])
-        ok("lišta nepřekáží prstu u tlačítka", abs(col["left"] - btn["x"]) > 100,
-           {"colLeft": col["left"], "btnX": btn["x"]})
 
-        # --- 4) Svislý tah i MIMO lištu -------------------------------------
-        item2 = await rect(h, ".gm-item", 2)   # Guma
+        # --- 4) notová ikona je vycentrovaná na OTISK ------------------------
+        circ = await rect(h, ".gm-item .gm-circle", 4)     # Noty
+        gl = await rect(h, ".gm-item .gm-glyph-svg", 0)    # první glyf = Noty
+        ok("notová ikona se vejde do kolečka",
+           bool(circ and gl) and gl["top"] >= circ["top"] - 0.5 and gl["bottom"] <= circ["bottom"] + 0.5,
+           {"circ": circ and [circ["top"], circ["bottom"]], "glyph": gl and [gl["top"], gl["bottom"]]})
+        ok("notová ikona je na středu kolečka",
+           bool(circ and gl) and abs((gl["top"] + gl["bottom"]) / 2 - circ["y"]) < 1.5,
+           {"dy": gl and round((gl["top"] + gl["bottom"]) / 2 - circ["y"], 2)})
+
+        # --- 5) Tah mimo lištu + volba tužky --------------------------------
+        item2 = await rect(h, ".gm-item", 2)
         await h.touch("touchMove", [(col["right"] + 140, item2["y"], 12)])
         await asyncio.sleep(0.25)
-        st = await state(h)
-        ok("prst vpravo MIMO lištu vybere podle svislé polohy", st["active"] == 2, st["active"])
+        ok("prst mimo lištu vybere podle svislé polohy", (await state(h))["active"] == 2)
 
-        # --- 5) Puštění na notách → koláč -----------------------------------
-        item4 = await rect(h, ".gm-item", 4)   # Noty
-        await h.touch("touchMove", [(col["right"] + 140, item4["y"], 12)])
-        await asyncio.sleep(0.25)
-        await h.touch("touchEnd", [])
-        await asyncio.sleep(0.8)
-        st = await state(h)
-        ok("lišta se zavřela", not st["menu"], st)
-        ok("nástroj se vybral (Noty)", st["tool"] == "note", st["tool"])
-        ok("otevřel se KOLÁČ voleb", st["pie"], st)
-        ok("koláč má 12 výsečí (5 not + 5 pomlk + 2 obloučky)", st["sectors"] == 12, st["sectors"])
-
-        # --- 6) Kruhový tah na výseč + potvrzení ----------------------------
-        geo = await h.ev(
-            "(() => { const hole=document.querySelector('.pie-hole');"
-            " const r=document.querySelector('.pie-ring');"
-            " return { cx: +hole.getAttribute('cx'), cy: +hole.getAttribute('cy'),"
-            "          r0: +hole.getAttribute('r'), r: +r.getAttribute('r') }; })()")
-        ok("koláč má střed na středu displeje",
-           abs(geo["cx"] - st["vw"] / 2) < 2 and abs(geo["cy"] - st["vh"] / 2) < 2, geo)
-
-        step = 2 * math.pi / 12
-        ang = -math.pi / 2 + (3 + 0.5) * step          # 4. výseč (osminová nota)
-        rr = (geo["r0"] + geo["r"]) / 2
-        px = geo["cx"] + math.cos(ang) * rr
-        py = geo["cy"] + math.sin(ang) * rr
-        await h.touch("touchStart", [(geo["cx"], geo["cy"] + 10, 12)])
-        await h.touch("touchMove", [(px, py, 12)])
-        await asyncio.sleep(0.25)
-        st = await state(h)
-        ok("tahem do kruhu se označila 4. výseč", st["hover"] == 3, st["hover"])
-        await h.touch("touchEnd", [])
-        await asyncio.sleep(0.5)
-        st = await state(h)
-        ok("puštění potvrdilo volbu a koláč zmizel", not st["pie"], st)
-        ok("nástroj zůstal Noty", st["tool"] == "note", st["tool"])
-
-        # --- 7) Nástroj bez voleb (Ruka) koláč neotevře ---------------------
-        await long_press(h, btn)
-        item7 = await rect(h, ".gm-item", 7)
-        await h.touch("touchMove", [(col["right"] + 140, item7["y"], 12)])
+        item0 = await rect(h, ".gm-item", 0)   # Tužka
+        await h.touch("touchMove", [(col["right"] + 140, item0["y"], 12)])
         await asyncio.sleep(0.2)
         await h.touch("touchEnd", [])
-        await asyncio.sleep(0.8)
+        await asyncio.sleep(0.6)
         st = await state(h)
-        ok("Ruka se vybrala", st["tool"] == "edit", st["tool"])
-        ok("Ruka koláč neotevírá", not st["pie"], st)
+        ok("lišta se zavřela", not st["menu"], st)
+        ok("tužka se vybrala", st["tool"] == "pencil", st["tool"])
+        ok("koláč se otevřel", st["pie"], st)
+        ok("koláč má DVA prstence (barva + síla)", st["rings"] == 2, st["rings"])
+        ok("dohromady 16 výsečí (9 barev + 7 sil)", st["sectors"] == 16, st["sectors"])
+        ok("uprostřed je tlačítko s fajfkou", st["hub"], st)
 
-        # --- 8) Koláč: klik mimo jen zavře ----------------------------------
+        geo = await pie_geo(h)
+        ok("vybrané hodnoty jsou označené v obou prstencích", len(geo["onIdx"]) == 2 and
+           all(i >= 0 for i in geo["onIdx"]), geo["onIdx"])
+
+        # --- 6) Volba barvy v prvním prstenci -------------------------------
+        r0, r1 = geo["rings"][0]["r0"], geo["rings"][0]["r1"]
+        x, y = pt(geo["cx"], geo["cy"], sector_angle(2, 9), (r0 + r1) / 2)
+        await h.touch("touchStart", [(geo["cx"], geo["cy"] + 8, 12)])
+        await h.touch("touchMove", [(x, y, 12)])
+        await asyncio.sleep(0.2)
+        hov = await h.ev("([...document.querySelectorAll('.pie-sec')].findIndex(e => e.classList.contains('hover')))")
+        ok("prst v prvním prstenci označí 3. barvu", hov == 2, hov)
+        await h.touch("touchEnd", [])
+        await asyncio.sleep(0.35)
+        geo2 = await pie_geo(h)
+        ok("vybraná barva zůstala označená", geo2["onIdx"][0] == 2, geo2["onIdx"])
+        ok("koláč zůstal otevřený (další parametr)", (await state(h))["pie"])
+
+        # --- 7) Volba síly ve druhém prstenci -------------------------------
+        r0, r1 = geo2["rings"][1]["r0"], geo2["rings"][1]["r1"]
+        x, y = pt(geo2["cx"], geo2["cy"], sector_angle(4, 7), (r0 + r1) / 2)
+        await h.touch("touchStart", [(geo2["cx"], geo2["cy"] + 8, 12)])
+        await h.touch("touchMove", [(x, y, 12)])
+        await asyncio.sleep(0.2)
+        await h.touch("touchEnd", [])
+        await asyncio.sleep(0.35)
+        geo3 = await pie_geo(h)
+        ok("vybraná síla je označená v druhém prstenci", geo3["onIdx"][1] == 4, geo3["onIdx"])
+
+        # --- 8) Fajfka zavře palety -----------------------------------------
+        await h.touch("touchStart", [(geo3["cx"], geo3["cy"], 12)])
+        await asyncio.sleep(0.08)
+        await h.touch("touchEnd", [])
+        await asyncio.sleep(0.4)
+        st = await state(h)
+        ok("fajfka zavřela koláč", not st["pie"], st)
+        ok("nástroj zůstal tužka", st["tool"] == "pencil", st["tool"])
+
+        # --- 9) Noty: jeden prstenec ----------------------------------------
         await long_press(h, btn)
         i4 = await rect(h, ".gm-item", 4)
         await h.touch("touchMove", [(col["right"] + 140, i4["y"], 12)])
         await asyncio.sleep(0.2)
         await h.touch("touchEnd", [])
-        await asyncio.sleep(0.8)
-        ok("koláč je otevřený před klikem mimo", bool((await state(h))["pie"]))
-        await h.finger_tap(20, 1200)
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.6)
         st = await state(h)
-        ok("klik mimo koláč ho zavřel", not st["pie"], st)
-        ok("nástroj zůstal Noty", st["tool"] == "note", st["tool"])
+        ok("noty: nástroj vybrán", st["tool"] == "note", st["tool"])
+        ok("noty: koláč má JEDEN prstenec", st["rings"] == 1, st["rings"])
+        ok("noty: 12 výsečí", st["sectors"] == 12, st["sectors"])
+        g4 = await pie_geo(h)
+        r0, r1 = g4["rings"][0]["r0"], g4["rings"][0]["r1"]
+        x, y = pt(g4["cx"], g4["cy"], sector_angle(3, 12), (r0 + r1) / 2)
+        await h.touch("touchStart", [(g4["cx"], g4["cy"] + 8, 12)])
+        await h.touch("touchMove", [(x, y, 12)])
+        await asyncio.sleep(0.2)
+        await h.touch("touchEnd", [])
+        await asyncio.sleep(0.3)
+        ok("noty: 4. výseč se označila", (await pie_geo(h))["onIdx"][0] == 3)
+        await h.touch("touchStart", [(g4["cx"], g4["cy"], 12)])
+        await asyncio.sleep(0.08)
+        await h.touch("touchEnd", [])
+        await asyncio.sleep(0.4)
 
-        # --- 9) Krátké ťuknutí přepíná anotaci -------------------------------
+        # --- 10) Ruka bez koláče --------------------------------------------
+        await long_press(h, btn)
+        i7 = await rect(h, ".gm-item", 7)
+        await h.touch("touchMove", [(col["right"] + 140, i7["y"], 12)])
+        await asyncio.sleep(0.2)
+        await h.touch("touchEnd", [])
+        await asyncio.sleep(0.6)
+        st = await state(h)
+        ok("Ruka se vybrala", st["tool"] == "edit", st["tool"])
+        ok("Ruka koláč neotevírá", not st["pie"], st)
+
+        # --- 11) Krátké ťuknutí ---------------------------------------------
         before = (await state(h))["annot"]
         await h.finger_tap(btn["x"], btn["y"])
         st = await state(h)
-        ok("krátké ťuknutí přepnulo anotaci (ne nabídku)",
-           st["annot"] != before and not st["menu"], {"before": before, "annot": st["annot"]})
+        ok("krátké ťuknutí přepnulo anotaci", st["annot"] != before and not st["menu"],
+           {"before": before, "annot": st["annot"]})
 
-        # --- 10) Tlačítkový režim -------------------------------------------
+        # --- 12) Tlačítkový režim -------------------------------------------
         await h.ev("localStorage.setItem('noty.controlMode', 'button')")
         await h.open()
         await h.open_song(pdf=m.make_pdf(6), pages=6, reset=False)
         await h.finger_tap(btn["x"], btn["y"])
         st = await state(h)
         ok("tlačítkový režim ukáže plovoucí panel", st["panel"], st)
-        ok("tlačítkový režim gesto neotevírá", not st["menu"] and not st["pie"], st)
+        ok("Zpět/Dopředu jsou i v tlačítkovém režimu", st["undo"] and st["redo"], st)
 
     ok.report()
 

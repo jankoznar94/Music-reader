@@ -52,6 +52,16 @@
         </button>
         <!-- Pravá skupina -->
         <div class="tb-side right">
+        <!-- ZPĚT / DOPŘEDU — GLOBÁLNĚ na hlavní liště (Jan, listopad 2026:
+             „aby platily pro všechny nástroje globálně a bylo snadné akci
+             vrátit bez zbytečného otevírání menu“). Reagují na pointerdown,
+             pero doručovalo click až napodruhé. -->
+        <button class="tb-btn" @pointerdown.prevent="undoAnnot" :disabled="!canUndo" title="Zpět (poslední akce)">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+        </button>
+        <button class="tb-btn" @pointerdown.prevent="redoAnnot" :disabled="!canRedo" title="Dopředu (vrátit akci)">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+        </button>
         <!-- ANOTACE — v animovaném režimu se podržením tlačítka rozbalí nabídka
              nástrojů tahem (viz gmOpen). Krátké ťuknutí dělá totéž co dřív
              (zapne/vypne anotační režim), aby se ovládání nemátlo. -->
@@ -113,9 +123,9 @@
 
     <!-- ANIMOVANÝ REŽIM OVLÁDÁNÍ (volba v nastavení knihovny).
          Podržením ✏️ vyletí jeho duch do levého horního rohu pod hlavní lištu
-         a tam se rozbalí svislá lišta nástrojů (ne pod tlačítkem — zakrýval by
-         ji prst). Tahem svisle se vybírá nástroj; puštění ho potvrdí a otevře
-         kruhový výběr voleb uprostřed stránky. -->
+         a tam se hned rozbalí svislá lišta nástrojů (ne pod tlačítkem — zakrýval
+         by ji prst). Tahem svisle se vybírá nástroj; puštění ho potvrdí
+         a otevře kruhový výběr voleb uprostřed stránky. -->
     <div v-if="gm.open" class="gm-root" :class="{ closing: gm.closing }">
       <div v-if="gm.ghost" class="gm-ghost"
            :style="{ left: gm.ghostX + 'px', top: gm.ghostY + 'px',
@@ -131,34 +141,45 @@
                 @touchstart.stop.prevent="noopTouch" @touchend.stop="noopTouch">
           <span class="gm-circle" :class="{ sel: it.sel }">
             <span v-if="it.icon" class="gm-ico" :class="it.cls">{{ it.icon }}</span>
-            <span v-else class="gm-glyph">{{ it.glyph }}</span>
+            <svg v-else class="gm-glyph-svg" :viewBox="it.vb">
+              <text x="0" y="0" font-size="1" font-family="NotyDyn">{{ it.glyph }}</text>
+            </svg>
           </span>
         </button>
       </div>
     </div>
 
-    <!-- KRUHOVÝ VÝBĚR VOLEB NÁSTROJE („koláč“) — uprostřed stránky, výsečí
-         tolik, kolik má nástroj možností. Prst táhne do kruhu, vybírá úhel. -->
+    <!-- KRUHOVÝ VÝBĚR VOLEB NÁSTROJE („koláč“) — uprostřed stránky, jeden
+         PRSTENEC NA PARAMETR (tužka: barva + síla). Uprostřed velké tlačítko
+         s fajfkou, které palety zavře. -->
     <svg v-if="pie.open" class="pie-svg" :class="{ closing: pie.closing }"
-         :viewBox="'0 0 ' + pie.vw + ' ' + pie.vh" preserveAspectRatio="xMidYMid slice">
+         :viewBox="'0 0 ' + pie.vw + ' ' + pie.vh">
       <circle class="pie-scrim" :cx="pie.cx" :cy="pie.cy" :r="Math.max(pie.vw, pie.vh)" />
-      <circle class="pie-ring" :cx="pie.cx" :cy="pie.cy" :r="pie.r" />
-      <g v-for="(s, i) in pie.sectors" :key="s.key" class="pie-sec-g"
-         :style="{ '--i': i }">
-        <path :d="s.d" class="pie-sec"
-              :class="{ hover: pie.hover === i, on: s.on, off: s.disabled }"
-              @pointerdown.stop.prevent="pieTapSector(i)" />
-        <text v-if="s.glyph" class="pie-ico glyph" :x="s.ix" :y="s.iy"
-              text-anchor="middle" dominant-baseline="central">{{ s.glyph }}</text>
-        <text v-else-if="s.text" class="pie-ico txt" :x="s.ix" :y="s.iy"
-              text-anchor="middle" dominant-baseline="central">{{ s.text }}</text>
-        <circle v-else class="pie-dot" :cx="s.ix" :cy="s.iy" r="15" :fill="s.color" />
+      <text v-if="pie.title" class="pie-title" :x="pie.cx" :y="pie.cy - pie.r - 14"
+            text-anchor="middle">{{ pie.title }}</text>
+      <g v-for="(ring, ri) in pie.rings" :key="ring.key"
+         :data-ring="ri" :data-r0="ring.r0" :data-r1="ring.r1">
+        <path v-for="(s, i) in ring.sectors" :key="s.key" :d="s.d" class="pie-sec"
+              :class="{ hover: pie.hoverRing === ri && pie.hoverIdx === i, on: ring.items[i].on, off: s.disabled }"
+              @pointerdown.stop.prevent="pieTapSector(ri, i)" />
+        <template v-for="(s, i) in ring.sectors" :key="'ic' + s.key">
+          <svg v-if="s.kind === 'glyph'" class="pie-glyph"
+               :x="s.ix - s.isz / 2" :y="s.iy - s.isz / 2" :width="s.isz" :height="s.isz"
+               :viewBox="s.vb">
+            <text x="0" y="0" font-size="1" font-family="NotyDyn">{{ s.text }}</text>
+          </svg>
+          <text v-else-if="s.kind === 'text'" class="pie-ico txt" :x="s.ix" :y="s.iy"
+                text-anchor="middle" dominant-baseline="central">{{ s.text }}</text>
+          <g v-else>
+            <circle class="pie-dot" :cx="s.ix" :cy="s.iy" r="14" :fill="s.color" />
+            <circle v-if="ring.items[i].on" class="pie-dot-sel" :cx="s.ix" :cy="s.iy" r="18" />
+          </g>
+        </template>
       </g>
-      <circle class="pie-hole" :cx="pie.cx" :cy="pie.cy" :r="pie.r0 - 4" />
-      <text class="pie-hub" :class="pie.hubCls" :x="pie.cx" :y="pie.cy - (pie.title ? 8 : 0)"
-            text-anchor="middle" dominant-baseline="central">{{ pie.hub }}</text>
-      <text v-if="pie.title" class="pie-title" :x="pie.cx" :y="pie.cy + 22"
-            text-anchor="middle" dominant-baseline="central">{{ pie.title }}</text>
+      <g class="pie-hub-g" :class="{ hover: pie.hubHover }">
+        <circle class="pie-hub-bg" :cx="pie.cx" :cy="pie.cy" :r="pie.rh - 3" />
+        <path class="pie-check" :d="pie.checkD" :stroke-width="pie.rh * 0.16" />
+      </g>
     </svg>
 
     <!-- Panel ZVĚTŠENÍ A POSUNU — otevírá se z tlačítka s procenty v liště.
@@ -6825,12 +6846,14 @@ function showTopBar() {
 //
 // Průběh v animovaném režimu:
 //  1. podržení ✏️ → z tlačítka vyletí jeho „duch“ do LEVÉHO HORNÍHO ROHU pod
-//     hlavní lištu a tam se rozbalí svislá lišta nástrojů (ne pod tlačítkem —
-//     tam by ji zakrýval prst),
+//     hlavní lištu a tam se hned rozbalí svislá lišta nástrojů (ne pod
+//     tlačítkem — tam by ji zakrýval prst),
 //  2. tahem svisle se vybírá nástroj (bere se jen svislá poloha prstu),
 //  3. puštění nástroj vybere; pokud má nástroj volby, objeví se UPROSTŘED
-//     stránky kruhový „koláč“ s výsečí na každou volbu — tahem do kruhu se
-//     vybírá, puštění potvrdí (klik mimo koláč ho zavře bez volby).
+//     stránky kruhový „koláč“ — jeden PRSTENEC NA KAŽDÝ PARAMETR (tužka má
+//     barvu a sílu zvlášť). Uprostřed je velké tlačítko s fajfkou, které
+//     palety zavře; volby se přitom uplatňují hned, takže fajfka bez výběru
+//     nechá výchozí / naposledy zvolené hodnoty.
 const controlMode = ref(localStorage.getItem('noty.controlMode') === 'gesture' ? 'gesture' : 'button');
 const isGestureMode = computed(() => controlMode.value === 'gesture');
 const annotBtnEl = ref(null);
@@ -6848,17 +6871,45 @@ const gm = reactive({
   ghost: false, ghostX: 0, ghostY: 0, btnCx: 0, btnCy: 0,
 });
 let gmTimer = null;
-let gmItemRects = [];
 let gmSuppressClickUntil = 0;
 
 // Kruhový výběr voleb nástroje (koláč uprostřed stránky).
 const pie = reactive({
   open: false, closing: false,
-  vw: 0, vh: 0, cx: 0, cy: 0, r: 0, r0: 0,
-  sectors: [], hover: -1, hub: '', hubCls: 'icon', title: '',
+  vw: 0, vh: 0, cx: 0, cy: 0, r: 0, rh: 0,
+  rings: [], hoverRing: -1, hoverIdx: -1, hubHover: false, toolKey: '',
+  checkD: '', title: '',
 });
 let pieSuppressDownUntil = 0;
-const piePrevOverflow = { x: '', y: '' };
+
+// --- Ikony notovým fontem ----------------------------------------------------
+// Notační glyfy (noty, dynamika, značky) se NESMÍ centrovat podle em-boxu:
+// nota s nožičkou má otisk nahoře a ve středu kolečka pak vyčnívá a působí
+// oříznutá. Každý glyf proto kreslíme do malého SVG, jehož viewBox je
+// vycentrovaný na skutečný OTISK glyfu (u not z dat `box`, u ostatních
+// odhadem), takže je vždycky přesně ve středu a nic nepřetéká.
+function glyphBox(kind, key) {
+  let box, pad;
+  if (kind === 'note') {
+    const it = NOTE_LOOKUP.get(noteEffKey(key, false));
+    box = it ? it.box : [0, 0.34, -0.15, 0.88];
+    pad = 1.10;
+  } else if (kind === 'dynamic') {
+    const adv = DYN_ADV[key] || 0.6;
+    box = [0, adv, -0.04, 0.55];
+    pad = 0.95;
+  } else {
+    const adv = MARK_ADV[key] || 0.35;
+    box = [0, adv, -0.45, 0.55];
+    pad = 1.00;
+  }
+  const [x0, x1, y0, y1] = box;
+  const cx = (x0 + x1) / 2;
+  const cy = -(y0 + y1) / 2;          // SVG má y dolů, font nahoru
+  const size = Math.max(x1 - x0, y1 - y0, 0.55) * pad;
+  return `${(cx - size / 2).toFixed(3)} ${(cy - size / 2).toFixed(3)} ` +
+         `${size.toFixed(3)} ${size.toFixed(3)}`;
+}
 
 // Nabídka nástrojů (svisle). Pořadí odpovídá anotačnímu panelu.
 const gmItems = computed(() => {
@@ -6868,60 +6919,73 @@ const gmItems = computed(() => {
     { key: 'highlighter', label: 'Zvýrazňovač',  icon: '🖍️', sel: cur === 'highlighter' },
     { key: 'eraser',      label: 'Guma',         icon: '🧽', sel: cur === 'eraser' },
     { key: 'text',        label: 'Text',         icon: 'T',  cls: 't', sel: cur === 'text' },
-    { key: 'note',        label: 'Noty',         glyph: noteGlyph('ctvrt_h').text, sel: cur === 'note' },
-    { key: 'dynamic',     label: 'Dynamika',     glyph: dynGlyph('mf').text, sel: cur === 'dynamic' },
-    { key: 'mark',        label: 'Značky',       glyph: markGlyph('k').text, sel: cur === 'mark' },
+    { key: 'note',        label: 'Noty',         glyph: noteGlyph('ctvrt_h').text, vb: glyphBox('note', 'ctvrt_h'), sel: cur === 'note' },
+    { key: 'dynamic',     label: 'Dynamika',     glyph: dynGlyph('mf').text, vb: glyphBox('dynamic', 'mf'), sel: cur === 'dynamic' },
+    { key: 'mark',        label: 'Značky',       glyph: markGlyph('k').text, vb: glyphBox('mark', 'k'), sel: cur === 'mark' },
     { key: 'edit',        label: 'Ruka',         icon: '✋', sel: cur === 'edit' },
     { key: 'actions',     label: 'Akce',         icon: '↺', sel: false },
   ];
 });
 
-// Volby daného nástroje (jednotky pro koláč i pro starou obdélníkovou podobu).
-function gmOptions(key) {
-  let items = [];
-  if (key === 'pencil') {
-    items = [
-      ...PEN_COLORS.map(c => ({ key: 'pc' + c, tool: 'pencil', color: c, label: 'Barva', on: tool.value === 'pencil' && annotColor.value === c })),
-      ...[1, 2, 3, 5, 8, 12, 20].map(n => ({ key: 'pw' + n, tool: 'pencil', size: n, text: String(n), label: 'Síla ' + n + ' px', on: tool.value === 'pencil' && annotSize.value === n })),
-    ];
-  } else if (key === 'highlighter') {
-    items = [
-      ...HL_COLORS.map(c => ({ key: 'hc' + c, tool: 'highlighter', color: c, label: 'Barva', on: tool.value === 'highlighter' && annotColor.value === c })),
-      ...HL_MODE_LIST.map(m => ({ key: 'hm' + m.key, tool: 'highlighter', mode: m.key, text: m.label, label: m.label, on: hlMode.value === m.key })),
-    ];
-  } else if (key === 'eraser') {
-    items = [4, 8, 14, 22, 32, 48].map(n => ({ key: 'ew' + n, tool: 'eraser', size: n, text: String(n), label: 'Poloměr ' + n + ' px', on: tool.value === 'eraser' && annotSize.value === n }));
-  } else if (key === 'text') {
-    items = PEN_COLORS.map(c => ({ key: 'tc' + c, tool: 'text', color: c, label: 'Barva', on: tool.value === 'text' && textColor.value === c }));
-  } else if (key === 'note') {
+// Volby nástroje rozdělené po PARAMETRECH — každý parametr = jeden prstenec
+// koláče. `kind` rozhoduje, jak se volba kreslí: color (kolečko barvy),
+// text (číslo / popisek), glyph (notový glyf s vlastním viewBoxem).
+function gmParams(key) {
+  const mkGlyph = (kind, k, extra) => {
+    const text = kind === 'note' ? noteGlyph(k).text : kind === 'dynamic' ? dynGlyph(k).text : markGlyph(k).text;
+    return { kind: 'glyph', text, vb: glyphBox(kind, k), ...extra };
+  };
+  if (key === 'pencil') return [
+    { key: 'color', label: 'Barva', items: PEN_COLORS.map(c => ({ key: 'pc' + c, kind: 'color', color: c, tool: 'pencil', on: tool.value === 'pencil' && annotColor.value === c })) },
+    { key: 'size', label: 'Síla', items: [1, 2, 3, 5, 8, 12, 20].map(n => ({ key: 'pw' + n, kind: 'text', text: String(n), label: n + ' px', tool: 'pencil', size: n, on: tool.value === 'pencil' && annotSize.value === n })) },
+  ];
+  if (key === 'highlighter') return [
+    { key: 'color', label: 'Barva', items: HL_COLORS.map(c => ({ key: 'hc' + c, kind: 'color', color: c, tool: 'highlighter', on: tool.value === 'highlighter' && annotColor.value === c })) },
+    { key: 'mode', label: 'Způsob', items: HL_MODE_LIST.map(m => ({ key: 'hm' + m.key, kind: 'text', text: m.label, label: m.label, tool: 'highlighter', mode: m.key, on: hlMode.value === m.key })) },
+  ];
+  if (key === 'eraser') return [
+    { key: 'size', label: 'Poloměr', items: [4, 8, 14, 22, 32, 48].map(n => ({ key: 'ew' + n, kind: 'text', text: String(n), label: 'Poloměr ' + n + ' px', tool: 'eraser', size: n, on: tool.value === 'eraser' && annotSize.value === n })) },
+  ];
+  if (key === 'text') return [
+    { key: 'color', label: 'Barva', items: PEN_COLORS.map(c => ({ key: 'tc' + c, kind: 'color', color: c, tool: 'text', on: tool.value === 'text' && textColor.value === c })) },
+  ];
+  if (key === 'note') {
     const notes = NOTE_GROUPS[0].items.filter(x => !x.hide);
     const rests = NOTE_GROUPS[1].items;
-    items = [
-      ...notes.map(n => ({ key: 'n' + n.key, tool: 'note', text: n.key, glyph: noteGlyph(n.key).text, label: n.label, on: tool.value === 'note' && notePresetKey.value === n.key })),
-      ...rests.map(n => ({ key: 'r' + n.key, tool: 'note', text: n.key, glyph: noteGlyph(n.key).text, label: n.label, on: tool.value === 'note' && notePresetKey.value === n.key })),
-      { key: 'cr', tool: 'crescendo', glyph: '<', label: 'Crescendo', on: tool.value === 'crescendo' },
-      { key: 'dc', tool: 'decrescendo', glyph: '>', label: 'Decrescendo', on: tool.value === 'decrescendo' },
-    ];
-  } else if (key === 'dynamic') {
-    items = DYN_PICK.slice(0, 12).map(d => ({
-      key: 'd' + d.key, tool: 'dynamic', text: d.key, glyph: d.glyph, label: d.key,
-      on: tool.value === 'dynamic' && String(annotTextDraft.value || '').trim().toLowerCase() === d.key,
-    }));
-  } else if (key === 'mark') {
-    const flat = MARK_GROUPS.flatMap(g => g.items);
-    items = flat.slice(0, 14).map(m => ({
-      key: 'k' + m.key, tool: 'mark', text: m.key, glyph: markGlyph(m.key).text, label: m.label,
-      on: tool.value === 'mark' && String(annotTextDraft.value || '').trim().toLowerCase() === m.key,
-    }));
-  } else if (key === 'actions') {
-    items = [
-      { key: 'undo', text: '↶', label: 'Zpět', disabled: !canUndo.value, action: () => undoAnnot() },
-      { key: 'redo', text: '↷', label: 'Dopředu', disabled: !canRedo.value, action: () => redoAnnot() },
-      { key: 'delpage', text: '🗑', label: 'Smazat anotace na stránce', action: () => clearPageAnnots() },
-      { key: 'delall', text: '✕', label: 'Smazat všechny anotace', action: () => clearAnnots() },
-    ];
+    return [{
+      key: 'note', label: 'Nota',
+      items: [
+        ...notes.map(n => mkGlyph('note', n.key, { key: 'n' + n.key, tool: 'note', note: n.key, label: n.label, on: tool.value === 'note' && notePresetKey.value === n.key })),
+        ...rests.map(n => mkGlyph('note', n.key, { key: 'r' + n.key, tool: 'note', note: n.key, label: n.label, on: tool.value === 'note' && notePresetKey.value === n.key })),
+        { key: 'cr', kind: 'text', text: '<', label: 'Crescendo', tool: 'crescendo', on: tool.value === 'crescendo' },
+        { key: 'dc', kind: 'text', text: '>', label: 'Decrescendo', tool: 'decrescendo', on: tool.value === 'decrescendo' },
+      ],
+    }];
   }
-  return items.length ? { items } : null;
+  if (key === 'dynamic') return [{
+    key: 'dyn', label: 'Dynamika',
+    items: DYN_PICK.slice(0, 12).map(d => mkGlyph('dynamic', d.key, {
+      key: 'd' + d.key, tool: 'dynamic', dyn: d.key, label: d.key,
+      on: tool.value === 'dynamic' && String(annotTextDraft.value || '').trim().toLowerCase() === d.key,
+    })),
+  }];
+  if (key === 'mark') return [{
+    key: 'mark', label: 'Značka',
+    items: MARK_GROUPS.flatMap(g => g.items).slice(0, 14).map(m => mkGlyph('mark', m.key, {
+      key: 'k' + m.key, tool: 'mark', mark: m.key, label: m.label,
+      on: tool.value === 'mark' && String(annotTextDraft.value || '').trim().toLowerCase() === m.key,
+    })),
+  }];
+  if (key === 'actions') return [{
+    key: 'act', label: 'Akce',
+    items: [
+      { key: 'undo', kind: 'text', text: '↶', label: 'Zpět', disabled: !canUndo.value, action: () => undoAnnot() },
+      { key: 'redo', kind: 'text', text: '↷', label: 'Dopředu', disabled: !canRedo.value, action: () => redoAnnot() },
+      { key: 'delpage', kind: 'text', text: '🗑', label: 'Smazat anotace na stránce', action: () => clearPageAnnots() },
+      { key: 'delall', kind: 'text', text: '✕', label: 'Smazat všechny anotace', action: () => clearAnnots() },
+    ],
+  }];
+  return [];
 }
 
 function gmHaptic(ms = 8) {
@@ -6938,7 +7002,7 @@ function onAnnotBtnDown(e) {
   if (!isGestureMode.value) return;
   clearTimeout(gmTimer);
   gm.startX = e.clientX; gm.startY = e.clientY; gm.moved = false;
-  gmTimer = window.setTimeout(() => gmOpen(), 190);
+  gmTimer = window.setTimeout(() => gmOpen(), 170);
 }
 function onAnnotBtnUp() {
   clearTimeout(gmTimer);
@@ -6946,18 +7010,19 @@ function onAnnotBtnUp() {
 
 // Svislá lišta se otevírá VLEVO U OKRAJE STRÁNKY pod hlavní lištou. Pod
 // tlačítkem by ji zakrýval prst, kterým uživatel drží a táhne (Jan).
+// Animace je záměrně KRÁTKÁ — duch doletí a lišta stojí hned; delší prodleva
+// působila jako „zaseknuté“ gesto.
 function gmOpen() {
   if (!isGestureMode.value || gm.open) return;
   const el = annotBtnEl.value;
   if (!el) return;
-  const vw = window.innerWidth, vh = window.innerHeight;
+  const vh = window.innerHeight;
   const r = el.getBoundingClientRect();
   const bar = document.querySelector('.top-bar');
   const barBottom = bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 56;
   const colH = gmItems.value.length * GM_STEP + 12;
   gm.colX = 8;
   gm.colY = Math.max(8, Math.min(barBottom + 8, vh - 12 - colH));
-  // Duch tlačítka letí z jeho místa do prvního kolečka lišty.
   gm.btnCx = r.left + r.width / 2;
   gm.btnCy = r.top + r.height / 2;
   gm.ghostX = gm.colX + GM_W / 2;
@@ -6968,27 +7033,22 @@ function gmOpen() {
   gm.active = cur >= 0 ? cur : 0;
   gmSuppressClickUntil = Date.now() + 1000;
   gmHaptic(15);
-  window.setTimeout(() => { gm.ghost = false; }, 360);
+  window.setTimeout(() => { gm.ghost = false; }, 240);
   window.addEventListener('pointermove', gmMove, { passive: true });
   window.addEventListener('pointerup', gmUp, true);
   window.addEventListener('pointercancel', gmCancel, true);
-  nextTick(gmMeasure);
-}
-
-function gmMeasure() {
-  gmItemRects = Array.from(document.querySelectorAll('.gm-root .gm-item')).map(e => e.getBoundingClientRect());
 }
 
 // Nejbližší kolečko lišty podle SVISLÉ polohy (x se ignoruje — prst nemusí
 // trefit úzký sloupec, stačí táhnout podél něj).
-function gmNearestY(rects, y) {
-  let best = -1, bestD = Infinity;
-  for (let i = 0; i < rects.length; i++) {
-    const r = rects[i];
-    const d = Math.abs(y - (r.top + r.height / 2));
-    if (d < bestD) { bestD = d; best = i; }
-  }
-  return best;
+// ⚠️ Středy se POČÍTAJÍ z geometrie lišty (`colY` + 5 px padding + půlka
+// kolečka + krok), NIKDY se neměří přes getBoundingClientRect během náběhové
+// animace — ta mění měřítko a prst by pak vybíral jiné kolečko, než na které
+// ukazuje.
+function gmNearestY(y) {
+  const top = gm.colY + 5 + 23;
+  const i = Math.round((y - top) / GM_STEP);
+  return Math.max(0, Math.min(gmItems.value.length - 1, i));
 }
 
 function gmMove(e) {
@@ -6996,15 +7056,14 @@ function gmMove(e) {
   const x = e.clientX, y = e.clientY;
   if (Math.hypot(x - gm.startX, y - gm.startY) > 6) gm.moved = true;
   if (y < gm.colY - 4) return;   // nad lištou (u tlačítka) se nevybírá
-  const i = gmNearestY(gmItemRects, y);
+  const i = gmNearestY(y);
   if (i >= 0 && i !== gm.active) { gm.active = i; gmHaptic(); }
 }
 
 function gmApplyTool(i) {
   const it = gmItems.value[i];
-  if (!it || it.key === 'actions') return false;
+  if (!it || it.key === 'actions') return;
   setTool(it.key);
-  return true;
 }
 function gmApplyOption(o) {
   if (!o) return;
@@ -7014,11 +7073,24 @@ function gmApplyOption(o) {
   if (o.color) annotColor.value = o.color;
   if (o.size != null) annotSize.value = o.size;
   if (o.mode) setHlMode(o.mode);
-  if (o.text != null) {
-    if (o.tool === 'note') { notePresetKey.value = o.text; annotTextDraft.value = o.text; }
-    else if (o.tool === 'dynamic' || o.tool === 'mark') annotTextDraft.value = o.text;
-  }
+  if (o.note != null) { notePresetKey.value = o.note; annotTextDraft.value = o.note; }
+  if (o.dyn != null) annotTextDraft.value = o.dyn;
+  if (o.mark != null) annotTextDraft.value = o.mark;
   gmHaptic();
+  pieRefresh();
+}
+
+// Označení „právě zvolené“ výseče musí žít: volby v `pie.rings` jsou snapshot,
+// takže po každé změně přepočítáme `on` z aktuálního stavu nástroje. Bez toho
+// po výběru barvy zůstala označená stará výseč (a sonda to našla).
+function pieRefresh() {
+  if (!pie.open) return;
+  const params = gmParams(pie.toolKey);
+  pie.rings.forEach((ring, ri) => {
+    const src = params[ri];
+    if (!src) return;
+    ring.items.forEach((o, i) => { o.on = !!(src.items[i] && src.items[i].on); });
+  });
 }
 
 // Ťuknutí přímo na kolečko lišty = výběr nástroje (+ koláč voleb).
@@ -7040,10 +7112,10 @@ function gmUp() {
 // Vybere nástroj, zavře lištu a (pokud nástroj nějaké volby má) otevře koláč.
 function gmFinishTool() {
   const item = gmItems.value[gm.active] || {};
-  const opts = gmOptions(item.key);
+  const params = gmParams(item.key);
   gmApplyTool(gm.active);
   gmClose();
-  if (opts) window.setTimeout(() => pieOpen(opts, item), 230);
+  if (params.length) window.setTimeout(() => pieOpen(params, item), 150);
 }
 function gmCancel() {
   gmClose();
@@ -7059,61 +7131,81 @@ function gmClose() {
   window.setTimeout(() => {
     gm.open = false;
     gm.closing = false;
-    gmItemRects = [];
-  }, 240);
+  }, 150);
 }
 
-// --- Kruhový výběr voleb (koláč) --------------------------------------------
-// Středy výsečí v úhlech, 0 = nahoru, dál po směru hodin. Prst se bere podle
-// ÚHLU od středu („do kruhu“), vzdálenost rozhoduje jen o tom, zda je prst
-// vůbec na koláči.
-function pieSlicePath(cx, cy, r0, r, a0, a1) {
+// --- Kruhový výběr voleb (koláč s prstenci) ----------------------------------
+// Jeden prstenec na parametr (tužka: barva + síla). Prst vybírá ÚHEL, vzdálenost
+// od středu určuje, kterého prstence se volba týká. Uprostřed je tlačítko
+// s fajfkou — zavře palety (volby už jsou uplatněné, takže fajfka bez výběru
+// nechá výchozí / naposledy zvolené hodnoty).
+function ringPath(cx, cy, r0, r1, a0, a1) {
   const large = (a1 - a0) > Math.PI ? 1 : 0;
-  const x0 = cx + r * Math.cos(a0),  y0 = cy + r * Math.sin(a0);
-  const x1 = cx + r * Math.cos(a1),  y1 = cy + r * Math.sin(a1);
+  const x0 = cx + r1 * Math.cos(a0), y0 = cy + r1 * Math.sin(a0);
+  const x1 = cx + r1 * Math.cos(a1), y1 = cy + r1 * Math.sin(a1);
   const x2 = cx + r0 * Math.cos(a1), y2 = cy + r0 * Math.sin(a1);
   const x3 = cx + r0 * Math.cos(a0), y3 = cy + r0 * Math.sin(a0);
-  return `M${x0} ${y0}A${r} ${r} 0 ${large} 1 ${x1} ${y1}L${x2} ${y2}A${r0} ${r0} 0 ${large} 0 ${x3} ${y3}Z`;
+  return `M${x0} ${y0}A${r1} ${r1} 0 ${large} 1 ${x1} ${y1}` +
+         `L${x2} ${y2}A${r0} ${r0} 0 ${large} 0 ${x3} ${y3}Z`;
 }
 
-function pieAngleIdx(x, y) {
-  const n = pie.sectors.length;
-  if (!n) return -1;
+function piePickAt(x, y) {
   const dx = x - pie.cx, dy = y - pie.cy;
-  const dist = Math.hypot(dx, dy);
-  if (dist < pie.r0 * 0.55) return -1;   // prst ve středu = nic
-  const step = (Math.PI * 2) / n;
-  let a = Math.atan2(dy, dx) + Math.PI / 2;
-  a = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-  return Math.min(n - 1, Math.floor(a / step));
+  const d = Math.hypot(dx, dy);
+  if (d <= pie.rh) return { hub: true };
+  for (let ri = 0; ri < pie.rings.length; ri++) {
+    const ring = pie.rings[ri];
+    if (d >= ring.r0 && d <= ring.r1) {
+      const n = ring.items.length;
+      const step = (Math.PI * 2) / n;
+      let a = Math.atan2(dy, dx) + Math.PI / 2;   // 0 = nahoru
+      a = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      return { ring: ri, idx: Math.min(n - 1, Math.floor(a / step)) };
+    }
+  }
+  return null;
 }
 
-function pieOpen(opts, item) {
-  if (!opts || !opts.items.length) return;
+function pieOpen(params, item) {
+  if (!params || !params.length) return;
   const vw = window.innerWidth, vh = window.innerHeight;
   pie.vw = vw; pie.vh = vh;
   pie.cx = Math.round(vw / 2);
   pie.cy = Math.round(vh / 2);
-  pie.r = Math.max(120, Math.min(230, Math.min(vw, vh) * 0.38));
-  pie.r0 = pie.r * 0.46;
-  pie.hub = item.glyph || item.icon || '';
-  pie.hubCls = item.glyph ? 'glyph' : (item.cls === 't' ? 'lett' : 'icon');
-  pie.title = item.label || '';
-  const n = opts.items.length;
-  const step = (Math.PI * 2) / n;
-  const gap = Math.min(step * 0.08, 0.06);
-  pie.sectors = opts.items.map((o, i) => {
-    const a0 = -Math.PI / 2 + i * step + gap / 2;
-    const a1 = -Math.PI / 2 + (i + 1) * step - gap / 2;
-    const am = (a0 + a1) / 2;
-    return {
-      ...o, i,
-      d: pieSlicePath(pie.cx, pie.cy, pie.r0, pie.r, a0, a1),
-      ix: pie.cx + Math.cos(am) * (pie.r0 + pie.r) / 2,
-      iy: pie.cy + Math.sin(am) * (pie.r0 + pie.r) / 2,
-    };
+  pie.r = Math.max(130, Math.min(250, Math.min(vw, vh) * 0.40));
+  pie.rh = pie.r * 0.28;                        // velké tlačítko s fajfkou
+  const ringGap = 4;
+  const avail = pie.r - pie.rh - 5 - ringGap * (params.length - 1);
+  const thickness = avail / params.length;
+  pie.rings = params.map((p, ri) => {
+    const r0 = pie.rh + 5 + ri * (thickness + ringGap);
+    const r1 = r0 + thickness;
+    const n = p.items.length;
+    const step = (Math.PI * 2) / n;
+    const sg = Math.min(step * 0.10, 0.07);
+    const sectors = p.items.map((o, i) => {
+      const a0 = -Math.PI / 2 + i * step + sg / 2;
+      const a1 = -Math.PI / 2 + (i + 1) * step - sg / 2;
+      const am = (a0 + a1) / 2;
+      const rm = (r0 + r1) / 2;
+      return {
+        ...o, i,
+        d: ringPath(pie.cx, pie.cy, r0, r1, a0, a1),
+        ix: pie.cx + Math.cos(am) * rm,
+        iy: pie.cy + Math.sin(am) * rm,
+        isz: Math.max(16, Math.min(34, thickness * 0.78)),
+      };
+    });
+    return { key: p.key, label: p.label, items: p.items, sectors, r0, r1 };
   });
-  pie.open = true; pie.closing = false; pie.hover = -1;
+  const k = pie.rh * 0.52;
+  pie.checkD = `M${pie.cx - k * 0.85} ${pie.cy + k * 0.05} ` +
+               `L${pie.cx - k * 0.22} ${pie.cy + k * 0.68} ` +
+               `L${pie.cx + k * 1.0} ${pie.cy - k * 0.62}`;
+  pie.title = item.label || '';
+  pie.toolKey = item.key;
+  pie.open = true; pie.closing = false;
+  pie.hoverRing = -1; pie.hoverIdx = -1; pie.hubHover = false;
   pieSuppressDownUntil = Date.now() + 220;
   window.addEventListener('pointerdown', pieDown, true);
   window.addEventListener('pointermove', pieMove, { passive: true });
@@ -7124,8 +7216,16 @@ function pieOpen(opts, item) {
 
 function pieMove(e) {
   if (!pie.open || pie.closing) return;
-  const j = pieAngleIdx(e.clientX, e.clientY);
-  if (j !== pie.hover) { pie.hover = j; if (j >= 0) gmHaptic(); }
+  const p = piePickAt(e.clientX, e.clientY);
+  const hub = !!(p && p.hub);
+  const ri = p && p.ring != null ? p.ring : -1;
+  const idx = p && p.idx != null ? p.idx : -1;
+  if (hub !== pie.hubHover || ri !== pie.hoverRing || idx !== pie.hoverIdx) {
+    pie.hubHover = hub;
+    pie.hoverRing = ri;
+    pie.hoverIdx = idx;
+    if (!hub && idx >= 0) gmHaptic();
+  }
 }
 
 function pieDown(e) {
@@ -7138,19 +7238,23 @@ function pieDown(e) {
 
 function pieUp(e) {
   if (!pie.open || pie.closing) return;
-  const dist = Math.hypot(e.clientX - pie.cx, e.clientY - pie.cy);
-  const j = pie.hover >= 0 ? pie.hover : pieAngleIdx(e.clientX, e.clientY);
-  if (j >= 0 && dist <= pie.r + 30) {
-    const o = pie.sectors[j];
-    if (o) gmApplyOption(o);
-  }
-  pieClose();
+  const p = piePickAt(e.clientX, e.clientY);
+  if (!p) { pieClose(); return; }
+  if (p.hub) { pieClose(); return; }          // fajfka = hotovo
+  if (p.ring != null && p.idx >= 0) gmApplyOption(pie.rings[p.ring].items[p.idx]);
+  // koláč zůstává otevřený — uživatel může vybrat i další parametr
+  pie.hoverRing = p.ring; pie.hoverIdx = p.idx; pie.hubHover = false;
 }
 
-function pieTapSector(j) {
+function pieTapSector(ri, i) {
   if (!pie.open || pie.closing) return;
-  const o = pie.sectors[j];
-  if (o) gmApplyOption(o);
+  const ring = pie.rings[ri];
+  if (!ring || !ring.items[i]) return;
+  gmApplyOption(ring.items[i]);
+}
+
+function pieConfirm() {
+  if (!pie.open || pie.closing) return;
   pieClose();
 }
 
@@ -7166,9 +7270,10 @@ function pieClose() {
   window.setTimeout(() => {
     pie.open = false;
     pie.closing = false;
-    pie.hover = -1;
-    pie.sectors = [];
-  }, 200);
+    pie.hoverRing = -1;
+    pie.hoverIdx = -1;
+    pie.rings = [];
+  }, 170);
 }
 
 // --- Anotace ---
@@ -11985,14 +12090,20 @@ async function deleteBookmark(b) {
   border-radius: 32px;
   box-shadow: 0 6px 24px rgba(0,0,0,0.55);
   z-index: 2;
+  transform-origin: 50% 0;
+  animation: gmColIn 0.14s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes gmColIn {
+  from { opacity: 0; transform: scaleY(0.72); }
+  to   { opacity: 1; transform: scaleY(1); }
 }
 .gm-item {
   pointer-events: auto;
   width: 46px; height: 46px; padding: 0; margin: 0;
   background: transparent; border: none; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  animation: gmIn 0.2s cubic-bezier(0.2, 0.7, 0.3, 1) both;
-  animation-delay: calc(120ms + var(--i) * 24ms);
+  animation: gmIn 0.14s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation-delay: calc(var(--i) * 12ms);
   opacity: 0.92;
 }
 .gm-circle {
@@ -12018,7 +12129,8 @@ async function deleteBookmark(b) {
 .gm-item.dim .gm-circle.sel { opacity: 1; }
 .gm-ico { font-size: 1.1rem; }
 .gm-ico.t { font-weight: 700; font-family: Georgia, 'Times New Roman', serif; }
-.gm-glyph { font-family: 'NotyDyn', serif; font-size: 1.55rem; line-height: 1; }
+.gm-glyph-svg { width: 30px; height: 30px; display: block; fill: currentColor; pointer-events: none; }
+.gm-glyph-svg text { fill: inherit; }
 
 /* DUCH TLAČÍTKA ✏️ — letí z hlavní lišty k levému okraji, kde se rozbalí
    svislá lišta (aby se pod tlačítkem neobjevila pod prstem). */
@@ -12027,7 +12139,7 @@ async function deleteBookmark(b) {
   border-radius: 50%; background: var(--accent); color: #17130f;
   display: flex; align-items: center; justify-content: center;
   font-size: 1.15rem; pointer-events: none; z-index: 46;
-  animation: gmGhostFly 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: gmGhostFly 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 @keyframes gmGhostFly {
   from { transform: translate(var(--gx), var(--gy)) scale(1); opacity: 0.95; }
@@ -12039,28 +12151,41 @@ async function deleteBookmark(b) {
 .pie-svg {
   position: fixed; inset: 0; width: 100%; height: 100%;
   z-index: 55; touch-action: none;
-  animation: pieIn 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: pieIn 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .pie-scrim { fill: rgba(12, 10, 9, 0.45); }
-.pie-ring { fill: none; stroke: var(--accent-dim); stroke-width: 1; opacity: 0.5; }
 .pie-sec { fill: rgba(38, 34, 32, 0.95); stroke: rgba(255,255,255,0.10); stroke-width: 1; }
-.pie-sec.hover { fill: rgba(201, 168, 124, 0.34); stroke: var(--accent); stroke-width: 2; }
-.pie-sec.on { fill: rgba(201, 168, 124, 0.16); }
+/* Vybraná výseč (aktuální hodnota parametru) je označená pořád, ne jen pod
+   prstem — Jan: „uvnitř koláče vždy bude vybrána možnost ... a ta bude
+   i vyznačená pomocí výseče“. */
+.pie-sec.on { fill: rgba(201, 168, 124, 0.30); stroke: var(--accent); stroke-width: 1.5; }
+.pie-sec.hover { fill: rgba(201, 168, 124, 0.52); stroke: var(--accent); stroke-width: 2; }
 .pie-sec.off { opacity: 0.35; }
-.pie-sec-g { animation: pieSecIn 0.18s ease-out both; animation-delay: calc(var(--i) * 10ms); }
-.pie-ico { fill: var(--text); pointer-events: none; }
-.pie-ico.glyph { font-family: 'NotyDyn', serif; font-size: 26px; }
-.pie-ico.txt { font-size: 16px; font-weight: 700; }
-.pie-dot { stroke: rgba(255,255,255,0.4); stroke-width: 1; pointer-events: none; }
-.pie-hole { fill: rgba(28, 25, 23, 0.97); stroke: var(--accent); stroke-width: 1.5; }
-.pie-hub { fill: var(--text); pointer-events: none; }
-.pie-hub.glyph { font-family: 'NotyDyn', serif; font-size: 38px; }
-.pie-hub.icon { font-size: 30px; }
-.pie-hub.lett { font-size: 34px; font-weight: 700; font-family: Georgia, 'Times New Roman', serif; }
 .pie-title {
-  fill: var(--text-dim); font-size: 12px; letter-spacing: 0.04em;
+  fill: var(--text-dim); font-size: 12px; letter-spacing: 0.06em;
   text-transform: uppercase; pointer-events: none;
 }
+.pie-ico { fill: var(--text); pointer-events: none; }
+.pie-ico.txt { font-size: 16px; font-weight: 700; }
+.pie-glyph { fill: var(--text); pointer-events: none; }
+.pie-dot { stroke: rgba(255,255,255,0.4); stroke-width: 1; pointer-events: none; }
+.pie-dot-sel { fill: none; stroke: var(--accent); stroke-width: 2.5; pointer-events: none; }
+/* Uprostřed velké tlačítko s fajfkou — zavírá palety. */
+.pie-hub-g { cursor: pointer; }
+.pie-hub-bg { fill: var(--accent); stroke: none; }
+.pie-hub-g.hover .pie-hub-bg { fill: var(--accent-dim); }
+.pie-check { fill: none; stroke: #17130f; stroke-linecap: round; stroke-linejoin: round; }
+@keyframes pieIn {
+  from { opacity: 0; transform: scale(0.9); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes pieSecIn { from { opacity: 0; } to { opacity: 1; } }
+.pie-svg.closing { animation: pieOut 0.16s ease-in both; }
+@keyframes pieOut {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.92); }
+}
+
 @keyframes pieIn {
   from { opacity: 0; transform: scale(0.86); }
   to   { opacity: 1; transform: scale(1); }

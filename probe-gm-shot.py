@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Screenshoty animovaného režimu — duch + lišta vlevo + kruhový výběr.
+"""Screenshoty animovaného režimu — duch, lišta vlevo, koláč s prstenci.
 
-Ukládá: /tmp/gm-ghost.png (let ducha), /tmp/gm-rail.png (lišta vlevo),
-/tmp/gm-pie.png (koláč voleb uprostřed), a totéž na šířce telefonu 390 px.
+Ukládá na tabletu (800) i telefonu (390):
+  /tmp/gm-ghost-<tag>.png     let ducha tlačítka
+  /tmp/gm-rail-<tag>.png      lišta nástrojů vlevo
+  /tmp/gm-pie-<tag>.png       koláč tužky (dva prstence + fajfka)
+  /tmp/gm-pie-hover-<tag>.png prst na výseči barvy
 """
 import asyncio
 import base64
 import importlib.util
 import json
+import math
 import os
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -54,26 +58,23 @@ async def main():
                 await asyncio.sleep(0.2)
             btn = await rect(h, ".tb-btn[title^='Anotace']")
             await h.touch("touchStart", [(btn["x"], btn["y"], 12)])
-            await asyncio.sleep(0.23)
+            await asyncio.sleep(0.2)
             await shot(h, "/tmp/gm-ghost-%s.png" % tag)
-            await asyncio.sleep(0.35)
-            item = await rect(h, ".gm-item", 4)   # Noty
+            await asyncio.sleep(0.3)
+            item = await rect(h, ".gm-item", 0)   # Tužka (dva prstence)
             await h.touch("touchMove", [(item["x"] + 160, item["y"], 12)])
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.2)
             await shot(h, "/tmp/gm-rail-%s.png" % tag)
             await h.touch("touchEnd", [])
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(0.6)
             await shot(h, "/tmp/gm-pie-%s.png" % tag)
-            # označ výseč prstem (4. výseč) a vyfoť zvýraznění
             geo = await h.ev(
-                "(() => { const hole=document.querySelector('.pie-hole');"
-                " const r=document.querySelector('.pie-ring');"
-                " return { cx:+hole.getAttribute('cx'), cy:+hole.getAttribute('cy'),"
-                " r0:+hole.getAttribute('r'), r:+r.getAttribute('r') }; })()")
-            import math
-            step = 2 * math.pi / 12
-            ang = -math.pi / 2 + 3.5 * step
-            rr = (geo["r0"] + geo["r"]) / 2
+                "(() => { const hub=document.querySelector('.pie-hub-bg');"
+                " const g=document.querySelector('.pie-svg g[data-ring]');"
+                " return { cx:+hub.getAttribute('cx'), cy:+hub.getAttribute('cy'),"
+                " r0:+g.getAttribute('data-r0'), r1:+g.getAttribute('data-r1') }; })()")
+            ang = -math.pi / 2 + 2.5 * (2 * math.pi / 9)
+            rr = (geo["r0"] + geo["r1"]) / 2
             await h.touch("touchStart", [(geo["cx"], geo["cy"] + 10, 12)])
             await h.touch("touchMove", [(geo["cx"] + math.cos(ang) * rr,
                                          geo["cy"] + math.sin(ang) * rr, 12)])
@@ -81,6 +82,11 @@ async def main():
             await shot(h, "/tmp/gm-pie-hover-%s.png" % tag)
             await h.touch("touchEnd", [])
             await asyncio.sleep(0.5)
+            # zavřít fajfkou, ať je čistý stav pro další rozměr
+            await h.touch("touchStart", [(geo["cx"], geo["cy"], 12)])
+            await asyncio.sleep(0.08)
+            await h.touch("touchEnd", [])
+            await asyncio.sleep(0.4)
 
 
 asyncio.run(main())
