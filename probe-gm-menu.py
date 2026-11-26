@@ -54,7 +54,7 @@ async def state(h):
         "  items: document.querySelectorAll('.gm-item').length,"
         "  active: [...document.querySelectorAll('.gm-item')].findIndex(e => e.classList.contains('active')),"
         "  pie: !!document.querySelector('.pie-svg'),"
-        "  rings: document.querySelectorAll('.pie-svg g[data-ring]').length,"
+        "  pies: document.querySelectorAll('.pie-svg g[data-pie]').length,"
         "  sectors: document.querySelectorAll('.pie-sec').length,"
         "  hub: !!document.querySelector('.pie-hub-g'),"
         "  undo: !!document.querySelector('.tb-btn[title^=\"Zpět\"]'),"
@@ -70,13 +70,13 @@ async def long_press(h, btn, hold=0.3):
 
 async def pie_geo(h):
     return await h.ev(
-        "(() => { const hub=document.querySelector('.pie-hub-bg');"
-        " const rings=[...document.querySelectorAll('.pie-svg g[data-ring]')]"
-        "   .map(g => ({ r0:+g.getAttribute('data-r0'), r1:+g.getAttribute('data-r1') }));"
-        " const onIdx=[...document.querySelectorAll('.pie-svg g[data-ring]')].map(g =>"
-        "   [...g.querySelectorAll('.pie-sec')].findIndex(e => e.classList.contains('on')));"
-        " return { cx:+hub.getAttribute('cx'), cy:+hub.getAttribute('cy'), rh:+hub.getAttribute('r'),"
-        "          rings, onIdx }; })()")
+        "(() => { const c=document.querySelector('.pie-check-bg');"
+        " const pies=[...document.querySelectorAll('.pie-svg g[data-pie]')].map(g => ({"
+        "   cx:+g.getAttribute('data-cx'), cy:+g.getAttribute('data-cy'),"
+        "   r0:+g.getAttribute('data-r0'), r1:+g.getAttribute('data-r1'),"
+        "   on:[...g.querySelectorAll('.pie-sec')].findIndex(e => e.classList.contains('on')),"
+        "   hub: !!g.querySelector('.pie-hub') }));"
+        " return { cx:+c.getAttribute('cx'), cy:+c.getAttribute('cy'), r:+c.getAttribute('r'), pies }; })()")
 
 
 def pt(cx, cy, a, r):
@@ -153,38 +153,44 @@ async def main():
         ok("lišta se zavřela", not st["menu"], st)
         ok("tužka se vybrala", st["tool"] == "pencil", st["tool"])
         ok("koláč se otevřel", st["pie"], st)
-        ok("koláč má DVA prstence (barva + síla)", st["rings"] == 2, st["rings"])
+        ok("tužka má DVA SAMOSTATNÉ koláče (barva + síla)", st["pies"] == 2, st["pies"])
         ok("dohromady 16 výsečí (9 barev + 7 sil)", st["sectors"] == 16, st["sectors"])
         ok("uprostřed je tlačítko s fajfkou", st["hub"], st)
 
         geo = await pie_geo(h)
-        ok("vybrané hodnoty jsou označené v obou prstencích", len(geo["onIdx"]) == 2 and
-           all(i >= 0 for i in geo["onIdx"]), geo["onIdx"])
+        ok("fajfka je uprostřed displeje",
+           abs(geo["cx"] - st["vw"] / 2) < 2 and abs(geo["cy"] - st["vh"] / 2) < 2, geo)
+        ok("koláče jsou od sebe oddělené (každý svůj střed)",
+           abs(geo["pies"][0]["cx"] - geo["pies"][1]["cx"]) > 100, geo["pies"])
+        ok("každý koláč má ve středu svou vybranou hodnotu",
+           all(p["hub"] for p in geo["pies"]), [p["hub"] for p in geo["pies"]])
+        ok("vybrané hodnoty jsou označené v obou koláčích",
+           all(p["on"] >= 0 for p in geo["pies"]), [p["on"] for p in geo["pies"]])
 
-        # --- 6) Volba barvy v prvním prstenci -------------------------------
-        r0, r1 = geo["rings"][0]["r0"], geo["rings"][0]["r1"]
-        x, y = pt(geo["cx"], geo["cy"], sector_angle(2, 9), (r0 + r1) / 2)
-        await h.touch("touchStart", [(geo["cx"], geo["cy"] + 8, 12)])
+        # --- 6) Volba barvy v levém koláči ----------------------------------
+        p0 = geo["pies"][0]
+        x, y = pt(p0["cx"], p0["cy"], sector_angle(2, 9), (p0["r0"] + p0["r1"]) / 2)
+        await h.touch("touchStart", [(p0["cx"], p0["cy"] + 8, 12)])
         await h.touch("touchMove", [(x, y, 12)])
         await asyncio.sleep(0.2)
         hov = await h.ev("([...document.querySelectorAll('.pie-sec')].findIndex(e => e.classList.contains('hover')))")
-        ok("prst v prvním prstenci označí 3. barvu", hov == 2, hov)
+        ok("prst v levém koláči označí 3. barvu", hov == 2, hov)
         await h.touch("touchEnd", [])
         await asyncio.sleep(0.35)
         geo2 = await pie_geo(h)
-        ok("vybraná barva zůstala označená", geo2["onIdx"][0] == 2, geo2["onIdx"])
+        ok("vybraná barva zůstala označená", geo2["pies"][0]["on"] == 2, geo2["pies"][0])
         ok("koláč zůstal otevřený (další parametr)", (await state(h))["pie"])
 
-        # --- 7) Volba síly ve druhém prstenci -------------------------------
-        r0, r1 = geo2["rings"][1]["r0"], geo2["rings"][1]["r1"]
-        x, y = pt(geo2["cx"], geo2["cy"], sector_angle(4, 7), (r0 + r1) / 2)
-        await h.touch("touchStart", [(geo2["cx"], geo2["cy"] + 8, 12)])
+        # --- 7) Volba síly v pravém koláči ----------------------------------
+        p1 = geo2["pies"][1]
+        x, y = pt(p1["cx"], p1["cy"], sector_angle(4, 7), (p1["r0"] + p1["r1"]) / 2)
+        await h.touch("touchStart", [(p1["cx"], p1["cy"] + 8, 12)])
         await h.touch("touchMove", [(x, y, 12)])
         await asyncio.sleep(0.2)
         await h.touch("touchEnd", [])
         await asyncio.sleep(0.35)
         geo3 = await pie_geo(h)
-        ok("vybraná síla je označená v druhém prstenci", geo3["onIdx"][1] == 4, geo3["onIdx"])
+        ok("vybraná síla je označená v pravém koláči", geo3["pies"][1]["on"] == 4, geo3["pies"][1])
 
         # --- 8) Fajfka zavře palety -----------------------------------------
         await h.touch("touchStart", [(geo3["cx"], geo3["cy"], 12)])
@@ -192,10 +198,10 @@ async def main():
         await h.touch("touchEnd", [])
         await asyncio.sleep(0.4)
         st = await state(h)
-        ok("fajfka zavřela koláč", not st["pie"], st)
+        ok("fajfka zavřela koláče", not st["pie"], st)
         ok("nástroj zůstal tužka", st["tool"] == "pencil", st["tool"])
 
-        # --- 9) Noty: jeden prstenec ----------------------------------------
+        # --- 9) Noty: jeden koláč kolem fajfky ------------------------------
         await long_press(h, btn)
         i4 = await rect(h, ".gm-item", 4)
         await h.touch("touchMove", [(col["right"] + 140, i4["y"], 12)])
@@ -204,17 +210,20 @@ async def main():
         await asyncio.sleep(0.6)
         st = await state(h)
         ok("noty: nástroj vybrán", st["tool"] == "note", st["tool"])
-        ok("noty: koláč má JEDEN prstenec", st["rings"] == 1, st["rings"])
+        ok("noty: JEDEN koláč kolem fajfky", st["pies"] == 1, st["pies"])
         ok("noty: 12 výsečí", st["sectors"] == 12, st["sectors"])
         g4 = await pie_geo(h)
-        r0, r1 = g4["rings"][0]["r0"], g4["rings"][0]["r1"]
-        x, y = pt(g4["cx"], g4["cy"], sector_angle(3, 12), (r0 + r1) / 2)
-        await h.touch("touchStart", [(g4["cx"], g4["cy"] + 8, 12)])
+        ok("noty: koláč je přesně kolem fajfky",
+           abs(g4["pies"][0]["cx"] - g4["cx"]) < 1 and g4["pies"][0]["r0"] > g4["r"], g4)
+        ok("noty: koláč nemá zvláštní střed (fajfka ho nahrazuje)", not g4["pies"][0]["hub"], g4["pies"][0])
+        p0 = g4["pies"][0]
+        x, y = pt(p0["cx"], p0["cy"], sector_angle(3, 12), (p0["r0"] + p0["r1"]) / 2)
+        await h.touch("touchStart", [(p0["cx"], p0["cy"] + 8, 12)])
         await h.touch("touchMove", [(x, y, 12)])
         await asyncio.sleep(0.2)
         await h.touch("touchEnd", [])
         await asyncio.sleep(0.3)
-        ok("noty: 4. výseč se označila", (await pie_geo(h))["onIdx"][0] == 3)
+        ok("noty: 4. výseč se označila", (await pie_geo(h))["pies"][0]["on"] == 3)
         await h.touch("touchStart", [(g4["cx"], g4["cy"], 12)])
         await asyncio.sleep(0.08)
         await h.touch("touchEnd", [])

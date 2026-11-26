@@ -69,10 +69,11 @@ async def main():
             await asyncio.sleep(0.6)
             await shot(h, "/tmp/gm-pie-%s.png" % tag)
             geo = await h.ev(
-                "(() => { const hub=document.querySelector('.pie-hub-bg');"
-                " const g=document.querySelector('.pie-svg g[data-ring]');"
-                " return { cx:+hub.getAttribute('cx'), cy:+hub.getAttribute('cy'),"
-                " r0:+g.getAttribute('data-r0'), r1:+g.getAttribute('data-r1') }; })()")
+                "(() => { const c=document.querySelector('.pie-check-bg');"
+                " const g=document.querySelector('.pie-svg g[data-pie]');"
+                " return { cx:+g.getAttribute('data-cx'), cy:+g.getAttribute('data-cy'),"
+                " r0:+g.getAttribute('data-r0'), r1:+g.getAttribute('data-r1'),"
+                " chx:+c.getAttribute('cx'), chy:+c.getAttribute('cy') }; })()")
             ang = -math.pi / 2 + 2.5 * (2 * math.pi / 9)
             rr = (geo["r0"] + geo["r1"]) / 2
             await h.touch("touchStart", [(geo["cx"], geo["cy"] + 10, 12)])
@@ -83,7 +84,7 @@ async def main():
             await h.touch("touchEnd", [])
             await asyncio.sleep(0.5)
             # zavřít fajfkou, ať je čistý stav pro další rozměr
-            await h.touch("touchStart", [(geo["cx"], geo["cy"], 12)])
+            await h.touch("touchStart", [(geo["chx"], geo["chy"], 12)])
             await asyncio.sleep(0.08)
             await h.touch("touchEnd", [])
             await asyncio.sleep(0.4)

@@ -149,20 +149,22 @@
       </div>
     </div>
 
-    <!-- KRUHOVÝ VÝBĚR VOLEB NÁSTROJE („koláč“) — uprostřed stránky, jeden
-         PRSTENEC NA PARAMETR (tužka: barva + síla). Uprostřed velké tlačítko
-         s fajfkou, které palety zavře. -->
+    <!-- KRUHOVÝ VÝBĚR VOLEB NÁSTROJE — uprostřed je tlačítko s fajfkou.
+         Jeden parametr = koláč kolem fajfky; víc parametrů = SAMOSTATNÉ koláče
+         kolem fajfky, každý se svou vybranou hodnotou ve středu. -->
     <svg v-if="pie.open" class="pie-svg" :class="{ closing: pie.closing }"
          :viewBox="'0 0 ' + pie.vw + ' ' + pie.vh">
       <circle class="pie-scrim" :cx="pie.cx" :cy="pie.cy" :r="Math.max(pie.vw, pie.vh)" />
-      <text v-if="pie.title" class="pie-title" :x="pie.cx" :y="pie.cy - pie.r - 14"
+      <text v-if="pie.title" class="pie-title" :x="pie.cx" :y="pie.cy - pie.checkR - 26"
             text-anchor="middle">{{ pie.title }}</text>
-      <g v-for="(ring, ri) in pie.rings" :key="ring.key"
-         :data-ring="ri" :data-r0="ring.r0" :data-r1="ring.r1">
-        <path v-for="(s, i) in ring.sectors" :key="s.key" :d="s.d" class="pie-sec"
-              :class="{ hover: pie.hoverRing === ri && pie.hoverIdx === i, on: ring.items[i].on, off: s.disabled }"
-              @pointerdown.stop.prevent="pieTapSector(ri, i)" />
-        <template v-for="(s, i) in ring.sectors" :key="'ic' + s.key">
+      <text v-for="(p, pi) in pie.pies" :key="'l' + p.key" class="pie-label"
+            :x="p.cx" :y="p.cy - p.r1 - 12" text-anchor="middle">{{ p.label }}</text>
+      <g v-for="(p, pi) in pie.pies" :key="p.key"
+         :data-pie="pi" :data-cx="p.cx" :data-cy="p.cy" :data-r0="p.r0" :data-r1="p.r1">
+        <path v-for="(s, i) in p.sectors" :key="s.key" :d="s.d" class="pie-sec"
+              :class="{ hover: pie.hoverPie === pi && pie.hoverIdx === i, on: p.items[i].on, off: s.disabled }"
+              @pointerdown.stop.prevent="pieTapSector(pi, i)" />
+        <template v-for="(s, i) in p.sectors" :key="'ic' + s.key">
           <svg v-if="s.kind === 'glyph'" class="pie-glyph"
                :x="s.ix - s.isz / 2" :y="s.iy - s.isz / 2" :width="s.isz" :height="s.isz"
                :viewBox="s.vb">
@@ -171,14 +173,28 @@
           <text v-else-if="s.kind === 'text'" class="pie-ico txt" :x="s.ix" :y="s.iy"
                 text-anchor="middle" dominant-baseline="central">{{ s.text }}</text>
           <g v-else>
-            <circle class="pie-dot" :cx="s.ix" :cy="s.iy" r="14" :fill="s.color" />
-            <circle v-if="ring.items[i].on" class="pie-dot-sel" :cx="s.ix" :cy="s.iy" r="18" />
+            <circle class="pie-dot" :cx="s.ix" :cy="s.iy" :r="Math.max(9, s.isz * 0.4)" :fill="s.color" />
+            <circle v-if="p.items[i].on" class="pie-dot-sel" :cx="s.ix" :cy="s.iy"
+                    :r="Math.max(12, s.isz * 0.4) + 4" />
           </g>
         </template>
+        <!-- Střed samostatného koláče = právě vybraná hodnota parametru -->
+        <g v-if="p.hub" class="pie-hub">
+          <circle class="pie-hub-bg" :cx="p.cx" :cy="p.cy" :r="p.r0 - 3" />
+          <circle v-if="p.hub.kind === 'color'" :cx="p.cx" :cy="p.cy" :r="(p.r0 - 3) * 0.62"
+                  :fill="p.hub.color" stroke="rgba(231,226,220,0.9)" stroke-width="3" />
+          <svg v-else-if="p.hub.kind === 'glyph'"
+               :x="p.cx - p.hub.isz / 2" :y="p.cy - p.hub.isz / 2"
+               :width="p.hub.isz" :height="p.hub.isz" :viewBox="p.hub.vb">
+            <text x="0" y="0" font-size="1" font-family="NotyDyn">{{ p.hub.text }}</text>
+          </svg>
+          <text v-else class="pie-hub-txt" :x="p.cx" :y="p.cy" text-anchor="middle"
+                dominant-baseline="central">{{ p.hub.text }}</text>
+        </g>
       </g>
       <g class="pie-hub-g" :class="{ hover: pie.hubHover }">
-        <circle class="pie-hub-bg" :cx="pie.cx" :cy="pie.cy" :r="pie.rh - 3" />
-        <path class="pie-check" :d="pie.checkD" :stroke-width="pie.rh * 0.16" />
+        <circle class="pie-check-bg" :cx="pie.cx" :cy="pie.cy" :r="pie.checkR - 2" />
+        <path class="pie-check" :d="pie.checkD" :stroke-width="pie.checkR * 0.24" />
       </g>
     </svg>
 
@@ -6876,8 +6892,8 @@ let gmSuppressClickUntil = 0;
 // Kruhový výběr voleb nástroje (koláč uprostřed stránky).
 const pie = reactive({
   open: false, closing: false,
-  vw: 0, vh: 0, cx: 0, cy: 0, r: 0, rh: 0,
-  rings: [], hoverRing: -1, hoverIdx: -1, hubHover: false, toolKey: '',
+  vw: 0, vh: 0, cx: 0, cy: 0,
+  pies: [], hoverPie: -1, hoverIdx: -1, hubHover: false, toolKey: '', checkR: 44,
   checkD: '', title: '',
 });
 let pieSuppressDownUntil = 0;
@@ -7080,19 +7096,6 @@ function gmApplyOption(o) {
   pieRefresh();
 }
 
-// Označení „právě zvolené“ výseče musí žít: volby v `pie.rings` jsou snapshot,
-// takže po každé změně přepočítáme `on` z aktuálního stavu nástroje. Bez toho
-// po výběru barvy zůstala označená stará výseč (a sonda to našla).
-function pieRefresh() {
-  if (!pie.open) return;
-  const params = gmParams(pie.toolKey);
-  pie.rings.forEach((ring, ri) => {
-    const src = params[ri];
-    if (!src) return;
-    ring.items.forEach((o, i) => { o.on = !!(src.items[i] && src.items[i].on); });
-  });
-}
-
 // Ťuknutí přímo na kolečko lišty = výběr nástroje (+ koláč voleb).
 function gmTapItem(i) {
   if (gm.closing) return;
@@ -7134,11 +7137,11 @@ function gmClose() {
   }, 150);
 }
 
-// --- Kruhový výběr voleb (koláč s prstenci) ----------------------------------
-// Jeden prstenec na parametr (tužka: barva + síla). Prst vybírá ÚHEL, vzdálenost
-// od středu určuje, kterého prstence se volba týká. Uprostřed je tlačítko
-// s fajfkou — zavře palety (volby už jsou uplatněné, takže fajfka bez výběru
-// nechá výchozí / naposledy zvolené hodnoty).
+// --- Kruhový výběr voleb (koláč) --------------------------------------------
+// UPROSTŘED obrazovky je tlačítko s fajfkou. Když má nástroj JEDEN parametr,
+// obepíná ho jeden koláč (fajfka je jeho střed). Když má parametrů víc, jsou to
+// SAMOSTATNÉ koláče rozložené kolem fajfky a každý má ve svém středu vybranou
+// hodnotu. Prst vybírá úhel v tom koláči, na kterém zrovna je; fajfka zavře.
 function ringPath(cx, cy, r0, r1, a0, a1) {
   const large = (a1 - a0) > Math.PI ? 1 : 0;
   const x0 = cx + r1 * Math.cos(a0), y0 = cy + r1 * Math.sin(a0);
@@ -7149,18 +7152,19 @@ function ringPath(cx, cy, r0, r1, a0, a1) {
          `L${x2} ${y2}A${r0} ${r0} 0 ${large} 0 ${x3} ${y3}Z`;
 }
 
+// Střed koláče = jeho vlastní souřadnice (u jednoho parametru střed displeje,
+// u víc parametrů rozesazené kolem fajfky).
 function piePickAt(x, y) {
-  const dx = x - pie.cx, dy = y - pie.cy;
-  const d = Math.hypot(dx, dy);
-  if (d <= pie.rh) return { hub: true };
-  for (let ri = 0; ri < pie.rings.length; ri++) {
-    const ring = pie.rings[ri];
-    if (d >= ring.r0 && d <= ring.r1) {
-      const n = ring.items.length;
+  if (Math.hypot(x - pie.cx, y - pie.cy) <= pie.checkR) return { hub: true };
+  for (let pi = 0; pi < pie.pies.length; pi++) {
+    const p = pie.pies[pi];
+    const d = Math.hypot(x - p.cx, y - p.cy);
+    if (d >= p.r0 - 2 && d <= p.r1 + 16) {
+      const n = p.items.length;
       const step = (Math.PI * 2) / n;
-      let a = Math.atan2(dy, dx) + Math.PI / 2;   // 0 = nahoru
+      let a = Math.atan2(y - p.cy, x - p.cx) + Math.PI / 2;   // 0 = nahoru
       a = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-      return { ring: ri, idx: Math.min(n - 1, Math.floor(a / step)) };
+      return { pie: pi, idx: Math.min(n - 1, Math.floor(a / step)) };
     }
   }
   return null;
@@ -7172,40 +7176,67 @@ function pieOpen(params, item) {
   pie.vw = vw; pie.vh = vh;
   pie.cx = Math.round(vw / 2);
   pie.cy = Math.round(vh / 2);
-  pie.r = Math.max(130, Math.min(250, Math.min(vw, vh) * 0.40));
-  pie.rh = pie.r * 0.28;                        // velké tlačítko s fajfkou
-  const ringGap = 4;
-  const avail = pie.r - pie.rh - 5 - ringGap * (params.length - 1);
-  const thickness = avail / params.length;
-  pie.rings = params.map((p, ri) => {
-    const r0 = pie.rh + 5 + ri * (thickness + ringGap);
-    const r1 = r0 + thickness;
-    const n = p.items.length;
-    const step = (Math.PI * 2) / n;
+  pie.toolKey = item.key;
+  pie.title = item.label || '';
+  const checkR = Math.max(30, Math.min(46, Math.min(vw, vh) * 0.055));
+  pie.checkR = checkR;
+  const gap = 14;
+  const n = params.length;
+
+  // Rozmístění: jeden parametr = koláč kolem fajfky, víc = samostatné koláče
+  // nalevo/napravo (na výšku nad/pod), podle toho, co dá větší poloměr.
+  let rp = 0, horiz = true, one = n === 1;
+  if (one) {
+    rp = Math.max(110, Math.min(240, Math.min(vw, vh) * 0.36));
+  } else {
+    const rpH = (vw - 2 * checkR - 2 * gap) / 4;
+    const rpV = (vh - 2 * checkR - 2 * gap) / 4;
+    // Naležato, když se dva koláče vejdou VEDLE sebe v rozumné velikosti;
+    // jinak (úzký telefon) se skládají nad sebe.
+    horiz = Math.min(rpH, 155) >= 100;
+    rp = Math.max(58, Math.min(155, horiz ? rpH : rpV));
+  }
+
+  pie.pies = params.map((p, pi) => {
+    let cx = pie.cx, cy = pie.cy, r0, r1;
+    if (one) {
+      r0 = checkR + 6;
+      r1 = rp;
+    } else {
+      r1 = rp;
+      r0 = rp * 0.44;
+      const off = checkR + gap + rp;
+      if (horiz) cx = pie.cx + (pi - (n - 1) / 2) * 2 * off;
+      else cy = pie.cy + (pi - (n - 1) / 2) * 2 * off;
+    }
+    const cnt = p.items.length;
+    const step = (Math.PI * 2) / cnt;
     const sg = Math.min(step * 0.10, 0.07);
+    const rm = (r0 + r1) / 2;
     const sectors = p.items.map((o, i) => {
       const a0 = -Math.PI / 2 + i * step + sg / 2;
       const a1 = -Math.PI / 2 + (i + 1) * step - sg / 2;
       const am = (a0 + a1) / 2;
-      const rm = (r0 + r1) / 2;
       return {
         ...o, i,
-        d: ringPath(pie.cx, pie.cy, r0, r1, a0, a1),
-        ix: pie.cx + Math.cos(am) * rm,
-        iy: pie.cy + Math.sin(am) * rm,
-        isz: Math.max(16, Math.min(34, thickness * 0.78)),
+        d: ringPath(cx, cy, r0, r1, a0, a1),
+        ix: cx + Math.cos(am) * rm,
+        iy: cy + Math.sin(am) * rm,
+        isz: Math.max(14, Math.min(34, (r1 - r0) * 0.8)),
       };
     });
-    return { key: p.key, label: p.label, items: p.items, sectors, r0, r1 };
+    return { key: p.key, label: p.label, items: p.items, sectors, cx, cy, r0, r1, hub: null };
   });
-  const k = pie.rh * 0.52;
+
+  // Střed každého samostatného koláče nese VYBRANOU hodnotu parametru.
+  if (!one) pie.pies.forEach(p => { p.hub = pieHubOf(p); });
+
+  const k = checkR * 0.5;
   pie.checkD = `M${pie.cx - k * 0.85} ${pie.cy + k * 0.05} ` +
                `L${pie.cx - k * 0.22} ${pie.cy + k * 0.68} ` +
                `L${pie.cx + k * 1.0} ${pie.cy - k * 0.62}`;
-  pie.title = item.label || '';
-  pie.toolKey = item.key;
   pie.open = true; pie.closing = false;
-  pie.hoverRing = -1; pie.hoverIdx = -1; pie.hubHover = false;
+  pie.hoverPie = -1; pie.hoverIdx = -1; pie.hubHover = false;
   pieSuppressDownUntil = Date.now() + 220;
   window.addEventListener('pointerdown', pieDown, true);
   window.addEventListener('pointermove', pieMove, { passive: true });
@@ -7214,15 +7245,35 @@ function pieOpen(params, item) {
   gmHaptic(12);
 }
 
+// Co je právě vybráno v daném koláči — kreslí se do jeho středu.
+function pieHubOf(p) {
+  const sel = p.items.find(o => o.on) || p.items[0];
+  if (!sel) return null;
+  if (sel.kind === 'color') return { kind: 'color', color: sel.color };
+  if (sel.kind === 'glyph') return { kind: 'glyph', text: sel.text, vb: sel.vb, isz: p.r0 * 1.25 };
+  return { kind: 'text', text: sel.text };
+}
+
+function pieRefresh() {
+  if (!pie.open) return;
+  const params = gmParams(pie.toolKey);
+  pie.pies.forEach((p, pi) => {
+    const src = params[pi];
+    if (!src) return;
+    p.items.forEach((o, i) => { o.on = !!(src.items[i] && src.items[i].on); });
+    if (!(params.length === 1)) p.hub = pieHubOf(p);
+  });
+}
+
 function pieMove(e) {
   if (!pie.open || pie.closing) return;
   const p = piePickAt(e.clientX, e.clientY);
   const hub = !!(p && p.hub);
-  const ri = p && p.ring != null ? p.ring : -1;
+  const pi = p && p.pie != null ? p.pie : -1;
   const idx = p && p.idx != null ? p.idx : -1;
-  if (hub !== pie.hubHover || ri !== pie.hoverRing || idx !== pie.hoverIdx) {
+  if (hub !== pie.hubHover || pi !== pie.hoverPie || idx !== pie.hoverIdx) {
     pie.hubHover = hub;
-    pie.hoverRing = ri;
+    pie.hoverPie = pi;
     pie.hoverIdx = idx;
     if (!hub && idx >= 0) gmHaptic();
   }
@@ -7231,8 +7282,10 @@ function pieMove(e) {
 function pieDown(e) {
   if (!pie.open || pie.closing) return;
   if (Date.now() < pieSuppressDownUntil) return;
-  // Klepnutí mimo koláč ho jen zavře — nic se nemění.
-  if (Math.hypot(e.clientX - pie.cx, e.clientY - pie.cy) > pie.r + 24) { pieClose(); return; }
+  // Klepnutí mimo koláče ho jen zavře — nic se nemění.
+  const farAway = Math.hypot(e.clientX - pie.cx, e.clientY - pie.cy) > pie.checkR + 8 &&
+    pie.pies.every(p => Math.hypot(e.clientX - p.cx, e.clientY - p.cy) > p.r1 + 24);
+  if (farAway) { pieClose(); return; }
   pieMove(e);
 }
 
@@ -7241,21 +7294,15 @@ function pieUp(e) {
   const p = piePickAt(e.clientX, e.clientY);
   if (!p) { pieClose(); return; }
   if (p.hub) { pieClose(); return; }          // fajfka = hotovo
-  if (p.ring != null && p.idx >= 0) gmApplyOption(pie.rings[p.ring].items[p.idx]);
-  // koláč zůstává otevřený — uživatel může vybrat i další parametr
-  pie.hoverRing = p.ring; pie.hoverIdx = p.idx; pie.hubHover = false;
+  if (p.pie != null && p.idx >= 0) gmApplyOption(pie.pies[p.pie].items[p.idx]);
+  pie.hoverPie = p.pie; pie.hoverIdx = p.idx; pie.hubHover = false;
 }
 
-function pieTapSector(ri, i) {
+function pieTapSector(pi, i) {
   if (!pie.open || pie.closing) return;
-  const ring = pie.rings[ri];
-  if (!ring || !ring.items[i]) return;
-  gmApplyOption(ring.items[i]);
-}
-
-function pieConfirm() {
-  if (!pie.open || pie.closing) return;
-  pieClose();
+  const p = pie.pies[pi];
+  if (!p || !p.items[i]) return;
+  gmApplyOption(p.items[i]);
 }
 
 function pieCancel() { pieClose(); }
@@ -7270,9 +7317,9 @@ function pieClose() {
   window.setTimeout(() => {
     pie.open = false;
     pie.closing = false;
-    pie.hoverRing = -1;
+    pie.hoverPie = -1;
     pie.hoverIdx = -1;
-    pie.rings = [];
+    pie.pies = [];
   }, 170);
 }
 
@@ -12170,10 +12217,18 @@ async function deleteBookmark(b) {
 .pie-glyph { fill: var(--text); pointer-events: none; }
 .pie-dot { stroke: rgba(255,255,255,0.4); stroke-width: 1; pointer-events: none; }
 .pie-dot-sel { fill: none; stroke: var(--accent); stroke-width: 2.5; pointer-events: none; }
+/* Střed samostatného koláče = vybraná hodnota parametru (není to tlačítko). */
+.pie-hub { pointer-events: none; }
+.pie-hub-bg { fill: rgba(26, 23, 21, 0.98); stroke: var(--accent); stroke-width: 1.5; }
+.pie-hub-txt { fill: var(--text); font-size: 20px; font-weight: 700; }
+.pie-label {
+  fill: var(--text-dim); font-size: 11px; letter-spacing: 0.08em;
+  text-transform: uppercase; pointer-events: none;
+}
 /* Uprostřed velké tlačítko s fajfkou — zavírá palety. */
 .pie-hub-g { cursor: pointer; }
-.pie-hub-bg { fill: var(--accent); stroke: none; }
-.pie-hub-g.hover .pie-hub-bg { fill: var(--accent-dim); }
+.pie-check-bg { fill: var(--accent); stroke: none; }
+.pie-hub-g.hover .pie-check-bg { fill: var(--accent-dim); }
 .pie-check { fill: none; stroke: #17130f; stroke-linecap: round; stroke-linejoin: round; }
 @keyframes pieIn {
   from { opacity: 0; transform: scale(0.9); }
