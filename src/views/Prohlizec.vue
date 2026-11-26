@@ -225,7 +225,8 @@
       </g>
       <g class="pie-hub-g" :class="{ hover: pie.hubHover }">
         <circle class="pie-check-bg" :cx="pie.cx" :cy="pie.cy" :r="pie.checkR - 2" />
-        <path class="pie-check" :d="pie.checkD" :stroke-width="pie.checkR * 0.24" />
+        <circle class="pie-check-in" :cx="pie.cx" :cy="pie.cy" :r="pie.checkInR" />
+        <path class="pie-check" :d="pie.checkD" :stroke-width="pie.checkW" />
       </g>
     </svg>
 
@@ -6948,6 +6949,7 @@ const pie = reactive({
   open: false, closing: false,
   vw: 0, vh: 0, cx: 0, cy: 0,
   pies: [], links: [], hoverPie: -1, hoverIdx: -1, hubHover: false, toolKey: '', checkR: 44,
+  checkInR: 33, checkW: 7.5,
   checkD: '', title: '',
 });
 let pieSuppressDownUntil = 0;
@@ -7707,10 +7709,14 @@ function pieBuild(params) {
   // Střed každého samostatného koláče nese VYBRANOU hodnotu parametru.
   if (!calc.one) pie.pies.forEach(p => { p.hub = pieHubOf(p); });
 
-  const k = checkR * 0.5;
-  pie.checkD = `M${pie.cx - k * 0.85} ${pie.cy + k * 0.05} ` +
-               `L${pie.cx - k * 0.22} ${pie.cy + k * 0.68} ` +
-               `L${pie.cx + k * 1.0} ${pie.cy - k * 0.62}`;
+  // Terč: vnitřní kruh je 0,80× vnějšího, fajfka se kreslí v jeho měřítku
+  // (stejné proporce jako v náhledu návrhu 5).
+  pie.checkInR = (checkR - 2) * 0.80;
+  pie.checkW = pie.checkInR * 0.227;
+  const k = pie.checkInR;
+  pie.checkD = `M${pie.cx - k * 0.39} ${pie.cy + k * 0.03} ` +
+               `L${pie.cx - k * 0.12} ${pie.cy + k * 0.30} ` +
+               `L${pie.cx + k * 0.42} ${pie.cy - k * 0.30}`;
 }
 
 // Po změně volby se může změnit SLOŽENÍ koláčů (u textu přibude/ubude rámeček,
@@ -12835,9 +12841,14 @@ async function deleteBookmark(b) {
 .pie-label.minor { font-size: 11.5px; fill: var(--text-dim); }
 /* Uprostřed velké tlačítko s fajfkou — zavírá palety. */
 .pie-hub-g { cursor: pointer; }
-.pie-check-bg { fill: var(--accent); stroke: none; }
-.pie-hub-g.hover .pie-check-bg { fill: var(--accent-dim); }
-.pie-check { fill: none; stroke: #17130f; stroke-linecap: round; stroke-linejoin: round; }
+/* Potvrzovací tlačítko uprostřed = TERČ (Jan, listopad 2026): vnější tlumený
+   prstenec obtáhne střed mezi koláči, uvnitř menší tmavý kruh s bílou fajfkou.
+   Béžová plná plocha neladila se zbytkem rozhraní (byla to jediná velká
+   tělová plocha a stejný akcent jsme vyhodili i z označení výběru). */
+.pie-check-bg { fill: none; stroke: rgba(231, 226, 220, 0.35); stroke-width: 1.5; }
+.pie-check-in { fill: #17130f; stroke: #e7e2dc; stroke-width: 2; }
+/* Žádný hover ani tady — stav se mění až potvrzením (Jan, listopad 2026). */
+.pie-check { fill: none; stroke: #e7e2dc; stroke-linecap: round; stroke-linejoin: round; }
 @keyframes pieIn {
   from { opacity: 0; transform: scale(0.9); }
   to   { opacity: 1; transform: scale(1); }
