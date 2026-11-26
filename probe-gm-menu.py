@@ -68,6 +68,21 @@ async def long_press(h, btn, hold=0.3):
     await asyncio.sleep(hold)
 
 
+async def ink_inside(h, sel):
+    """Je otisk glyfu (getBBox) CELÝ uvnitř viewBoxu svého malého SVG? Ořez = FAIL."""
+    return await h.ev(
+        "(() => { const out = [];"
+        " document.querySelectorAll(%s).forEach((s, i) => {"
+        "  const t = s.querySelector('text'); if (!t) return;"
+        "  const vb = (s.getAttribute('viewBox') || '').trim().split(/\\s+/).map(Number);"
+        "  if (vb.length !== 4) return;"
+        "  const b = t.getBBox();"
+        "  out.push({ i, dl: +(b.x - vb[0]).toFixed(3), dr: +((vb[0] + vb[2]) - (b.x + b.width)).toFixed(3),"
+        "             dt: +(b.y - vb[1]).toFixed(3), db: +((vb[1] + vb[3]) - (b.y + b.height)).toFixed(3),"
+        "             w: +b.width.toFixed(3), h: +b.height.toFixed(3) });"
+        " }); return out; })()" % json.dumps(sel))
+
+
 async def pie_geo(h):
     return await h.ev(
         "(() => { const c=document.querySelector('.pie-check-bg');"
@@ -91,6 +106,10 @@ async def main():
     ok = m.Check()
     async with m.Harness(url=APP) as h:
         await h.set_tablet(800, 1280, 2)
+        await h.open()
+        # Test předpokládá ČISTÉ úložiště (výchozí tlačítkový režim) — předchozí
+        # běh tam nechává 'gesture' a tvrzení o výchozím stavu by padalo.
+        await h.ev("localStorage.removeItem('noty.controlMode')")
         await h.open()
 
         # --- 1) Knihovna -----------------------------------------------------
@@ -125,8 +144,13 @@ async def main():
         ok("duch tlačítka je vidět", st["ghost"], st)
         ok("lišta má 9 koleček", st["items"] == 9, st["items"])
         col = await rect(h, ".gm-col")
-        ok("lišta je u LEVÉHO okraje", col["left"] <= 12, col["left"])
+        ok("lišta stojí HNED NALEVO od tlačítka ✏️ (ne v rohu)",
+           col["left"] > 12 and abs(col["right"] - btn["left"]) <= 2,
+           {"col": [round(col["left"], 1), round(col["right"], 1)], "btn": round(btn["left"], 1)})
         ok("lišta začíná POD hlavní lištou", col["top"] >= 50, col["top"])
+        gl_in = await ink_inside(h, ".gm-glyph-svg")
+        ok("glyfy lišty se vejdou do šířky kolečka (bez ořezu)",
+           bool(gl_in) and all(min(g["dl"], g["dr"]) >= -0.5 for g in gl_in), gl_in)
 
         # --- 4) notová ikona je vycentrovaná na OTISK ------------------------
         circ = await rect(h, ".gm-item .gm-circle", 4)     # Noty
@@ -224,6 +248,31 @@ async def main():
         await h.touch("touchEnd", [])
         await asyncio.sleep(0.3)
         ok("noty: 4. výseč se označila", (await pie_geo(h))["pies"][0]["on"] == 3)
+        await h.touch("touchStart", [(g4["cx"], g4["cy"], 12)])
+        await asyncio.sleep(0.08)
+        await h.touch("touchEnd", [])
+        await asyncio.sleep(0.4)
+
+        # --- 9b) Dynamika: glyfy ve výsečích nesmí být oříznuté ---------------
+        await long_press(h, btn)
+        i5 = await rect(h, ".gm-item", 5)
+        await h.touch("touchMove", [(col["right"] + 140, i5["y"], 12)])
+        await asyncio.sleep(0.2)
+        await h.touch("touchEnd", [])
+        await asyncio.sleep(0.6)
+        st = await state(h)
+        ok("dynamika: nástroj vybrán", st["tool"] == "dynamic", st["tool"])
+        ok("dynamika: koláč otevřený", st["pie"], st)
+        pin = await ink_inside(h, ".pie-glyph")
+        ok("dynamika: otisky ve výsečích se vejdou do šířky (bez ořezu)",
+           bool(pin) and all(min(g["dl"], g["dr"]) >= -0.5 for g in pin), pin)
+        dgeo = await pie_geo(h)
+        ok("dynamika: hned po otevření je zvýrazněná vybraná výseč (mf)",
+           dgeo["pies"][0]["on"] == 4, dgeo["pies"][0])
+        if pin:
+            g = pin[0]
+            ok("dynamika: glyf je na středu výseče (rezerva na obou stranách)",
+               abs(g["dl"] - g["dr"]) < g["w"] * 0.45 and abs(g["dt"] - g["db"]) < g["h"] * 0.45, g)
         await h.touch("touchStart", [(g4["cx"], g4["cy"], 12)])
         await asyncio.sleep(0.08)
         await h.touch("touchEnd", [])

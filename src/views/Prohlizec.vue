@@ -6909,20 +6909,25 @@ function glyphBox(kind, key) {
   if (kind === 'note') {
     const it = NOTE_LOOKUP.get(noteEffKey(key, false));
     box = it ? it.box : [0, 0.34, -0.15, 0.88];
-    pad = 1.10;
+    pad = 1.12;
   } else if (kind === 'dynamic') {
     const adv = DYN_ADV[key] || 0.6;
     box = [0, adv, -0.04, 0.55];
-    pad = 0.95;
+    pad = 1.12;
   } else {
     const adv = MARK_ADV[key] || 0.35;
     box = [0, adv, -0.45, 0.55];
-    pad = 1.00;
+    pad = 1.12;
   }
   const [x0, x1, y0, y1] = box;
   const cx = (x0 + x1) / 2;
   const cy = -(y0 + y1) / 2;          // SVG má y dolů, font nahoru
-  const size = Math.max(x1 - x0, y1 - y0, 0.55) * pad;
+  // ⚠️ `pad` musí být VĚTŠÍ než 1 — jinak viewBox seřízne okraje otisku a glyf
+  // se v kolečku (i ve výseči koláče) ukáže OŘÍZNUTÝ. Mezi 0.95 a 1.0 se to
+  // dělo u dynamiky: šířka „mf" (0.797 em) × 0.95 = 0.757 < otisk, takže pravá
+  // hrana znaku vypadla (Jan, listopad 2026: „dynamika je na středu, ale
+  // oříznutá"). 1.12 nechá okolo otisku viditelnou rezervu na tahy.
+  const size = Math.max(x1 - x0, y1 - y0, 0.55) * Math.max(pad, 1.12);
   return `${(cx - size / 2).toFixed(3)} ${(cy - size / 2).toFixed(3)} ` +
          `${size.toFixed(3)} ${size.toFixed(3)}`;
 }
@@ -6942,6 +6947,12 @@ const gmItems = computed(() => {
     { key: 'actions',     label: 'Akce',         icon: '↺', sel: false },
   ];
 });
+
+// Poslední zvolená dynamika / značka — animovaná nabídka je předvolí, takže
+// koláč má hned od otevření ZVÝRAZNĚNOU vybranou výseč (a vloží se tatáž
+// hodnota). Bez toho se koláč u dynamiky otevíral jako „nic nevybráno".
+const lastDynKey = ref('mf');
+const lastMarkKey = ref('k');
 
 // Volby nástroje rozdělené po PARAMETRECH — každý parametr = jeden prstenec
 // koláče. `kind` rozhoduje, jak se volba kreslí: color (kolečko barvy),
@@ -7037,7 +7048,11 @@ function gmOpen() {
   const bar = document.querySelector('.top-bar');
   const barBottom = bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 56;
   const colH = gmItems.value.length * GM_STEP + 12;
-  gm.colX = 8;
+  // Lišta nestojí v rohu, ale HNED NALEVO od tlačítka ✏️ (Jan, listopad 2026:
+  // „místo úplně do levého rohu, tak jen nalevo od prstu"). Pod tlačítkem tak
+  // zůstane prázdný sloupec a lišta je u prstu, který ji drží — prst ji
+  // nezakrývá a nemusí se přes obrazovku do rohu.
+  gm.colX = Math.max(4, Math.round(r.left - GM_W));
   gm.colY = Math.max(8, Math.min(barBottom + 8, vh - 12 - colH));
   gm.btnCx = r.left + r.width / 2;
   gm.btnCy = r.top + r.height / 2;
@@ -7092,6 +7107,8 @@ function gmApplyOption(o) {
   if (o.note != null) { notePresetKey.value = o.note; annotTextDraft.value = o.note; }
   if (o.dyn != null) annotTextDraft.value = o.dyn;
   if (o.mark != null) annotTextDraft.value = o.mark;
+  if (o.dyn != null) lastDynKey.value = o.dyn;
+  if (o.mark != null) lastMarkKey.value = o.mark;
   gmHaptic();
   pieRefresh();
 }
@@ -7115,8 +7132,25 @@ function gmUp() {
 // Vybere nástroj, zavře lištu a (pokud nástroj nějaké volby má) otevře koláč.
 function gmFinishTool() {
   const item = gmItems.value[gm.active] || {};
-  const params = gmParams(item.key);
+  // ⚠️ Volby se musí spočítat AŽ PO přepnutí nástroje (`gmApplyTool`). Když se
+  // `gmParams` volaly před ním, nesly příznaky `on` ze STARÉHO nástroje — koláč
+  // se otevřel bez vyznačené vybrané výseče (a se špatnou hodnotou ve středu)
+  // a srovnalo se to až první volbou (Jan, listopad 2026).
   gmApplyTool(gm.active);
+  // Dynamika / značka nemají „stav nástroje" jako tužka (barva, síla) — jejich
+  // hodnota žije v rozpisu textu, který se po vložení vymaže. Když v něm zůstane
+  // hodnota z JINÉHO nástroje (např. nota), koláč nemá co zvýraznit; proto se
+  // rozpis srovná na POSLEDNÍ zvolenou dynamiku / značku.
+  if (item.key === 'dynamic') {
+    const keys = DYN_PICK.slice(0, 12).map(d => d.key);
+    const cur = String(annotTextDraft.value || '').trim().toLowerCase();
+    if (!keys.includes(cur)) annotTextDraft.value = lastDynKey.value;
+  } else if (item.key === 'mark') {
+    const keys = MARK_GROUPS.flatMap(g => g.items).slice(0, 14).map(x => x.key);
+    const cur = String(annotTextDraft.value || '').trim().toLowerCase();
+    if (!keys.includes(cur)) annotTextDraft.value = lastMarkKey.value;
+  }
+  const params = gmParams(item.key);
   gmClose();
   if (params.length) window.setTimeout(() => pieOpen(params, item), 150);
 }
@@ -7222,7 +7256,7 @@ function pieOpen(params, item) {
         d: ringPath(cx, cy, r0, r1, a0, a1),
         ix: cx + Math.cos(am) * rm,
         iy: cy + Math.sin(am) * rm,
-        isz: Math.max(14, Math.min(34, (r1 - r0) * 0.8)),
+        isz: Math.max(14, Math.min(34, (r1 - r0) * 0.92)),
       };
     });
     return { key: p.key, label: p.label, items: p.items, sectors, cx, cy, r0, r1, hub: null };
@@ -7237,6 +7271,7 @@ function pieOpen(params, item) {
                `L${pie.cx + k * 1.0} ${pie.cy - k * 0.62}`;
   pie.open = true; pie.closing = false;
   pie.hoverPie = -1; pie.hoverIdx = -1; pie.hubHover = false;
+  pieRefresh();      // vybrané výseče a středy musí sedět hned při otevření
   pieSuppressDownUntil = Date.now() + 220;
   window.addEventListener('pointerdown', pieDown, true);
   window.addEventListener('pointermove', pieMove, { passive: true });
