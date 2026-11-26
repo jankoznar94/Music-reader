@@ -183,6 +183,43 @@ async def main():
         # uklidit dialog, pokud se otevřel
         await h.ev("(() => { const b = document.querySelector('.text-input-card .btn-ok, .text-input-card .btn-done'); if (b) b.click(); return true; })()")
 
+        # --- 6) ŤUKNUTÍ na ✏️ = stejná nabídka, jen bez pruhu a pod tlačítkem ---
+        # Uklidit: vypnout anotaci (jinak ťuknutí jen vypíná režim).
+        await h.ev("window.__barDev.annotMode.value = false")
+        await asyncio.sleep(0.25)
+        await h.finger_tap(annot["x"], annot["y"])
+        await asyncio.sleep(0.5)
+        st = await gm_state(h)
+        ok("ťuknutí na ✏️ otevře nabídku nástrojů", st["open"] and len(st["items"]) == 9, st["items"])
+        ok("lišta stojí PŘÍMO POD tlačítkem (ne vlevo)",
+           bool(st["col"]) and abs((st["col"]["l"] + st["col"]["r"]) / 2 - annot["x"]) < 3,
+           {"col": st["col"], "btn_x": annot["x"]})
+        ok("u ťuknutí není pruh pro prst ani puntík",
+           st["band"] is None and st["dot"] is None, {"band": st["band"], "dot": st["dot"]})
+        ok("anotace se ťuknutím zapnula",
+           await h.ev("!!document.querySelector('.annot-layer.active')"))
+        i4 = await rect(h, ".gm-item", 4)     # Noty
+        await h.finger_tap(i4["x"], i4["y"])
+        await asyncio.sleep(0.55)
+        st = await gm_state(h)
+        ok("klepnutí na kolečko vybralo nástroj",
+           (await h.ev("window.__barDev.tool.value")) == "note", await h.ev("window.__barDev.tool.value"))
+        ok("koláč voleb se přitom otevřel", st["pie"], st)
+        hub = await rect(h, ".pie-check-bg")
+        await h.finger_tap(hub["x"], hub["y"])
+        await asyncio.sleep(0.45)
+
+        # --- 7) nabídka po ťuknutí se zavře dotykem mimo ----------------------
+        await h.ev("window.__barDev.annotMode.value = false")
+        await asyncio.sleep(0.2)
+        await h.finger_tap(annot["x"], annot["y"])
+        await asyncio.sleep(0.45)
+        ok("nabídka je otevřená", (await gm_state(h))["open"])
+        await h.finger_tap(400, 900)
+        await asyncio.sleep(0.35)
+        st = await gm_state(h)
+        ok("dotyk mimo nabídku ji zavře", not st["open"], st)
+
     ok.report()
 
 

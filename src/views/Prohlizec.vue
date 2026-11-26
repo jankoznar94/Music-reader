@@ -114,10 +114,10 @@
          by ji prst). Tahem svisle se vybírá nástroj; puštění ho potvrdí
          a otevře kruhový výběr voleb uprostřed stránky. -->
     <div v-if="gm.open" class="gm-root" :class="{ closing: gm.closing, panel: gm.mode === 'panel' }">
-      <!-- Zachytávač dotyků pro režim skupiny: lišta stojí otevřená a čeká na
-           volbu, takže dotyk mimo ni ji musí zavřít (jinak by spadl do not
-           a něco nakreslil). -->
-      <div v-if="gm.mode === 'panel' && !gm.holding" class="gm-catch"
+      <!-- Zachytávač dotyků, když lišta stojí otevřená a čeká na volbu (skupina
+           z hlavní lišty i nabídka po ťuknutí na ✏️): dotyk mimo ni ji zavře,
+           jinak by spadl do not a něco nakreslil. -->
+      <div v-if="(gm.mode === 'panel' || gm.mode === 'tap') && !gm.holding" class="gm-catch"
            @pointerdown.stop.prevent="gmClose" />
       <div v-if="gm.ghost" class="gm-ghost"
            :style="{ left: gm.ghostX + 'px', top: gm.ghostY + 'px',
@@ -7088,7 +7088,18 @@ function gmHaptic(ms = 8) {
 
 function onAnnotBtnClick() {
   if (Date.now() < gmSuppressClickUntil) return;   // klik po gestu nesmí režim vypnout
-  toggleAnnot();
+  // ŤUKNUTÍ = totéž menu jako podržení, jen bez oblasti pro prst a s lištou
+  // PŘÍMO POD tlačítkem (Jan, listopad 2026: „kliknutí by mělo otevřít stejnou
+  // nabídku jako táhnutí prstem, ale bez té oblasti na prst“). Zapnutí režimu
+  // i otevření menu proto jdou jedním ťuknutím — dřív se jen zapnul režim a
+  // nástroj se nedal vybrat, dokud uživatel nepřišel na podržení.
+  if (!annotMode.value) {
+    if (!isGestureMode.value) { toggleAnnot(); return; }   // tlačítkový režim: dnešní chování
+    annotMode.value = true;
+    gmOpen('tap', [], annotBtnEl.value);
+    return;
+  }
+  toggleAnnot();   // režim už běží → ťuknutí ho vypne
 }
 
 // Krátké ťuknutí = přepínač režimu jako dřív; PODRŽENÍ otevře animovanou nabídku.
@@ -7119,11 +7130,21 @@ function gmOpen(mode = 'tools', items = [], el = annotBtnEl.value, groupKey = ''
   gm.items = mode === 'panel' ? items : [];
   const list = mode === 'panel' ? gm.items : gmItems.value;
   const colH = list.length * GM_STEP + 12;
-  gm.colH = colH;
-  // Lišta nestojí v rohu, ale HNED NALEVO od stisknutého tlačítka (Jan,
-  // listopad 2026: „místo úplně do levého rohu, tak jen nalevo od prstu“).
-  gm.colX = Math.max(4, Math.round(r.left - GM_W));
-  gm.colY = Math.max(8, Math.min(barBottom + 8, vh - 12 - colH));
+  // Pruh pro prst a puntík mají smysl jen u podržení (prst drží tlačítko a táhne).
+  // Při ťuknutí (mode 'tap') prst nikde není, takže se pruh nekreslí.
+  gm.colH = mode === 'tap' ? 0 : colH;
+  if (mode === 'tap') {
+    // Lišta PŘÍMO POD tlačítkem — ťuknutí nemá oblast pro prst, takže není
+    // důvod uhýbat doleva (Jan, listopad 2026).
+    gm.colX = Math.max(4, Math.min(window.innerWidth - GM_W - 4,
+      Math.round(r.left + r.width / 2 - GM_W / 2)));
+    gm.colY = Math.min(barBottom + 8, vh - 12 - colH);
+  } else {
+    // Lišta nestojí v rohu, ale HNED NALEVO od stisknutého tlačítka (Jan,
+    // listopad 2026: „místo úplně do levého rohu, tak jen nalevo od prstu“).
+    gm.colX = Math.max(4, Math.round(r.left - GM_W));
+    gm.colY = Math.max(8, Math.min(barBottom + 8, vh - 12 - colH));
+  }
   gm.btnCx = r.left + r.width / 2;
   gm.btnCy = r.top + r.height / 2;
   gm.btnW = r.width;
@@ -7131,7 +7152,11 @@ function gmOpen(mode = 'tools', items = [], el = annotBtnEl.value, groupKey = ''
   gm.ghostY = gm.colY + 5 + 23;
   gm.ghostIco = (el.textContent || '').trim().slice(0, 2) || '✏️';
   gm.ghost = true;
-  gm.open = true; gm.closing = false; gm.moved = false; gm.holding = true;
+  gm.open = true; gm.closing = false; gm.moved = false;
+  // `holding` = „drží uživatel prst". U nástrojů ano (táhne), u skupiny a
+  // nabídky po ťuknutí ne — tam se čeká na klepnutí, takže musí hned platit
+  // zachytávač dotyků (jinak by dotyk mimo lištu propadl do not).
+  gm.holding = mode === 'tools';
   const cur = list.findIndex(x => x.sel);
   gm.active = cur >= 0 ? cur : 0;
   // Puntík ve sloupci pod tlačítkem startuje na vybraném kolečku, aby spojka
@@ -7213,10 +7238,9 @@ function gmTapItem(i) {
 function gmUp() {
   if (!gm.open || gm.closing) return;
   gm.holding = false;
-  if (gm.mode === 'panel') {
-    // Skupina: puštění prstu po TAŽENÍ potvrdí volbu a otevře okno. Puštění bez
-    // pohybu (obyčejné ťuknutí na tlačítko) lištu nechá otevřenou — uživatel
-    // pak klepne na kolečko, které chce.
+  if (gm.mode === 'panel' || gm.mode === 'tap') {
+    // Skupina / nabídka po ťuknutí: puštění po TAŽENÍ potvrdí volbu. Puštění bez
+    // pohybu lištu nechá otevřenou — uživatel pak klepne na kolečko, které chce.
     if (gm.moved) gmFinishTool();
     return;
   }
