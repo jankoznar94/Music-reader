@@ -220,6 +220,23 @@ async def main():
         st = await gm_state(h)
         ok("dotyk mimo nabídku ji zavře", not st["open"], st)
 
+        # --- 8) Druhé ťuknutí nabídku zavře a tlačítko přestane svítit ---------
+        await h.ev("window.__barDev.annotMode.value = false")
+        await asyncio.sleep(0.2)
+        await h.finger_tap(annot["x"], annot["y"])
+        await asyncio.sleep(0.45)
+        lit = await h.ev("(() => { const e = document.querySelector(\".tb-btn[title^='Anotace']\");"
+                         " return { menu: !!document.querySelector('.gm-root'), lit: e.classList.contains('on') }; })()")
+        ok("první ťuknutí: nabídka otevřená a tlačítko svítí", lit["menu"] and lit["lit"], lit)
+        await h.finger_tap(annot["x"], annot["y"])
+        await asyncio.sleep(0.5)
+        lit2 = await h.ev("(() => { const e = document.querySelector(\".tb-btn[title^='Anotace']\");"
+                          " return { menu: !!document.querySelector('.gm-root'), lit: e.classList.contains('on'),"
+                          "          annot: window.__barDev.annotMode.value }; })()")
+        ok("druhé ťuknutí: nabídka zmizí", not lit2["menu"], lit2)
+        ok("druhé ťuknutí: tlačítko přestane svítit", not lit2["lit"], lit2)
+        ok("druhé ťuknutí: anotační režim se vypne", lit2["annot"] is False, lit2)
+
     ok.report()
 
 

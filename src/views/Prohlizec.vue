@@ -7088,6 +7088,14 @@ function gmHaptic(ms = 8) {
 
 function onAnnotBtnClick() {
   if (Date.now() < gmSuppressClickUntil) return;   // klik po gestu nesmí režim vypnout
+  // Nabídka otevřená → ťuknutí ji ZAVŘE (a když ji ťuknutí i zapnulo, vypne se
+  // s ní i anotační režim, aby tlačítko nezůstalo svítit).
+  if (gm.open) {
+    const wasTap = gm.mode === 'tap';
+    gmClose();
+    if (wasTap && annotMode.value) toggleAnnot();
+    return;
+  }
   // ŤUKNUTÍ = totéž menu jako podržení, jen bez oblasti pro prst a s lištou
   // PŘÍMO POD tlačítkem (Jan, listopad 2026: „kliknutí by mělo otevřít stejnou
   // nabídku jako táhnutí prstem, ale bez té oblasti na prst“). Zapnutí režimu
@@ -7162,7 +7170,10 @@ function gmOpen(mode = 'tools', items = [], el = annotBtnEl.value, groupKey = ''
   // Puntík ve sloupci pod tlačítkem startuje na vybraném kolečku, aby spojka
   // nevisela odnikud dřív, než uživatel pohne prstem.
   gm.fingerY = gm.colY + 5 + 23 + gm.active * GM_STEP;
-  gmSuppressClickUntil = Date.now() + 1000;
+  // Klik hned po gestu nesmí režim vypnout — ale jen u nástrojů (tam se gesto
+  // táhne a `click` přijde po puštění). Nabídka po ťuknutí se naopak musí dát
+  // hned zavřít druhým ťuknutím (Jan, listopad 2026).
+  if (mode === 'tools') gmSuppressClickUntil = Date.now() + 1000;
   gmHaptic(15);
   window.setTimeout(() => { gm.ghost = false; }, 240);
   window.addEventListener('pointermove', gmMove, { passive: true });
