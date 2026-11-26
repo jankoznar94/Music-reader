@@ -130,10 +130,10 @@
           </span>
         </button>
       </div>
-      <div v-if="gmSub" class="gm-sub"
+      <div v-if="gmSub" class="gm-sub" :class="'side-' + gm.subSide"
            :style="{ left: gm.subLeft + 'px', top: gm.subTop + 'px', width: gm.subW + 'px' }">
         <button v-for="(o, j) in gmSub.items" :key="o.key" class="gm-opt"
-                :class="{ on: o.on, off: o.disabled }"
+                :class="{ on: o.on, off: o.disabled, hover: gm.subIdx === j }"
                 :style="{ '--j': j }"
                 @pointerdown.stop.prevent="gmTapOption(j)"
                 @touchstart.stop.prevent="noopTouch" @touchend.stop="noopTouch">
@@ -6819,13 +6819,12 @@ const GM_OPT = 46;
 const gm = reactive({
   open: false, closing: false,
   colX: 0, colY: 0, active: 0,
-  subLeft: 0, subTop: 0, subW: 0,
+  subLeft: 0, subTop: 0, subW: 0, subSide: 'right', subIdx: -1,
   moved: false, startX: 0, startY: 0,
 });
 let gmTimer = null;
 let gmItemRects = [];
 let gmOptRects = [];
-let gmSubIdx = -1;
 let gmSuppressClickUntil = 0;
 
 // Nabídka nástrojů (svisle). Pořadí odpovídá anotačnímu panelu, ale bez
@@ -6929,7 +6928,7 @@ function gmOpen() {
   gm.open = true; gm.closing = false; gm.moved = false;
   const cur = gmItems.value.findIndex(x => x.sel);
   gm.active = cur >= 0 ? cur : 0;
-  gmSubIdx = -1;
+  gm.subIdx = -1;
   gmSuppressClickUntil = Date.now() + 1000;
   gmHaptic(15);
   window.addEventListener('pointermove', gmMove, { passive: true });
@@ -6948,7 +6947,7 @@ function gmLayoutSub() {
   const vw = window.innerWidth, vh = window.innerHeight;
   if (!sub) { gm.subW = 0; return; }
   const n = sub.items.length;
-  const right = gm.colX + GM_W + 12;
+  const right = gm.colX + GM_W - 4;
   const availRight = vw - 8 - right;
   const availLeft = gm.colX - 12 - 8;
   // Podmenu patří NAPRAVO od kolečka (Jan). Když se na displeji nevejde ani
@@ -6961,15 +6960,17 @@ function gmLayoutSub() {
   const perRow = Math.max(2, Math.floor((w - 14) / 50));
   const rows = Math.ceil(n / perRow);
   const subH = rows * 50 + 12;
-  gm.subLeft = (availRight >= 170 || availLeft < 170)
-    ? right
-    : gm.colX - w - 12;
+  // Podmenu NAVAZUJE na lištu — překrývá se s ní o 4 px a má z té strany menší
+  // zaoblení, aby to byl jeden celek (Jan: „musí to na sebe navazovat“).
+  const toRight = availRight >= 170 || availLeft < 170;
+  gm.subSide = toRight ? 'right' : 'left';
+  gm.subLeft = toRight ? (gm.colX + GM_W - 4) : (gm.colX - w + 4);
   gm.subLeft = Math.max(8, Math.min(gm.subLeft, vw - 8 - w));
-  gm.subTop = Math.max(8, Math.min(gm.colY + 6 + gm.active * GM_STEP, vh - 8 - subH));
+  gm.subTop = Math.max(8, Math.min(gm.colY + 1 + gm.active * GM_STEP, vh - 8 - subH));
 }
 
-// Nejbližší kolečko k prstu (středy obdélníků). Když je prst daleko, drží se
-// předchozí volba — jinak by nabídka „uskakovala“ při každém pohybu mimo.
+// Nejbližší kolečko k prstu (středy obdélníků) — už se nepoužívá pro výběr
+// (ten jede po jedné ose, viz gmMove), zůstává jen jako záložní pomůcka.
 function gmNearest(rects, x, y) {
   let best = -1, bestD = 90 * 90;
   for (let i = 0; i < rects.length; i++) {
@@ -6987,18 +6988,67 @@ function gmMove(e) {
   const x = e.clientX, y = e.clientY;
   if (Math.hypot(x - gm.startX, y - gm.startY) > 6) gm.moved = true;
   const sub = gmSub.value;
-  if (sub && gmOptRects.length && x >= gm.subLeft - 6) {
-    const j = gmNearest(gmOptRects, x, y);
-    if (j >= 0 && j !== gmSubIdx) { gmSubIdx = j; gmHaptic(); }
+
+  // PODMENU (vodorovná lišta): rozhoduje jen VODOROVNÁ poloha prstu. Svislá
+  // osa vybírá jen řádek, na kterém prst je — prst tedy nemusí být přesně
+  // na kolečku, stačí být „na jeho sloupci“.
+  if (sub && gmOptRects.length &&
+      (gm.subSide === 'left' ? x <= gm.subLeft + gm.subW + 4 : x >= gm.subLeft - 4)) {
+    const j = gmPickInSub(x, y);
+    if (j >= 0 && j !== gm.subIdx) { gm.subIdx = j; gmHaptic(); }
     return;
   }
-  gmSubIdx = -1;
-  const i = gmNearest(gmItemRects, x, y);
+
+  // SVISLÁ LIŠTA: rozhoduje jen SVISLÁ poloha prstu (i když je prst vpravo
+  // nebo vlevo mimo lištu). Nad lištou se nic nevybírá — tam je tlačítko ✏️,
+  // takže podržení bez pohybu nesmí přepnout nástroj.
+  gm.subIdx = -1;
+  if (y < gm.colY - 4) return;
+  const i = gmNearestY(gmItemRects, y);
   if (i >= 0 && i !== gm.active) {
     gm.active = i;
     gmHaptic();
     nextTick(() => { gmLayoutSub(); gmMeasure(); });
   }
+}
+
+// Nejbližší kolečko lišty podle SVISLÉ polohy (x se ignoruje — uživatel
+// nemusí trefit úzký sloupec, stačí táhnout podél něj).
+function gmNearestY(rects, y) {
+  let best = -1, bestD = Infinity;
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    const d = Math.abs(y - (r.top + r.height / 2));
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+// Řádky podmenu (podmenu se na úzký displej zalamuje). Prst vybere řádek
+// podle svislé polohy a v něm kolečko podle VODOROVNÉ polohy.
+function gmSubRows() {
+  const rows = [];
+  for (const r of gmOptRects) {
+    let row = rows.find(rw => Math.abs(rw.top - r.top) < 8);
+    if (!row) { row = { top: r.top, bottom: r.bottom, items: [] }; rows.push(row); }
+    row.items.push(r);
+  }
+  return rows;
+}
+function gmPickInSub(x, y) {
+  const rows = gmSubRows();
+  if (!rows.length) return -1;
+  let row = rows[0], bestD = Infinity;
+  for (const rw of rows) {
+    const d = Math.abs(y - (rw.top + rw.bottom) / 2);
+    if (d < bestD) { bestD = d; row = rw; }
+  }
+  let best = -1, bestDx = Infinity;
+  for (const r of row.items) {
+    const d = Math.abs(x - (r.left + r.width / 2));
+    if (d < bestDx) { bestDx = d; best = gmOptRects.indexOf(r); }
+  }
+  return best;
 }
 
 function gmApplyTool(i) {
@@ -7039,7 +7089,7 @@ function gmTapOption(j) {
 function gmUp() {
   if (!gm.open || gm.closing) return;
   const sub = gmSub.value;
-  if (sub && gmSubIdx >= 0 && sub.items[gmSubIdx]) gmApplyOption(sub.items[gmSubIdx]);
+  if (sub && gm.subIdx >= 0 && sub.items[gm.subIdx]) gmApplyOption(sub.items[gm.subIdx]);
   else if (gm.moved) gmApplyTool(gm.active);
   else if (!annotMode.value) annotMode.value = true;   // pouhé podržení = zapnout anotaci
   gmClose();
@@ -7058,7 +7108,7 @@ function gmClose() {
   window.setTimeout(() => {
     gm.open = false;
     gm.closing = false;
-    gmSubIdx = -1;
+    gm.subIdx = -1;
     gmItemRects = [];
     gmOptRects = [];
   }, 240);
@@ -11877,6 +11927,7 @@ async function deleteBookmark(b) {
   border: 1px solid var(--accent-dim);
   border-radius: 32px;
   box-shadow: 0 6px 24px rgba(0,0,0,0.55);
+  z-index: 2;
 }
 .gm-item {
   pointer-events: auto;
@@ -11921,7 +11972,12 @@ async function deleteBookmark(b) {
   border: 1px solid var(--accent);
   box-shadow: 0 6px 24px rgba(0,0,0,0.55);
   animation: gmSubIn 0.18s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  /* Navazuje na lištu: z té strany, kde se dotýká sloupce, je zaoblení menší
+     (a sloupec se s ním překrývá o 4 px) — vypadá to jako jeden celek. */
+  z-index: 1;
 }
+.gm-sub.side-right { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.gm-sub.side-left  { border-right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .gm-opt {
   pointer-events: auto;
   width: 46px; height: 46px; flex: 0 0 auto; padding: 0;
@@ -11933,6 +11989,13 @@ async function deleteBookmark(b) {
   animation-delay: calc(var(--j) * 16ms);
 }
 .gm-opt.on { border-color: var(--accent); background: var(--bg-elev); color: var(--accent); }
+/* Kolečko, na kterém zrovna stojí prst — musí být vidět i mimo něj (výběr
+   jede po ose, takže prst často není přesně na kolečku). */
+.gm-opt.hover {
+  border-color: var(--accent); background: var(--bg-elev);
+  color: var(--accent); transform: scale(1.1);
+  box-shadow: 0 0 0 2px rgba(201, 168, 124, 0.35);
+}
 .gm-opt.off { opacity: 0.3; }
 .gm-swatch {
   width: 30px; height: 30px; border-radius: 50%;

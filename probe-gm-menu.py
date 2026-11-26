@@ -114,9 +114,24 @@ async def main():
 
         col = await rect(h, ".gm-col")
         sub = await rect(h, ".gm-sub")
-        ok("podmenu je NAPRAVO od sloupce", bool(col and sub) and sub["left"] >= col["right"] - 1,
+        ok("podmenu NAVAZUJE na sloupec (překrývá se, žádná mezera)",
+           bool(col and sub) and sub["left"] <= col["right"] and sub["left"] >= col["right"] - 12,
            {"colRight": col and col["right"], "subLeft": sub and sub["left"]})
         ok("podmenu se vejde na displej", bool(sub) and sub["right"] <= 800, {"right": sub and sub["right"]})
+
+        # --- 3b) Lišta bere SVISLOU polohu i mimo ni ------------------------
+        item2 = await rect(h, ".gm-item", 2)   # Guma
+        await h.touch("touchMove", [(col["left"] - 45, item2["y"], 12)])
+        await asyncio.sleep(0.25)
+        st = await state(h)
+        ok("prst vlevo MIMO lištu přepne podle svislé polohy", st["active"] == 2, st["active"])
+
+        # --- 3c) Podmenu bere VODOROVNOU polohu i mimo něj -------------------
+        opt3 = await rect(h, ".gm-opt", 3)
+        await h.touch("touchMove", [(opt3["x"], sub["top"] - 40, 12)])
+        await asyncio.sleep(0.25)
+        hov = await h.ev("([...document.querySelectorAll('.gm-opt')].findIndex(e => e.classList.contains('hover')))")
+        ok("prst NAD podmenu vybere kolečko podle vodorovné polohy", hov == 3, hov)
 
         # --- 4) Tahem na jiné kolečko se přepne označení i podmenu -----------
         item4 = await rect(h, ".gm-item", 4)   # Noty
