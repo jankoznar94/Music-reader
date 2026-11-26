@@ -6,7 +6,7 @@ import { ref } from 'vue';
 
 const BOOT_JS = (document.querySelector('script[type="module"]') || {}).src || '';
 export const updateAvailable = ref(false);
-export let updateHash = '';
+export const updateHash = ref('');   // MUSÍ být ref — hláška o nové verzi podle něj pozná, že jde o JINOU verzi, než kterou uživatel odklikl
 let checking = false;
 
 /** Porovná běžící bundle s tím na serveru (obchází SW i HTTP cache). */
@@ -23,9 +23,9 @@ export async function checkForUpdate() {
       window.__updateState = 'same';
       return false;
     }
-    updateHash = m[0];
+    updateHash.value = m[0];
     updateAvailable.value = true;
-    window.__updateState = 'available:' + updateHash;
+    window.__updateState = 'available:' + updateHash.value;
     return true;
   } catch (e) {
     window.__updateState = 'error';
@@ -59,3 +59,12 @@ export async function applyUpdate() {
   } catch (e) { /* fallback níž */ }
   window.location.reload();
 }
+
+// Testovací háček (CDP probe): stav „je k dispozici nová verze“ se v prohlížeči
+// nedá vyvolat bez nasazení jiného bundlu, takže si ho test přepne tady.
+// V produkci ho nikdo nevolá — jen čte `updateAvailable` přes okno hlášky.
+window.__setUpdateAvailable = (v, hash) => {
+  if (hash) updateHash.value = hash;
+  updateAvailable.value = !!v;
+  window.__updateState = v ? 'available:' + updateHash.value : 'same';
+};
