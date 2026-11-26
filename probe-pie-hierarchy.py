@@ -119,6 +119,13 @@ async def open_tool(h, label):
         items = await h.ev("[...document.querySelectorAll('.gm-item')].map(e => e.getAttribute('title') || '')")
         if not items:
             annot = await rect(h, ".tb-btn[title^='Anotace']")
+            if not annot or annot["y"] < 0:
+                # lišta je schovaná (po open_song) → vrátit přes stav Vue
+                await h.ev("(() => { const el = document.querySelector('.top-bar');"
+                           " const c = el && el.__vueParentComponent;"
+                           " if (c && c.setupState) c.setupState.barHidden = false; return 1 })()")
+                await asyncio.sleep(0.5)
+                annot = await rect(h, ".tb-btn[title^='Anotace']")
             await h.finger_tap(annot["x"], annot["y"])
             await asyncio.sleep(0.7)
             continue

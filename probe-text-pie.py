@@ -63,6 +63,11 @@ async def main():
         await h.open()
         await h.open_song(pdf=m.make_pdf(4), pages=4, reset=False)
         await h.ev("localStorage.setItem('topbarHidden','0')")
+        # lišta se po open_song schová → vrátit přes stav Vue komponenty
+        await h.ev("(() => { const el = document.querySelector('.top-bar');"
+                   " const c = el && el.__vueParentComponent;"
+                   " if (c && c.setupState) c.setupState.barHidden = false; return 1 })()")
+        await asyncio.sleep(0.4)
 
         annot = await rect(h, ".tb-btn[title^='Anotace']")
         await h.finger_tap(annot["x"], annot["y"])

@@ -225,7 +225,9 @@ async def main():
         ok("fajfka zavřela koláče", not st["pie"], st)
         ok("nástroj zůstal tužka", st["tool"] == "pencil", st["tool"])
 
-        # --- 9) Noty: jeden koláč kolem fajfky ------------------------------
+        # --- 9) Noty: ŽÁDNÝ koláč, rovnou hláška „Klepni do not“ -------------
+        # (Jan, listopad 2026: okno noty je propracované, prstenec s glyfy byl
+        # jen duplicitní krok navíc)
         await long_press(h, btn)
         i4 = await rect(h, ".gm-item", 4)
         await h.touch("touchMove", [(col["right"] + 140, i4["y"], 12)])
@@ -234,24 +236,11 @@ async def main():
         await asyncio.sleep(0.6)
         st = await state(h)
         ok("noty: nástroj vybrán", st["tool"] == "note", st["tool"])
-        ok("noty: JEDEN koláč kolem fajfky", st["pies"] == 1, st["pies"])
-        ok("noty: 12 výsečí", st["sectors"] == 12, st["sectors"])
-        g4 = await pie_geo(h)
-        ok("noty: koláč je přesně kolem fajfky",
-           abs(g4["pies"][0]["cx"] - g4["cx"]) < 1 and g4["pies"][0]["r0"] > g4["r"], g4)
-        ok("noty: koláč nemá zvláštní střed (fajfka ho nahrazuje)", not g4["pies"][0]["hub"], g4["pies"][0])
-        p0 = g4["pies"][0]
-        x, y = pt(p0["cx"], p0["cy"], sector_angle(3, 12), (p0["r0"] + p0["r1"]) / 2)
-        await h.touch("touchStart", [(p0["cx"], p0["cy"] + 8, 12)])
-        await h.touch("touchMove", [(x, y, 12)])
-        await asyncio.sleep(0.2)
-        await h.touch("touchEnd", [])
-        await asyncio.sleep(0.3)
-        ok("noty: 4. výseč se označila", (await pie_geo(h))["pies"][0]["on"] == 3)
-        await h.touch("touchStart", [(g4["cx"], g4["cy"], 12)])
-        await asyncio.sleep(0.08)
-        await h.touch("touchEnd", [])
-        await asyncio.sleep(0.4)
+        ok("noty: koláč se NEOTEVŘEL", st["pies"] == 0, st["pies"])
+        hint = await h.ev("(() => { const e = document.querySelector('.place-hint-wrap');"
+                          " return e ? e.textContent.trim() : null })()")
+        ok("noty: ukáže se hláška o klepnutí do not",
+           bool(hint) and "not" in hint.lower(), hint)
 
         # --- 9b) Dynamika: glyfy ve výsečích nesmí být oříznuté ---------------
         await long_press(h, btn)
@@ -273,7 +262,7 @@ async def main():
             g = pin[0]
             ok("dynamika: glyf je na středu výseče (rezerva na obou stranách)",
                abs(g["dl"] - g["dr"]) < g["w"] * 0.45 and abs(g["dt"] - g["db"]) < g["h"] * 0.45, g)
-        await h.touch("touchStart", [(g4["cx"], g4["cy"], 12)])
+        await h.touch("touchStart", [(dgeo["cx"], dgeo["cy"], 12)])
         await asyncio.sleep(0.08)
         await h.touch("touchEnd", [])
         await asyncio.sleep(0.4)

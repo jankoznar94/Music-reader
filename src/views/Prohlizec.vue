@@ -188,6 +188,14 @@
                 :x="s.ix" :y="s.iy"
                 :style="'font-size:' + Math.max(11, Math.min(18, (p.r1 - p.r0) * 0.62)).toFixed(0) + 'px'"
                 text-anchor="middle" dominant-baseline="central">{{ s.text }}</text>
+          <!-- Styl rámu se nepopisuje slovem — kreslí se kroužek PRÁVĚ tím
+               stylem (plný, čárkovaný, tečkovaný, dvojitý). Uživatel vidí, jak
+               rám bude vypadat, bez čtení názvů (Jan, listopad 2026). -->
+          <g v-else-if="s.kind === 'style'" class="pie-style-prev">
+            <circle v-for="(c, ci) in styleRings(s.style, s.ix, s.iy, s.pzr)" :key="ci"
+                    :cx="c.cx" :cy="c.cy" :r="c.r" :stroke-width="c.w"
+                    :stroke-dasharray="c.dash" />
+          </g>
           <g v-else>
             <!-- Barva = CELÁ výseč je tou barvou (Jan, listopad 2026: „při
                  vybírání barev bych spíš vybarvil danou barvou celou výseč“),
@@ -205,6 +213,11 @@
                :width="p.hub.isz" :height="p.hub.isz" :viewBox="p.hub.vb">
             <text x="0" y="0" font-size="1" font-family="NotyDyn">{{ p.hub.text }}</text>
           </svg>
+          <g v-else-if="p.hub.kind === 'style'" class="pie-style-prev">
+            <circle v-for="(c, ci) in styleRings(p.hub.style, p.cx, p.cy, p.hub.r)" :key="ci"
+                    :cx="c.cx" :cy="c.cy" :r="c.r" :stroke-width="c.w"
+                    :stroke-dasharray="c.dash" />
+          </g>
           <text v-else class="pie-hub-txt" :x="p.cx" :y="p.cy" text-anchor="middle"
                 :style="'font-size:' + Math.max(11, Math.min(20, p.r0 * 0.85)).toFixed(0) + 'px'"
                 dominant-baseline="central">{{ p.hub.text }}</text>
@@ -7060,7 +7073,12 @@ const lastMarkKey = ref('k');
 // Volby nástroje rozdělené po PARAMETRECH — každý parametr = jeden prstenec
 // koláče. `kind` rozhoduje, jak se volba kreslí: color (kolečko barvy),
 // text (číslo / popisek), glyph (notový glyf s vlastním viewBoxem).
-function gmParams(key) {
+// `all = true` vrací I volby, které jsou právě schované (Šířka/Styl rámu bez
+// rámečku, Šířka/Výška podle způsobu zvýrazňovače). Používá se JEN pro výpočet
+// velikosti koláčů: hlavní koláče se od začátku dimenzují na tu největší
+// možnou sestavu, takže po volbě „Rámeček: ano“ NIC NEZMENŠÍ (Jan, listopad
+// 2026: „velikost by se po změně parametru měnit neměla“).
+function gmParams(key, all = false) {
   const mkGlyph = (kind, k, extra) => {
     const text = kind === 'note' ? noteGlyph(k).text : kind === 'dynamic' ? dynGlyph(k).text : markGlyph(k).text;
     return { kind: 'glyph', text, vb: glyphBox(kind, k), ...extra };
@@ -7077,13 +7095,13 @@ function gmParams(key) {
     // Volný způsob = tloušťka tahu, obdélník = výška pásu. Tyhle dvě volby
     // NEMAJÍ smysl samy o sobě — odemyká je až volba způsobu, takže patří
     // k němu jako vedlejší (minor) koláč, ne mezi rovnocenné parametry.
-    if (hlMode.value === 'free') {
+    if (hlMode.value === 'free' || (all && hlMode.value !== 'rect')) {
       const sizes = [2, 4, 6, 8, 12, 16, 24, Math.round(annotSize.value)];
       params.push({
         key: 'hsize', label: 'Šířka', parent: 'mode',
         items: [...new Set(sizes)].sort((a, b) => a - b).map(n => ({ key: 'hs' + n, kind: 'text', text: String(n), label: n + ' px', tool: 'highlighter', hlSize: n, on: tool.value === 'highlighter' && annotSize.value === n })),
       });
-    } else if (hlMode.value === 'rect') {
+    } else if (hlMode.value === 'rect' || all) {
       const hs = [...new Set([...HL_PIE_HEIGHTS, Math.round(hlRectHeight.value)])].sort((a, b) => a - b);
       params.push({
         key: 'hheight', label: 'Výška', parent: 'mode',
@@ -7113,30 +7131,27 @@ function gmParams(key) {
     // Šířka a styl rámu mají smysl, až když rámeček je — jinak by koláč nabízel
     // volby, které nic nedělají. Proto jsou to VEDLEJŠÍ koláče svázané
     // s „Rámečkem“ (parent) a kreslí se jako menší vějíř u něj.
-    if (textBorder.value) {
+    if (textBorder.value || all) {
       params.push({
         key: 'tbw', label: 'Šířka rámu', parent: 'tborder',
         items: TEXT_BORDER_WIDTHS.map(w => ({ key: 'tbw' + w, kind: 'text', text: String(w), label: w + ' px', tool: 'text', textBorderWidth: w, on: textBorderWidth.value === w })),
       });
       params.push({
         key: 'tbs', label: 'Styl rámu', parent: 'tborder',
-        items: TEXT_BORDER_STYLES.map(s => ({ key: 'tbs' + s.key, kind: 'text', text: s.label.replace(/^Dvojitá$/, '2×'), label: s.label, tool: 'text', textBorderStyle: s.key, on: textBorderStyle.value === s.key })),
+        // Styl se nepopisuje slovem („Čárky“, „Tečky“) — v prstenci je malý
+        // kroužek nakreslený PRÁVĚ tím stylem, takže je vidět, jak bude rám
+        // vypadat (Jan, listopad 2026).
+        items: TEXT_BORDER_STYLES.map(s => ({ key: 'tbs' + s.key, kind: 'style', style: s.key, label: s.label, tool: 'text', textBorderStyle: s.key, on: textBorderStyle.value === s.key })),
       });
     }
     return params;
   }
   if (key === 'note') {
-    const notes = NOTE_GROUPS[0].items.filter(x => !x.hide);
-    const rests = NOTE_GROUPS[1].items;
-    return [{
-      key: 'note', label: 'Nota',
-      items: [
-        ...notes.map(n => mkGlyph('note', n.key, { key: 'n' + n.key, tool: 'note', note: n.key, label: n.label, on: tool.value === 'note' && notePresetKey.value === n.key })),
-        ...rests.map(n => mkGlyph('note', n.key, { key: 'r' + n.key, tool: 'note', note: n.key, label: n.label, on: tool.value === 'note' && notePresetKey.value === n.key })),
-        { key: 'cr', kind: 'text', text: '<', label: 'Crescendo', tool: 'crescendo', on: tool.value === 'crescendo' },
-        { key: 'dc', kind: 'text', text: '>', label: 'Decrescendo', tool: 'decrescendo', on: tool.value === 'decrescendo' },
-      ],
-    }];
+    // Vkládání not koláč NEDOSTANE (Jan, listopad 2026): okno noty je
+    // propracované (dlaždice hodnot, tečka, zrcadlení, pomocné linky, náhled)
+    // a otevírá se hned po ťuknutí do not. Prstenec s glyfy byl jen duplikát
+    // a zdržoval — po výběru nástroje stačí hláška „Klepni do not“.
+    return [];
   }
   if (key === 'dynamic') return [{
     key: 'dyn', label: 'Dynamika',
@@ -7350,6 +7365,9 @@ function gmApplyOption(o) {
     saveTextStyle();
   }
   gmHaptic();
+  // Hover (pozice prstu) po volbě uklidit — zůstal viset na staré geometrii
+  // a vypadalo to, že jsou vybrané dvě hodnoty (Jan, listopad 2026).
+  pie.hoverPie = -1; pie.hoverIdx = -1; pie.hubHover = false;
   // Počet voleb se mohl změnit (u textu přibyl/ubyl rámeček) → koláče znovu.
   pieRebuild();
 }
@@ -7410,6 +7428,9 @@ function gmFinishTool() {
   const params = gmParams(item.key);
   gmClose();
   if (params.length) window.setTimeout(() => pieOpen(params, item), 150);
+  // Nota koláč nemá — hned se ukáže, co má uživatel udělat (okno noty se
+  // otevře až po ťuknutí do not).
+  else if (item.key === 'note') window.setTimeout(showPlaceHint, 150);
 }
 function gmCancel() {
   gmClose();
@@ -7441,6 +7462,28 @@ function ringPath(cx, cy, r0, r1, a0, a1) {
   const x3 = cx + r0 * Math.cos(a0), y3 = cy + r0 * Math.sin(a0);
   return `M${x0} ${y0}A${r1} ${r1} 0 ${large} 1 ${x1} ${y1}` +
          `L${x2} ${y2}A${r0} ${r0} 0 ${large} 0 ${x3} ${y3}Z`;
+}
+
+// PŮLKRUH s ROVNÝM řezem: koláč o dvou volbách se nekreslí jako dva klíny
+// (jejich hrany by se sbíhaly do středu — „hrany pode úhlem“), ale jako kruh
+// rozříznutý nožem. Obě hrany jsou rovnoběžné svislice vzdálené `gap` od sebe
+// (rovná mezera stálé šířky), vnější i vnitřní obvod je oblouk.
+// `right` = pravá půlka (volba 0), levá = volba 1.
+function halfRingPath(cx, cy, r0, r1, right, gap) {
+  const h = gap / 2;
+  const s1 = Math.sqrt(Math.max(0, r1 * r1 - h * h));
+  const x = cx + (right ? h : -h);
+  let d = right
+    ? `M${x} ${cy - s1}A${r1} ${r1} 0 0 1 ${x} ${cy + s1}`
+    : `M${x} ${cy + s1}A${r1} ${r1} 0 0 1 ${x} ${cy - s1}`;
+  // Když je mezera širší než vnitřní otvor, řez projde skrz a půlka je
+  // zakončená rovnou tětivou (žádný vnitřní oblouk).
+  if (r0 <= h) return d + 'Z';
+  const s0 = Math.sqrt(Math.max(0, r0 * r0 - h * h));
+  d += right
+    ? `L${x} ${cy + s0}A${r0} ${r0} 0 0 0 ${x} ${cy - s0}`
+    : `L${x} ${cy - s0}A${r0} ${r0} 0 0 0 ${x} ${cy + s0}`;
+  return d + 'Z';
 }
 
 // Střed koláče = jeho vlastní souřadnice (u jednoho parametru střed displeje,
@@ -7486,16 +7529,20 @@ function pieBuild(params) {
   const margin = 8;      // od okraje displeje
   const lblH = 20;       // popisek nad/pod koláčem
   const minorK = 0.70;   // vedlejší koláč je menší než hlavní
-  const majorAt = params.map((p, i) => i).filter(i => !params[i].parent);
-  const minorAt = params.map((p, i) => i).filter(i => !!params[i].parent);
+  // Rozvržení pro DANÝ seznam parametrů. Počítá se dvakrát: pro AKTUÁLNÍ
+  // volby (kreslí se) a pro „největší možnou sestavu“ (určuje velikost) —
+  // proto továrna, ne funkce nad `params`.
+  function calcFor(list) {
+  const majorAt = list.map((p, i) => i).filter(i => !list[i].parent);
+  const minorAt = list.map((p, i) => i).filter(i => !!list[i].parent);
   const m = majorAt.length;
-  const one = params.length === 1;
+  const one = list.length === 1;
 
   // Rozmístění při zadaném poloměru hlavních koláčů. `vert` = dva hlavní
   // koláče nad sebou (úzký displej), jinak vedle sebe / do kruhu.
   function layout(rp, vert) {
     const rc = rp * minorK;
-    const out = params.map(() => null);
+    const out = list.map(() => null);
     if (one) {
       out[0] = { cx: pie.cx, cy: pie.cy, r0: checkR + 6, r1: rp, ang: 0, minor: false, parent: -1 };
       return { out, rc };
@@ -7517,11 +7564,11 @@ function pieBuild(params) {
     // dva a víc = symetricky kolem ní.
     const byParent = {};
     minorAt.forEach(pi => {
-      const key = params[pi].parent;
+      const key = list[pi].parent;
       (byParent[key] = byParent[key] || []).push(pi);
     });
     Object.keys(byParent).forEach(key => {
-      const par = params.findIndex(q => q.key === key);
+      const par = list.findIndex(q => q.key === key);
       const base = par >= 0 ? out[par] : null;
       const bx = base ? base.cx : pie.cx, by = base ? base.cy : pie.cy;
       const br = base ? base.r1 : rp;
@@ -7582,20 +7629,30 @@ function pieBuild(params) {
     return lo;
   }
 
+  return { layout, fits, bestRp, m, one };
+  }
+
+  const calc = calcFor(params);
+  // Velikost se počítá z NEJVĚTŠÍ možné sestavy (včetně dosud skrytých
+  // vedlejších koláčů), takže přibytí Šířky/Stylu rámu hlavní koláče NEZMENŠÍ
+  // (Jan, listopad 2026: „velikost by se po změně parametru měnit neměla“).
+  const maxList = gmParams(pie.toolKey, true) || [];
+  const sizing = maxList.length > params.length ? calcFor(maxList) : calc;
+
   let rp, vert = false;
-  if (one) {
+  if (sizing.one) {
     rp = Math.max(110, Math.min(240, Math.min(vw, vh) * 0.36));
-  } else if (m === 2) {
+  } else if (sizing.m === 2) {
     // Vedle sebe, nebo (na úzkém displeji) nad sebou — vyhraje varianta,
     // ve které jsou koláče výrazně větší.
-    const h = bestRp(false);
-    const v = bestRp(true);
+    const h = sizing.bestRp(false);
+    const v = sizing.bestRp(true);
     vert = v > h * 1.1;
     rp = vert ? v : h;
   } else {
-    rp = bestRp(false);
+    rp = sizing.bestRp(false);
   }
-  const geo = layout(rp, vert);
+  const geo = calc.layout(rp, vert);
 
   pie.pies = params.map((p, pi) => {
     const g = geo.out[pi] || { cx: pie.cx, cy: pie.cy, r0: 0, r1: 0, minor: false, parent: -1 };
@@ -7603,6 +7660,10 @@ function pieBuild(params) {
     const cnt = p.items.length;
     const step = (Math.PI * 2) / cnt;
     const sg = Math.min(step * 0.10, 0.07);
+    // Koláč o DVOU půlkách se nedělí klínem (hrany by se sbíhaly do středu =
+    // „hrany pode úhlem“), ale rovným řezem jako nožem: dvě rovnoběžné hrany
+    // a mezi nimi rovná mezera stálé šířky (Jan, listopad 2026).
+    const slot = Math.max(5, Math.min(12, r1 * 0.07));
     const rm = (r0 + r1) / 2;
     const sectors = p.items.map((o, i) => {
       const a0 = -Math.PI / 2 + i * step + sg / 2;
@@ -7610,15 +7671,18 @@ function pieBuild(params) {
       const am = (a0 + a1) / 2;
       return {
         ...o, i,
-        d: ringPath(cx, cy, r0, r1, a0, a1),
+        d: cnt === 2 ? halfRingPath(cx, cy, r0, r1, i === 0, slot)
+                     : ringPath(cx, cy, r0, r1, a0, a1),
         ix: cx + Math.cos(am) * rm,
         iy: cy + Math.sin(am) * rm,
+        // Poloměr kroužku, kterým se v koláči „Styl rámu“ kreslí ukázka stylu.
+        pzr: Math.max(6, Math.min(24, (r1 - r0) * 0.30)),
         isz: Math.max(13, Math.min(34, (r1 - r0) * 0.92)),
       };
     });
     // Popisek patří NAD koláč, ale u koláčů ve spodní polovině kruhu by přelezl
     // fajfku — tam jde pod koláč.
-    const below = !one && cy > pie.cy + 1;
+    const below = !calc.one && cy > pie.cy + 1;
     return {
       key: p.key, label: p.label, items: p.items, sectors, cx, cy, r0, r1,
       hub: null, minor: !!g.minor, parent: g.parent,
@@ -7641,7 +7705,7 @@ function pieBuild(params) {
     });
 
   // Střed každého samostatného koláče nese VYBRANOU hodnotu parametru.
-  if (!one) pie.pies.forEach(p => { p.hub = pieHubOf(p); });
+  if (!calc.one) pie.pies.forEach(p => { p.hub = pieHubOf(p); });
 
   const k = checkR * 0.5;
   pie.checkD = `M${pie.cx - k * 0.85} ${pie.cy + k * 0.05} ` +
@@ -7680,12 +7744,28 @@ function pieOpen(params, item) {
   gmHaptic(12);
 }
 
+// Kroužek ukazující styl rámu: plný / čárkovaný / tečkovaný / dvojitý.
+// Dvojitá čára nemá v SVG atribut, takže ji kreslí dva soustředné kroužky.
+function styleRings(kind, cx, cy, R) {
+  const w = Math.max(1.6, Math.min(3.4, R * 0.17));
+  if (kind === 'double') {
+    const rr = Math.max(4, R * 0.68);
+    return [
+      { cx, cy, r: R, dash: null, w },
+      { cx, cy, r: rr, dash: null, w },
+    ];
+  }
+  const dash = kind === 'dashed' ? '7 5' : kind === 'dotted' ? '1.5 4' : null;
+  return [{ cx, cy, r: R, dash, w }];
+}
+
 // Co je právě vybráno v daném koláči — kreslí se do jeho středu.
 function pieHubOf(p) {
   const sel = p.items.find(o => o.on) || p.items[0];
   if (!sel) return null;
   if (sel.kind === 'color') return { kind: 'color', color: sel.color };
   if (sel.kind === 'glyph') return { kind: 'glyph', text: sel.text, vb: sel.vb, isz: p.r0 * 1.25 };
+  if (sel.kind === 'style') return { kind: 'style', style: sel.style, r: p.r0 * 0.72 };
   return { kind: 'text', text: sel.text };
 }
 
@@ -12709,16 +12789,18 @@ async function deleteBookmark(b) {
 .pie-sec { fill: rgba(38, 34, 32, 0.95); stroke: rgba(255,255,255,0.10); stroke-width: 1; }
 /* Vybraná výseč (aktuální hodnota parametru) je označená pořád, ne jen pod
    prstem — Jan: „uvnitř koláče vždy bude vybrána možnost ... a ta bude
-   i vyznačená pomocí výseče“. */
-.pie-sec.on { fill: rgba(201, 168, 124, 0.42); stroke: var(--accent); stroke-width: 3; }
-/* Hover je jen „kde je prst“ — musí být SLABŠÍ než výběr, aby vybraná výseč
-   nezbledla, když prst přejede na jiný koláč (Jan, listopad 2026). */
-.pie-sec.hover { fill: rgba(201, 168, 124, 0.58); stroke: #ffffff; stroke-width: 2; }
+   i vyznačená pomocí výseče“. Označení je BÍLÝ obrys (ne tělová/akcent) —
+   u barevných výsečí je barva celá plocha, takže výběr musí držet obrys. */
+.pie-sec.on { fill: rgba(231, 226, 220, 0.14); stroke: #ffffff; stroke-width: 3; }
 .pie-sec.off { opacity: 0.35; }
 /* Barevná výseč: barva je CELÁ plocha (inline fill), takže obrys drží výběr. */
 .pie-sec.col { stroke: rgba(0, 0, 0, 0.35); stroke-width: 1.5; }
-.pie-sec.col.on { stroke: var(--accent); stroke-width: 4; }
-.pie-sec.col.hover { stroke: #ffffff; stroke-width: 2; }
+.pie-sec.col.on { stroke: #ffffff; stroke-width: 4; }
+/* Hover se ZÁMĚRNĚ nekreslí (Jan, listopad 2026): dělal dojem, že jsou
+   vybrané DVĚ hodnoty — vybraná (tělová) a ta pod prstem (bílý obrys).
+   Stav se mění až volbou. */
+.pie-style-prev { pointer-events: none; }
+.pie-style-prev circle { fill: none; stroke: var(--text); stroke-linecap: round; }
 .pie-title {
   fill: var(--text); font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
   text-transform: uppercase; pointer-events: none;
@@ -12727,8 +12809,9 @@ async function deleteBookmark(b) {
 }
 .pie-ico { fill: var(--text); pointer-events: none; }
 .pie-ico.txt { font-weight: 700; }
-/* Vybraná výseč je béžová — světlý text by na ní zmizel. */
-.pie-ico.txt.on { fill: #17130f; }
+/* Vybraná výseč má jen lehké prosvětlení podkladu — text zůstává světlý
+   (dřív byl na béžové tmavý; béžová = „tělová“ výběru nepatří). */
+.pie-ico.txt.on { fill: var(--text); }
 /* Spojka rodič → vedlejší koláč. Tenká a tlumená — má jen ukázat, co k čemu
    patří, ne konkurovat koláčům. */
 .pie-link { stroke: rgba(231, 226, 220, 0.75); stroke-width: 3; stroke-linecap: round; }
@@ -12737,7 +12820,7 @@ async function deleteBookmark(b) {
 .pie-dot-sel { fill: none; stroke: var(--accent); stroke-width: 2.5; pointer-events: none; }
 /* Střed samostatného koláče = vybraná hodnota parametru (není to tlačítko). */
 .pie-hub { pointer-events: none; }
-.pie-hub-bg { fill: rgba(26, 23, 21, 0.98); stroke: var(--accent); stroke-width: 1.5; }
+.pie-hub-bg { fill: rgba(26, 23, 21, 0.98); stroke: rgba(231, 226, 220, 0.9); stroke-width: 2; }
 .pie-hub-txt { fill: var(--text); font-size: 20px; font-weight: 700; }
 /* Popisek parametru musí být ČITELNÝ (Jan, listopad 2026: „Rámeček skoro není
    vidět“) — plná barva textu, tučně, s tmavým obrysem, aby nesplynul se scrim
