@@ -381,6 +381,7 @@ import {
 } from '../db.js';
 import { getPageCount, clearPdfCache } from '../pdf.js';
 import { getLibraryState, saveLibraryState } from '../libraryState.js';
+import { readPref, savePref } from '../prefs.js';
 import { checkForUpdate, applyUpdate } from '../update';
 
 const router = useRouter();
@@ -395,11 +396,14 @@ const contentEl = ref(null);
 // Výchozí stav přehledu pochází z libraryState (přežije přechod do prohlížeče,
 // po reloadu resetován v main.js)
 const search = ref(libState.search);
-const sortBy = ref(libState.sortBy);
+// Řazení a seskupení jsou VOLBY, ne stav cesty: uživatel je nechce přepínat
+// po každém zapnutí appky, takže se čtou z localStorage (src/prefs.js) a každá
+// změna se hned ukládá. libraryState zůstává fallback pro běh bez úložiště.
+const sortBy = ref(readPref('sortBy', libState.sortBy, ['name', 'date']));
 // Seskupení podle skladatelů (rozbalitelné záložky). Vypnutím se seznam slije
 // do jednoho plochého výpisu — hodí se, když člověk hledá konkrétní soubor,
 // ne autora. Stav se drží v libraryState, takže přežije cestu do prohlížeče.
-const groupByComposer = ref(libState.groupByComposer);
+const groupByComposer = ref(readPref('groupByComposer', libState.groupByComposer));
 const tab = ref(libState.tab);
 // Nastavení (ozubené kolo). Režim ovládání čtečky je společný s prohlížečem:
 // čte se ze stejného klíče localStorage, takže volba platí i po přechodu.
@@ -1126,8 +1130,9 @@ watch(() => search.value, () => {
   if (el) { el.scrollTop = 0; libState.scrollTop = 0; }
   persistState();
 });
-watch(() => sortBy.value, persistState);
+watch(() => sortBy.value, () => { savePref('sortBy', sortBy.value); persistState(); });
 watch(() => groupByComposer.value, () => {
+  savePref('groupByComposer', groupByComposer.value);
   const el = contentEl.value;
   if (el) { el.scrollTop = 0; libState.scrollTop = 0; }
   persistState();
