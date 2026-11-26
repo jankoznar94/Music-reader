@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Screenshot animované nabídky — tablet (800) i telefon (390)."""
+"""Screenshoty animovaného režimu — duch + lišta vlevo + kruhový výběr.
+
+Ukládá: /tmp/gm-ghost.png (let ducha), /tmp/gm-rail.png (lišta vlevo),
+/tmp/gm-pie.png (koláč voleb uprostřed), a totéž na šířce telefonu 390 px.
+"""
 import asyncio
 import base64
 import importlib.util
@@ -38,50 +42,45 @@ async def main():
         await h.open()
         await h.set_tablet(800, 1280, 2)
         await h.open_song(pdf=m.make_pdf(6), pages=6, reset=False)
+
         for (w, hh, tag) in [(800, 1280, "tablet"), (390, 844, "phone")]:
             await h.set_tablet(w, hh, 2)
             await asyncio.sleep(0.5)
-            # Úzká lišta se posouvá — tlačítko ✏️ může být mimo záběr. Posuň
-            # lištu tak, aby bylo vidět (uživatel to dělá prstem taky).
-            await h.ev(
-                '(() => { const b = document.querySelector(".tb-btn[title^=\'Anotace\']");'
-                ' const bar = document.querySelector(".top-bar");'
-                ' if (b && bar) { const br = b.getBoundingClientRect().left;'
-                ' bar.scrollLeft = Math.max(0, bar.scrollLeft + br - 32); }'
-                ' return true; })()')
-            await asyncio.sleep(0.3)
             if tag == "phone":
-                # Úzká lišta: počítadlo stránek je absolutně na středu a v tomto
-                # posunu leží NAD tlačítkem ✏️ (preexistující překryv lišty).
-                # Pro screenshot nabídky ho dočasně schováme, ať se dá ťuknout.
+                # na úzké liště leží počítadlo stránek NAD tlačítkem ✏️
                 await h.ev('(() => { const s=document.createElement("style");'
                            ' s.textContent=".tb-page-center{display:none!important}";'
                            ' document.head.appendChild(s); return true; })()')
                 await asyncio.sleep(0.2)
             btn = await rect(h, ".tb-btn[title^='Anotace']")
-            print(tag, "btn", btn)
             await h.touch("touchStart", [(btn["x"], btn["y"], 12)])
-            await asyncio.sleep(0.4)
-            dbg = await h.ev("(() => ({ menu: !!document.querySelector('.gm-root'), n: document.querySelectorAll('.gm-item').length,"
-                             " mode: window.__barDev && window.__barDev.controlMode.value,"
-                             " hit: (document.elementFromPoint(%s, %s)||{}).className }))()"
-                             % (btn["x"], btn["y"]))
-            print(tag, "dbg", dbg)
-            item = await rect(h, ".gm-item", 5)   # Dynamika
-            if item is None:
-                await h.touch("touchEnd", [])
-                await asyncio.sleep(0.4)
-                continue
-            await h.touch("touchMove", [(item["x"], item["y"], 12)])
+            await asyncio.sleep(0.23)
+            await shot(h, "/tmp/gm-ghost-%s.png" % tag)
             await asyncio.sleep(0.35)
-            info = await h.ev(
-                "(() => { const s=document.querySelector('.gm-sub'); const c=document.querySelector('.gm-col');"
-                " const sr=s.getBoundingClientRect(), cr=c.getBoundingClientRect();"
-                " return { vw: innerWidth, col:[cr.left,cr.right], sub:[sr.left,sr.right,sr.top,sr.bottom] }; })()")
-            print(tag, info)
-            await shot(h, "/tmp/gm-%s.png" % tag)
+            item = await rect(h, ".gm-item", 4)   # Noty
+            await h.touch("touchMove", [(item["x"] + 160, item["y"], 12)])
+            await asyncio.sleep(0.25)
+            await shot(h, "/tmp/gm-rail-%s.png" % tag)
             await h.touch("touchEnd", [])
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.8)
+            await shot(h, "/tmp/gm-pie-%s.png" % tag)
+            # označ výseč prstem (4. výseč) a vyfoť zvýraznění
+            geo = await h.ev(
+                "(() => { const hole=document.querySelector('.pie-hole');"
+                " const r=document.querySelector('.pie-ring');"
+                " return { cx:+hole.getAttribute('cx'), cy:+hole.getAttribute('cy'),"
+                " r0:+hole.getAttribute('r'), r:+r.getAttribute('r') }; })()")
+            import math
+            step = 2 * math.pi / 12
+            ang = -math.pi / 2 + 3.5 * step
+            rr = (geo["r0"] + geo["r"]) / 2
+            await h.touch("touchStart", [(geo["cx"], geo["cy"] + 10, 12)])
+            await h.touch("touchMove", [(geo["cx"] + math.cos(ang) * rr,
+                                         geo["cy"] + math.sin(ang) * rr, 12)])
+            await asyncio.sleep(0.3)
+            await shot(h, "/tmp/gm-pie-hover-%s.png" % tag)
+            await h.touch("touchEnd", [])
+            await asyncio.sleep(0.5)
 
 
 asyncio.run(main())
