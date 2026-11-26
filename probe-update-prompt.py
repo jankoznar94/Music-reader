@@ -34,6 +34,7 @@ async def rect(h, sel):
 async def state(h):
     return await h.ev(
         "(() => ({ box: !!document.querySelector('.up-box'),"
+        "  scrim: !!document.querySelector('.up-scrim'),"
         "  title: (document.querySelector('.up-title') || {}).textContent || '',"
         "  btns: [...document.querySelectorAll('.up-btn')].map(b => b.textContent.trim()),"
         "  pe: document.querySelector('.up-root') ? getComputedStyle(document.querySelector('.up-root')).pointerEvents : null,"
@@ -64,10 +65,15 @@ async def main():
         ok("nová verze → okno vyskočí", st["box"], st)
         ok("okno má nadpis o nové verzi", "nová verze" in st["title"].lower(), st["title"])
         ok("okno má dvě tlačítka", st["btns"] == ["Aktualizovat hned", "Později"], st["btns"])
-        ok("okno neblokuje okolí (pointer-events: none)", st["pe"] == "none", st["pe"])
+        ok("okno zatmaví a uzamkne zbytek appky (scrim)",
+           st["scrim"] and st["pe"] == "auto", {"scrim": st["scrim"], "pe": st["pe"]})
         box = await rect(h, ".up-box")
-        ok("okno je nahoře uprostřed displeje",
-           bool(box) and abs(box["x"] - 400) < 3 and box["top"] < 200, box)
+        ok("okno je PŘESNĚ uprostřed displeje",
+           bool(box) and abs(box["x"] - 400) < 3 and abs(box["y"] - 640) < 3,
+           {"x": box and round(box["x"], 1), "y": box and round(box["y"], 1)})
+        under = await h.ev("(() => { const e = document.elementFromPoint(400, 1150);"
+                           " return e ? (e.closest('.up-root') ? 'up-root' : e.className) : null; })()")
+        ok("dotyk mimo okno spadne na zatmavení, ne do not", under == "up-root", under)
 
         # --- 2) „Později“ ---------------------------------------------------
         later = await rect(h, ".up-btn:not(.primary)")

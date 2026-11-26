@@ -2041,8 +2041,12 @@
     </div>
 
     <!-- HLÁŠKA „VYBER MÍSTO“ — po potvrzení voleb (fajfka) se čeká na klepnutí
-         do not; bez ní to vypadá, že se jen zavřela okna. -->
-    <div v-if="placeHint" class="place-hint">{{ placeHint }}</div>
+         do not; bez ní to vypadá, že se jen zavřela okna. Zatmavení je jen
+         lehké a NEBLOKUJE dotyk — uživatel naopak musí do not klepnout. -->
+    <div v-if="placeHint" class="place-hint-wrap">
+      <div class="place-hint-scrim" />
+      <div class="place-hint">{{ placeHint }}</div>
+    </div>
 
   </div>
 </template>
@@ -12305,25 +12309,39 @@ async function deleteBookmark(b) {
 }
 .gm-catch { position: fixed; left: 0; right: 0; top: 60px; bottom: 0; z-index: 1; pointer-events: auto; }
 
-/* HLÁŠKA „VYBER MÍSTO“ — plochý pruh u spodní hrany, nesahá na noty
-   (pointer-events: none), takže klepnutí projde do stránky. */
+/* HLÁŠKA „VYBER MÍSTO“ — výrazný pruh u spodní hrany + lehké ztmavení not,
+   ať je hláška nepřehlédnutelná. Dotyk prochází na noty (pointer-events: none),
+   protože právě klepnutí do not hlášku splní. */
+.place-hint-wrap {
+  position: fixed; inset: 0; z-index: 58; pointer-events: none;
+}
+.place-hint-scrim {
+  position: absolute; inset: 0;
+  background: rgba(10, 8, 7, 0.24);
+}
 .place-hint {
-  position: fixed;
-  left: 50%;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
-  transform: translateX(-50%);
-  max-width: 88vw;
+  position: absolute;
+  /* ⚠️ Ne `left: 50% + translateX` — u absolutně pozicovaného prvku je
+     dostupná šířka jen od `left` k pravému okraji (tedy půlka displeje)
+     a hláška se zbytečně láme do dvou řádků. `left:0; right:0; margin:auto`
+     dá celou šířku a vycentruje podle obsahu. */
+  left: 0; right: 0;
+  margin: 0 auto;
+  width: fit-content;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+  max-width: 92vw;
   box-sizing: border-box;
-  padding: 11px 16px;
-  background: rgba(38, 34, 32, 0.96);
-  border: 2px solid var(--accent);
-  border-radius: 12px;
-  color: var(--text);
-  font-size: 15px;
+  padding: 15px 20px;
+  background: var(--accent);
+  border: 2px solid #e2c69c;
+  border-radius: 14px;
+  color: #1c1410;
+  font-size: 17px;
+  font-weight: 700;
   line-height: 1.25;
   text-align: center;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
   pointer-events: none;
-  z-index: 58;
 }
 
 .gm-item {

@@ -9,14 +9,21 @@ bundle s `index.html` na serveru (kontrola běží po startu, při návratu do
 appky a každých 5 minut). Tady se z toho stavu jen ukáže okno; samo se nic
 nenačítá ani neobnovuje — přepnutí dělá až tlačítko (`applyUpdate`).
 
+Vzhled (Jan, listopad 2026): okno je UPROSTŘED obrazovky, s výraznou teplou
+plochou, a zbytek appky je ZATMAVENÝ a neklikatelný, dokud ho uživatel
+neodklikne („Aktualizovat hned“ / „Později“).
+
 Chování: „Později“ okno zavře a pro TUTÉŽ verzi už se neukáže (sessionStorage);
 po restartu appky se připomene znovu. Nová verze = nové okno.
 -->
 <template>
   <div v-if="visible" class="up-root">
+    <!-- Zatmavení a uzamčení zbytku appky: dokud uživatel neodpoví, nic pod
+         oknem nejde zmáčknout (jinak by šlo omylem kreslit do not). -->
+    <div class="up-scrim" />
     <div class="up-box">
-      <div class="up-title">Nová verze aplikace je k dispozici</div>
-      <div class="up-text">Aktualizace přinese opravy a novinky. Appka se obnoví až po tvém klepnutí.</div>
+      <div class="up-title">Nová verze aplikace</div>
+      <div class="up-text">Je k dispozici aktualizace s opravami a novinkami. Appka se obnoví až po tvém klepnutí.</div>
       <div class="up-actions">
         <button class="up-btn primary" @click="onUpdate">Aktualizovat hned</button>
         <button class="up-btn" @click="onLater">Později</button>
@@ -53,53 +60,60 @@ async function onUpdate() {
 <style scoped>
 .up-root {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 64px);
-  left: 0; right: 0;
+  inset: 0;
   display: flex;
+  align-items: center;         /* PŘESNÝ STŘED obrazovky */
   justify-content: center;
-  z-index: 9800;                 /* nad obsahem, pod plovoucími panely nástrojů */
-  pointer-events: none;          /* okno nesmí blokovat kreslení pod sebou */
+  padding: 16px;
+  box-sizing: border-box;
+  z-index: 9800;               /* nad obsahem i plovoucími panely nástrojů */
+}
+.up-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 8, 7, 0.72);   /* zbytek appky ztmavený a neklikatelný */
 }
 .up-box {
-  pointer-events: auto;
-  width: min(92vw, 440px);
+  position: relative;
+  width: min(92vw, 460px);
   box-sizing: border-box;
-  background: var(--bg-elev);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px 18px 18px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  background: var(--accent);          /* výrazná teplá plocha, ne šedá karta */
+  color: #1c1410;
+  border: 2px solid #e2c69c;
+  border-radius: 18px;
+  padding: 22px 20px 20px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  text-align: center;
 }
 .up-title {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--accent);
-  margin-bottom: 6px;
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 800;
+  color: #1c1410;
+  margin-bottom: 8px;
 }
 .up-text {
-  font-size: 14px;
-  line-height: 1.35;
-  color: var(--text-dim);
-  margin-bottom: 14px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: #3a2c1e;
+  margin-bottom: 18px;
 }
-.up-actions { display: flex; flex-direction: column; gap: 8px; }
+.up-actions { display: flex; flex-direction: column; gap: 10px; }
 .up-btn {
   width: 100%;
-  padding: 13px 14px;
-  font-size: 16px;
-  font-weight: 600;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-elev2);
-  color: var(--text);
+  padding: 16px 14px;
+  font-size: 17px;
+  font-weight: 700;
+  border-radius: 12px;
+  border: 2px solid #1c1410;
+  background: transparent;
+  color: #1c1410;
   font-family: inherit;
 }
 .up-btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #17130f;
-  font-weight: 700;
+  background: #1c1410;
+  border-color: #1c1410;
+  color: var(--accent);
 }
 /* Žádné hover/focus efekty — mobilní PWA (Jan). */
 .up-btn:focus { outline: none; }
