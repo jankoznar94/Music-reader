@@ -7318,13 +7318,12 @@ function gmParams(key, all = false) {
       on: tool.value === 'dynamic' && String(annotTextDraft.value || '').trim().toLowerCase() === d.key,
     })),
   }];
-  if (key === 'mark') return [{
-    key: 'mark', label: 'Značka',
-    items: MARK_GROUPS.flatMap(g => g.items).slice(0, 14).map(m => mkGlyph('mark', m.key, {
-      key: 'k' + m.key, tool: 'mark', mark: m.key, label: m.label,
-      on: tool.value === 'mark' && String(annotTextDraft.value || '').trim().toLowerCase() === m.key,
-    })),
-  }];
+  // ZNAČKY (posuvky #, b, ♮, ozdoby…) koláč NEDOSTANOU — stejně jako noty.
+  // Volba znaku je v dialogu, který se otevře po ťuknutí do not; koláč před
+  // vložením byl jen zdržení navíc (Jan, 27. 11. 2026: „vkládání křížků a béček
+  // se musí chovat jako vkládání not — nezobrazí se koláč, ale rovnou hláška
+  // o vložení“).
+  if (key === 'mark') return [];
   if (key === 'actions') return [{
     key: 'act', label: 'Akce',
     items: [
@@ -7620,9 +7619,9 @@ function gmFinishTool() {
   const params = gmParams(item.key);
   gmClose();
   if (params.length) window.setTimeout(() => pieOpen(params, item), 150);
-  // Nota koláč nemá — hned se ukáže, co má uživatel udělat (okno noty se
-  // otevře až po ťuknutí do not).
-  else if (item.key === 'note') window.setTimeout(showPlaceHint, 150);
+  // Nota ani ZNAČKA koláč nemají — hned se ukáže, co má uživatel udělat
+  // („Klepni do not“); znak noty / posuvky se vybírá až v dialogu po ťuknutí.
+  else if (item.key === 'note' || item.key === 'mark') window.setTimeout(showPlaceHint, 150);
 }
 function gmCancel() {
   gmClose();
