@@ -1298,21 +1298,57 @@
     <!-- Záložky — lišta u spodní hrany; chová se STEJNĚ jako horní lišta:
          tap na střed not ji schová i ukáže (Jan: „jak se schová/zobrazí hlavní
          lišta, tak stejně i spodní lišta se záložkami“). -->
-    <!-- Lišta záložek — skrytá, když se upravuje vybraný prvek (edit-bar by s ní splýval) -->
-    <div v-if="bookmarks.length && !editingId && !barHidden" class="bookmark-strip" ref="bmStripEl"
-         @scroll.passive="bmStripOnScroll">
-      <button
-        v-for="b in bookmarks"
-        :key="b.id"
-        class="bookmark-btn"
-        :class="{ on: b.id === bmActiveId, circle: !b.label }"
-        :aria-current="b.id === bmActiveId ? 'true' : undefined"
-        @click="goBookmark(b)"
-        :title="'Záložka na str. ' + bookmarkPageNo(b)"
-      >
-        <span class="bk-num">{{ bookmarkPageNo(b) }}</span>
-        <span v-if="b.label" class="bk-label">{{ b.label }}</span>
-      </button>
+    <!-- SPODNÍ LIŠTA: ZÁLOŽKY ↔ ZNAČKY v jednom pruhu (Jan, 27. 11. 2026).
+         Značky byly jen v panelu („příliš hluboko na přesun po score“), proto
+         má lišta vlevo přepínač a obě sady se v ní kreslí STEJNĚ: odznak
+         s číslem stránky + text, klepnutí = skok. Skrytá, když se upravuje
+         vybraný prvek (edit-bar by s ní splýval). -->
+    <div v-if="stripVisible" class="bottom-strip">
+      <div v-if="stripHasSwitch" class="strip-switch">
+        <!-- Ikony STEJNÉ jako na horní liště: 🔖 = záložky, A = značky — ale
+             kreslené jako SVG, protože emoji 🔖 se v některých prohlížečích
+             vykreslí jako prázdný rámeček (naměřeno v Chromu v náhledu). -->
+        <button class="strip-switch-btn" :class="{ on: stripMode === 'bm' }"
+                @click="setStripMode('bm')" title="Lišta: záložky">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.2L5 21V4a1 1 0 0 1 1-1z"/>
+          </svg>
+        </button>
+        <button class="strip-switch-btn" :class="{ on: stripMode === 'mk' }"
+                @click="setStripMode('mk')" title="Lišta: značky (A, B, 7…)">A</button>
+      </div>
+      <div class="bookmark-strip" ref="bmStripEl"
+           @scroll.passive="bmStripOnScroll">
+        <template v-if="stripMode === 'mk'">
+          <button
+            v-for="m in marksOrdered"
+            :key="m.id"
+            class="bookmark-btn"
+            :class="{ on: m.id === mkActiveId }"
+            :aria-current="m.id === mkActiveId ? 'true' : undefined"
+            @click="goMark(m)"
+            :title="'Značka ' + m.text + ' na str. ' + withOffset(dispPage(m.page))"
+          >
+            <span class="bk-num">{{ withOffset(dispPage(m.page)) }}</span>
+            <span class="bk-label">{{ m.text }}</span>
+          </button>
+        </template>
+        <template v-else>
+          <button
+            v-for="b in bookmarks"
+            :key="b.id"
+            class="bookmark-btn"
+            :class="{ on: b.id === bmActiveId, circle: !b.label }"
+            :aria-current="b.id === bmActiveId ? 'true' : undefined"
+            @click="goBookmark(b)"
+            :title="'Záložka na str. ' + bookmarkPageNo(b)"
+          >
+            <span class="bk-num">{{ bookmarkPageNo(b) }}</span>
+            <span v-if="b.label" class="bk-label">{{ b.label }}</span>
+          </button>
+        </template>
+      </div>
     </div>
 
     <!-- Slider stránek s miniaturami.
@@ -5440,6 +5476,7 @@ onMounted(async () => {
   // změřit skutečná geometrie skenu bez hádání. V produkci se nepřidává.
   if (import.meta.env.DEV) {
     window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barInsertArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage, marks, mkPanelOpen, mkVisible, toggleMarkVisible, openMarks, startMarkPick, mkLabel, mkInsertAt, saveMark, goToTypedMark, mkJumpValue, findMarkTarget, barJumpMark, gotoPage, jumps, jumpMode, jumpStart, jumpEnd, jumpLabel, jumpColor, jumpSize, jumpPlace, jumpPlaceMode, jumpPlacePoints, jumpToMark, jumpTargetMode, jumpEditId, jumpFlash, toggleJumpMode, saveJump, goJump, editJump, startJumpTarget, commitJumpTarget, startJumpPlace, commitJumpPlace, shownTargetMarks, jumpBoxStyle, jumpStripStyle, JUMP_COLORS, jumpMarkStyle,
+    stripMode, setStripMode, stripHasSwitch, mkActiveId, stripActiveId, goMark,
     jumpMarkW, jumpMarkH, jumpMarkShape, jumpMarkBorder, jumpMarkFill, jumpMarkColor,
     JUMP_MARK_SIZES, JUMP_MARK_SHAPES, setJumpMarkSize, selectJumpPart, jumpSel,
     jumpPartGeom, jumpSelOnPage, nextPage, prevPage, tool, controlMode };
@@ -6543,8 +6580,8 @@ function onTouchStart(e) {
   // Dotyk v notách ozbrojí okno, ve kterém se spolkne náhodné gesto zpět
   // (swipe od okraje displeje) — viz backGuard().
   armBackGuard();
-  // Tah na liště záložek (horizontální scroll) nekreslí jako swipe stránky
-  if (e.target && e.target.closest && e.target.closest('.bookmark-strip')) return;
+  // Tah na spodní liště (záložky/značky, horizontální scroll) nekreslí jako swipe stránky
+  if (e.target && e.target.closest && e.target.closest('.bottom-strip')) return;
   const fs = fingersNow(e.touches);
   const n = fs.length;
   // ---------------------------------------------------------------
@@ -11144,6 +11181,52 @@ const bmActiveId = computed(() => {
   return best ? best.id : null;
 });
 
+// --- Přepínač dole: ZÁLOŽKY ↔ ZNAČKY -------------------------------------
+// Jan (27. 11. 2026): značky byly jen v panelu, což je na přesun po score moc
+// hluboko. Lišta u spodní hrany umí obojí; volba se pamatuje mezi skladbami.
+// Značky se v liště kreslí STEJNĚ jako záložky (odznak s číslem stránky + text),
+// klepnutí skočí na značku a zvýrazní ji (`goMark`). Přepínač se ukazuje jen
+// když má smysl — tj. když jsou v notách záložky I značky.
+const STRIP_MODE_KEY = 'noty.stripMode';
+const stripModeRaw = ref(localStorage.getItem(STRIP_MODE_KEY) === 'mk' ? 'mk' : 'bm');
+const stripMode = computed(() => {
+  // Zvolený režim drž, jen když v něm je co zobrazit — jinak přepni na druhý.
+  if (stripModeRaw.value === 'mk') return marks.value.length ? 'mk' : 'bm';
+  if (bookmarks.value.length) return 'bm';
+  return marks.value.length ? 'mk' : 'bm';
+});
+const stripHasSwitch = computed(() => bookmarks.value.length > 0 && marks.value.length > 0);
+const stripVisible = computed(() => !!(bookmarks.value.length || marks.value.length)
+  && !editingId.value && !barHidden.value);
+// Aktivní značka v liště = poslední značka, kterou jsme v notách minuli
+// (nejvyšší stránka <= aktuální; u stejné stránky rozhoduje pořadí v liště).
+// Stejná logika jako u záložek, aby se uživatel nemusel učit nic nového.
+const mkActiveId = computed(() => {
+  const cp = currentPage.value;
+  let best = null;
+  for (const m of marksOrdered.value) {
+    if (m.page == null || m.page > cp) continue;
+    if (!best || m.page >= best.page) best = m;
+  }
+  return best ? best.id : null;
+});
+const stripActiveId = computed(() => (stripMode.value === 'mk' ? mkActiveId.value : bmActiveId.value));
+function setStripMode(mode) {
+  if (stripModeRaw.value === mode) return;
+  stripModeRaw.value = mode;
+  try { localStorage.setItem(STRIP_MODE_KEY, mode); } catch (e) { /* privátní režim */ }
+  // Jiný seznam = jiná šířka i jiné položky → začni na začátku a nech
+  // aktivní prvek vycentrovat (níže to dělá watch(stripActiveId) po přepnutí).
+  _bmStripScroll = 0;
+  _bmCenterOnShow = true;
+  nextTick(() => {
+    const el = bmStripEl.value;
+    if (!el || !el.isConnected) return;
+    el.scrollLeft = 0;
+    requestAnimationFrame(() => { if (bmCenterActive(el, false)) _bmStripScroll = el.scrollLeft; });
+  });
+}
+
 // Lišta se při skrytí (tap na střed not) z DOM vyhodí a znovu vytvoří —
 // scroll pozice by se tím ztratila. Držíme proto poslední scrollLeft a po
 // znovuobjevení ho vrátíme. Pokud se ale zatím listovalo (lišta schovaná =
@@ -11194,10 +11277,10 @@ watch(bmStripEl, (el) => {
   nextTick(() => requestAnimationFrame(restore));
 });
 
-// Když se záložky nevejdou, lišta aktivní záložku podrží na STŘEDU (ne jen
-// „nějak viditelnou“) — Jan, Nov 2026. Na krajích se to přirozeně zastaví
-// o doraz scrollu, víc to vycentrovat nejde.
-watch(bmActiveId, async (id) => {
+// Když se položky nevejdou, lišta aktivní prvek podrží na STŘEDU (ne jen
+// „nějak viditelný“) — Jan, Nov 2026. Platí pro záložky i značky, proto se
+// hlídá `stripActiveId` (podle přepínače dole), ne jen `bmActiveId`.
+watch(stripActiveId, async (id) => {
   if (!id) return;
   await nextTick();
   const strip = bmStripEl.value;
@@ -11952,11 +12035,41 @@ async function deleteBookmark(b) {
 .tb-mark { font-weight: 700; font-size: 0.95rem; }
 .jp-cur { color: var(--text); font-size: 0.9rem; font-weight: 600; }
 
-/* Záložky — vždy viditelná lišta u spodní hrany, overlay nad plátnem.
-   position: fixed → kotví proti viewportu (obrazovce), ne proti výšce plátna,
-   takže se nemůže dostat pod obraz, ať je canvas jakkoli velký. */
-.bookmark-strip {
+/* Záložky + značky — vždy viditelná lišta u spodní hrany, overlay nad plátnem. */
+.bottom-strip {
   position: fixed; left: 16px; right: 16px; bottom: calc(4px + var(--sab));
+  display: flex; align-items: center; gap: 6px; z-index: 22;
+  /* Prázdné místo mezi přepínačem a lištou nesmí chytat dotyk — jinak by
+     klepnutí „mezi“ blokovalo listování. Děti si pointer-events zapínají. */
+  pointer-events: none;
+}
+.strip-switch {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 3px;
+  padding: 3px; border-radius: 20px;
+  background: rgba(28,25,23,0.28);
+  border: 1px solid rgba(58,53,50,0.55);
+  backdrop-filter: blur(3px);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+  pointer-events: auto;
+}
+.strip-switch-btn {
+  flex: 0 0 auto; width: 30px; height: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(38,34,32,0.55); border: 1px solid rgba(58,53,50,0.7);
+  border-radius: 50%; color: var(--text);
+  font-size: 0.85rem; font-weight: 700; line-height: 1;
+  cursor: pointer; touch-action: manipulation; pointer-events: auto;
+}
+.strip-switch-btn.on {
+  background: var(--accent); border-color: var(--accent); color: #17130f;
+}
+.strip-switch-btn:active { background: rgba(51,46,43,0.8); }
+.strip-switch-btn.on:active { background: var(--accent); }
+.strip-switch-btn svg { display: block; }
+.bookmark-strip {
+  /* Uvnitř .bottom-strip: roste do šířky a sám se posouvá; přepínač zůstává
+     na místě (jinak by u dlouhého seznamu odscrolloval z dosahu). */
+  position: static; flex: 1 1 auto; min-width: 0;
   display: flex; flex-wrap: nowrap; gap: 6px; align-items: center;
   justify-content: flex-start; z-index: 22;
   overflow-x: auto; overflow-y: hidden;    /* jediný řádek, při přetečení horizontální scroll */
