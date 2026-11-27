@@ -1330,7 +1330,9 @@
             <template v-for="g in mkStripGroups" :key="g.key">
               <button class="strip-group" :class="{ on: g.key === mkStripOpenKey }"
                       @click="goStripGroup(g)"
-                      :title="'Záložka ' + g.title + ' — klepnutím skočíš na její začátek'">
+                      :title="g.key === mkStripOpenKey
+                        ? 'Zavřít tuto záložku — ostatní se tím v liště uvolní'
+                        : 'Záložka ' + g.title + ' — klepnutím skočíš na její začátek a rozbalíš značky'">
                 <span class="strip-group-caret">{{ g.key === mkStripOpenKey ? '▾' : '▸' }}</span>
                 <span class="strip-group-name">{{ g.title }}</span>
                 <span class="strip-group-n">{{ g.marks.length }}</span>
@@ -5509,7 +5511,7 @@ onMounted(async () => {
   if (import.meta.env.DEV) {
     window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barInsertArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage, marks, mkPanelOpen, mkVisible, toggleMarkVisible, openMarks, startMarkPick, mkLabel, mkInsertAt, saveMark, goToTypedMark, mkJumpValue, findMarkTarget, barJumpMark, gotoPage, jumps, jumpMode, jumpStart, jumpEnd, jumpLabel, jumpColor, jumpSize, jumpPlace, jumpPlaceMode, jumpPlacePoints, jumpToMark, jumpTargetMode, jumpEditId, jumpFlash, toggleJumpMode, saveJump, goJump, editJump, startJumpTarget, commitJumpTarget, startJumpPlace, commitJumpPlace, shownTargetMarks, jumpBoxStyle, jumpStripStyle, JUMP_COLORS, jumpMarkStyle,
     stripMode, setStripMode, stripHasSwitch, mkActiveId, stripActiveId, goMark,
-    mkStripGroups, mkStripOpenKey, goStripGroup,
+    mkStripGroups, mkStripOpenKey, goStripGroup, mkStripManual, mkStripPickKey, mkStripCurrentKey,
     jumpMarkW, jumpMarkH, jumpMarkShape, jumpMarkBorder, jumpMarkFill, jumpMarkColor,
     JUMP_MARK_SIZES, JUMP_MARK_SHAPES, setJumpMarkSize, selectJumpPart, jumpSel,
     jumpPartGeom, jumpSelOnPage, nextPage, prevPage, tool, controlMode };
@@ -5561,6 +5563,9 @@ onMounted(async () => {
   mkVisible.value = !!(saved && saved.mkVisible);
   if (saved && Number.isFinite(saved.mkSize)) mkSize.value = saved.mkSize;
   else syncMkSizeFromItems();
+  // Nová skladba = nové záložky → otevřená skupina v liště se řídí aktuální
+  // stránkou, ne ručním zavřením z předchozí skladby.
+  resetStripGroupPick();
   // Razítko soustavy, ve které jsou anotace uložené (viz rebaseAnnotationRef).
   annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
   jumpsRebased = false;
@@ -6456,6 +6461,9 @@ async function switchSong(idx, toEnd) {
   mkVisible.value = !!(saved && saved.mkVisible);
   if (saved && Number.isFinite(saved.mkSize)) mkSize.value = saved.mkSize;
   else syncMkSizeFromItems();
+  // Nová skladba = nové záložky → otevřená skupina v liště se řídí aktuální
+  // stránkou, ne ručním zavřením z předchozí skladby.
+  resetStripGroupPick();
   annotRefOnLoad = (saved && saved.ref) ? saved.ref : null;
   jumpsRebased = false;
   // Staré noty (směr nožičky v klíči) → nový zápis se `flipY` (viz normalizeNoteFlips)
@@ -11268,7 +11276,18 @@ const mkStripGroups = computed(() => {
     return { ...g, page };
   });
 });
-const mkStripOpenKey = computed(() => {
+// Ruční řízení otevřené skupiny (Jan, 27. 11. 2026): když má záložka hodně
+// značek, vytlačí otevřená skupina ostatní záložky z lišty a hledají se blbě.
+// Proto jde otevřenou skupinu ZAVŘÍT (ťuknutím na její název) a zůstane
+// zavřená, dokud uživatel nějakou jinou neotevře — `mkStripManual` drží, že
+// si řízení vzal uživatel; do té doby se otevírá ta, ve které právě stojí.
+const mkStripManual = ref(false);
+const mkStripPickKey = ref(null);
+function resetStripGroupPick() {
+  mkStripManual.value = false;
+  mkStripPickKey.value = null;
+}
+const mkStripCurrentKey = computed(() => {
   const groups = mkStripGroups.value;
   if (!groups || !groups.length) return null;
   const sec = marksSection.value;
@@ -11280,14 +11299,30 @@ const mkStripOpenKey = computed(() => {
     const rest = groups.find(g => g.key === 'rest');   // značky před 1. záložkou
     if (rest) return rest.key;
   }
-  // Záložka bez značek (nebo mimo záložky) → nic není aktivní, všechny sbalené.
+  // Záložka bez značek (nebo mimo záložky) → žádná není aktuální.
   return null;
 });
+const mkStripOpenKey = computed(() => {
+  const groups = mkStripGroups.value;
+  if (!groups || !groups.length) return null;
+  if (mkStripManual.value) {
+    const key = mkStripPickKey.value;
+    return key && groups.some(g => g.key === key) ? key : null;   // null = vše sbalené
+  }
+  return mkStripCurrentKey.value;
+});
 async function goStripGroup(g) {
-  if (!g || g.page == null) return;
-  // Klepnutí na název záložky = skok na začátek její části; tím se skupina
-  // stane aktuální a rozbalí se (víc stavů si lišta nedrží).
-  if (g.page !== currentPage.value) await gotoPage(g.page);
+  if (!g) return;
+  // Ťuknutí na OTEVŘENOU skupinu = zabalit (aby byly vidět ostatní záložky).
+  if (mkStripOpenKey.value === g.key) {
+    mkStripManual.value = true;
+    mkStripPickKey.value = null;
+    return;
+  }
+  // Ťuknutí na jinou = otevřít ji (a skočit na začátek její části).
+  mkStripManual.value = true;
+  mkStripPickKey.value = g.key;
+  if (g.page != null && g.page !== currentPage.value) await gotoPage(g.page);
 }
 function setStripMode(mode) {
   if (stripModeRaw.value === mode) return;

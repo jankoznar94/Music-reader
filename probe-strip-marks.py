@@ -199,6 +199,37 @@ async def main():
            bool(next((x for x in g4["groups"] if x["on"] and x["name"] == "Skladba 1"), None)),
            str([x["name"] for x in g4["groups"] if x["on"]]))
 
+        # --- zavření otevřené záložky: hodně značek vytlačí ostatní záložky ---
+        ok("otevřená skupina jde zavřít ťuknutím na svůj název",
+           await tap_group(h, "Skladba 1"))
+        await asyncio.sleep(0.6)
+        g4b = await snapshot(h, ok, "po zavření skupiny")
+        ok("po zavření není otevřená žádná skupina",
+           [x for x in g4b["groups"] if x["on"]] == [] and g4b["openKey"] is None,
+           str(g4b["openKey"]))
+        ok("po zavření nejsou v liště žádné značky", g4b["btns"] == [], str(g4b["btns"]))
+        ok("všechny skupiny mají šipku ▸",
+           all(x["caret"] == "▸" for x in g4b["groups"]), str([x["caret"] for x in g4b["groups"]]))
+        ok("zavření nezmění stránku", (await h.page_text()).startswith("1 /"), await h.page_text())
+
+        # listování nesmí zavřenou skupinu znovu otevřít
+        await h.goto(2)
+        await asyncio.sleep(0.8)
+        g4c = await snapshot(h, ok, "po listování se zavřenou skupinou")
+        ok("po listování zůstává vše sbalené",
+           [x for x in g4c["groups"] if x["on"]] == [] and g4c["btns"] == [],
+           str(g4c["openKey"]))
+
+        # otevření jiné záložky = skok na její začátek + rozbalení
+        ok("jde otevřít jinou záložku", await tap_group(h, "Skladba 3"))
+        await asyncio.sleep(1.0)
+        g4d = await snapshot(h, ok, "po otevření Skladby 3")
+        ok("otevření jiné záložky skočí na str. 3",
+           (await h.page_text()).startswith("3 /"), await h.page_text())
+        ok("otevřená je jen Skladba 3 a její značka 3C",
+           [x["name"] for x in g4d["groups"] if x["on"]] == ["Skladba 3"]
+           and g4d["btns"] == ["3C"], str(g4d["btns"]))
+
         # --- zpět na záložky ---
         await h.finger_tap(g4["switch"]["l"] + 18, (g4["switch"]["t"] + g4["switch"]["b"]) / 2)
         g5 = await snapshot(h, ok, "zpět na záložky")
