@@ -5305,14 +5305,13 @@ const penOnly = ref(false);       // kreslit jen perem (ignorovat dotyk prstem/r
 const pageItems = computed(() => annotations.value.items.filter(i =>
   i.page === currentPage.value
   // Značky jsou primárně jen indexy pro skok (značka v notách už je vytištěná).
-  // Když si je ale uživatel chce ZOBRAZIT jako text (mkVisible), kreslí se
-  // stejně jako běžná textová anotace — a jdou pak i chytit a přesunout.
-  // Značky se navíc ukážou VŽDY, když je otevřené okno Značek (Jan, 20. 11. 2026:
-  // „aby byly všechny vidět, když je otevřené okno pro vytváření značek“).
-  // A v režimu Ruka VŽDY taky — jinak se existující značka nedá uchopit, posunout
-  // ani přepsat (Jan, 21. 11. 2026: „existující Značky by měly jít uchopit,
-  // přemístit/upravit nástrojem ruka“).
-  && (!i.mk || mkVisible.value || mkPanelOpen.value || tool.value === 'edit')
+  // Kreslí se, jen když si je uživatel ZOBRAZÍ jako text (mkVisible), nebo když
+  // je otevřené okno Značek. V režimu Ruka se kreslí JEN ta značka, kterou
+  // zrovna upravuješ (editingId) — dřív se v Ruce kreslily VŠECHNY a značky pak
+  // zůstaly viset v notách i po zavření okna, i když bylo nastaveno „jen index“
+  // (Jan, 27. 11. 2026).
+  && (!i.mk || mkVisible.value || mkPanelOpen.value
+      || (tool.value === 'edit' && editingId.value === i.id))
   // V režimu ČÍSLOVÁNÍ musí být skrytá čísla VIDĚT (jako u nástroje Ruka):
   // jinak uživatel nepozná, co už očísloval a co ne (Jan, Nov 2026).
   && (!(i.barNum && barNumsHidden.value) || tool.value === 'edit' || barnumMode.value)));

@@ -23,6 +23,7 @@ _spec = importlib.util.spec_from_file_location(
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 Harness, Check = _mod.Harness, _mod.Check
+_mod.CDP_HTTP = os.environ.get("NOTY_CDP", _mod.CDP_HTTP)
 
 APP = os.environ.get("APP_URL") or os.environ.get("NOTY_APP")
 
@@ -98,12 +99,13 @@ async def main():
         ok("mimo Ruku / okno Značek se značka nekreslí", hidden is None, str(hidden))
 
         # --- 3) Ruka ji pustí do vrstvy --------------------------------------
-        await h.annot_toggle()
-        await h.ev("(() => { const b=[...document.querySelectorAll('.annot-panel .ap-tool')]"
-                   ".find(x=>(x.title||'').startsWith('Upravit')); if(b) b.click(); })()")
-        await asyncio.sleep(0.6)
+        # Značky se v notách kreslí jen když jsou „zobrazené“, s otevřeným oknem
+        # Značek, nebo u právě upravované značky (Jan, 27. 11. 2026 — dřív se
+        # v Ruce kreslily VŠECHNY a zůstávaly viset v notách napořád).
+        await h.ev("(() => { window.__barDev.mkPanelOpen.value = true; return 1 })()")
+        await asyncio.sleep(0.5)
         dom = await h.ev(MK_DOM)
-        ok("v režimu Ruka se značka vykreslí", bool(dom), str(dom))
+        ok("s otevřeným oknem Značek se značka vykreslí", bool(dom), str(dom))
         if not dom:
             return ok.report()
         ok("v DOM je skutečně „B“", dom["text"] == "B", str(dom["text"]))
