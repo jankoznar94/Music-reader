@@ -1321,18 +1321,50 @@
       <div class="bookmark-strip" ref="bmStripEl"
            @scroll.passive="bmStripOnScroll">
         <template v-if="stripMode === 'mk'">
-          <button
-            v-for="m in marksOrdered"
-            :key="m.id"
-            class="bookmark-btn"
-            :class="{ on: m.id === mkActiveId }"
-            :aria-current="m.id === mkActiveId ? 'true' : undefined"
-            @click="goMark(m)"
-            :title="'Značka ' + m.text + ' na str. ' + withOffset(dispPage(m.page))"
-          >
-            <span class="bk-num">{{ withOffset(dispPage(m.page)) }}</span>
-            <span class="bk-label">{{ m.text }}</span>
-          </button>
+          <!-- Značky jsou POD ZÁLOŽKAMI (Jan, 27. 11. 2026): v liště proto
+               nejsou jako jeden dlouhý seznam, ale jako rozbalovací tlačítka
+               s názvem záložky. Otevřená je VŽDY JEN TA, ve které právě stojíš
+               — ostatní jsou sbalené. Klepnutí na název záložky skočí na její
+               začátek, čímž se i otevře (jeden princip: aktivní = aktuální). -->
+          <template v-if="mkStripGroups">
+            <template v-for="g in mkStripGroups" :key="g.key">
+              <button class="strip-group" :class="{ on: g.key === mkStripOpenKey }"
+                      @click="goStripGroup(g)"
+                      :title="'Záložka ' + g.title + ' — klepnutím skočíš na její začátek'">
+                <span class="strip-group-caret">{{ g.key === mkStripOpenKey ? '▾' : '▸' }}</span>
+                <span class="strip-group-name">{{ g.title }}</span>
+                <span class="strip-group-n">{{ g.marks.length }}</span>
+              </button>
+              <template v-if="g.key === mkStripOpenKey">
+                <button
+                  v-for="m in g.marks"
+                  :key="m.id"
+                  class="bookmark-btn"
+                  :class="{ on: m.id === mkActiveId }"
+                  :aria-current="m.id === mkActiveId ? 'true' : undefined"
+                  @click="goMark(m)"
+                  :title="'Značka ' + m.text + ' na str. ' + withOffset(dispPage(m.page))"
+                >
+                  <span class="bk-num">{{ withOffset(dispPage(m.page)) }}</span>
+                  <span class="bk-label">{{ m.text }}</span>
+                </button>
+              </template>
+            </template>
+          </template>
+          <template v-else>
+            <button
+              v-for="m in marksOrdered"
+              :key="m.id"
+              class="bookmark-btn"
+              :class="{ on: m.id === mkActiveId }"
+              :aria-current="m.id === mkActiveId ? 'true' : undefined"
+              @click="goMark(m)"
+              :title="'Značka ' + m.text + ' na str. ' + withOffset(dispPage(m.page))"
+            >
+              <span class="bk-num">{{ withOffset(dispPage(m.page)) }}</span>
+              <span class="bk-label">{{ m.text }}</span>
+            </button>
+          </template>
         </template>
         <template v-else>
           <button
@@ -5477,6 +5509,7 @@ onMounted(async () => {
   if (import.meta.env.DEV) {
     window.__barDev = { renderPageRegion, getPageWidthHeight, detectBarlines, detectPageSystems, song, currentPage, layerScale, annotations, barFillPreview, commitBarFill, fillPageAt, fillSystemAt, barStep, barLift, barNumsHidden, barGoValue, pageItems, toast, goToTypedBar, barIndex, barSelArmed, barInsertArmed, barnumMode, annotMode, toggleBarnum, editingId, barFillPageBusy, runBarFillPage, marks, mkPanelOpen, mkVisible, toggleMarkVisible, openMarks, startMarkPick, mkLabel, mkInsertAt, saveMark, goToTypedMark, mkJumpValue, findMarkTarget, barJumpMark, gotoPage, jumps, jumpMode, jumpStart, jumpEnd, jumpLabel, jumpColor, jumpSize, jumpPlace, jumpPlaceMode, jumpPlacePoints, jumpToMark, jumpTargetMode, jumpEditId, jumpFlash, toggleJumpMode, saveJump, goJump, editJump, startJumpTarget, commitJumpTarget, startJumpPlace, commitJumpPlace, shownTargetMarks, jumpBoxStyle, jumpStripStyle, JUMP_COLORS, jumpMarkStyle,
     stripMode, setStripMode, stripHasSwitch, mkActiveId, stripActiveId, goMark,
+    mkStripGroups, mkStripOpenKey, goStripGroup,
     jumpMarkW, jumpMarkH, jumpMarkShape, jumpMarkBorder, jumpMarkFill, jumpMarkColor,
     JUMP_MARK_SIZES, JUMP_MARK_SHAPES, setJumpMarkSize, selectJumpPart, jumpSel,
     jumpPartGeom, jumpSelOnPage, nextPage, prevPage, tool, controlMode };
@@ -11211,6 +11244,46 @@ const mkActiveId = computed(() => {
   return best ? best.id : null;
 });
 const stripActiveId = computed(() => (stripMode.value === 'mk' ? mkActiveId.value : bmActiveId.value));
+
+// Značky v liště jsou POD ZÁLOŽKAMI (Jan, 27. 11. 2026): místo jednoho dlouhého
+// seznamu rozbalovací tlačítka s názvem záložky — otevřená je vždy JEN ta,
+// ve které právě stojíš, ostatní jsou sbalené. Skupiny se berou z `mkGroups`
+// (stejné dělení jako v panelu, včetně „Mimo záložky“), takže lišta i panel
+// ukazují totéž. Bez záložek je `null` → plochý seznam všech značek.
+const mkStripGroups = computed(() => {
+  if (!bookmarks.value.length) return null;
+  const secs = bmSections.value;
+  return mkGroups.value.map((g) => {
+    const first = g.marks[0];
+    let page = first ? first.page : null;
+    if (g.key.startsWith('sec-')) {
+      const sec = secs.find(s => 'sec-' + s.page === g.key);
+      if (sec) page = visiblePages.value[sec.start];   // začátek části záložky
+    }
+    return { ...g, page };
+  });
+});
+const mkStripOpenKey = computed(() => {
+  const groups = mkStripGroups.value;
+  if (!groups || !groups.length) return null;
+  const sec = marksSection.value;
+  if (sec) {
+    const key = 'sec-' + sec.page;
+    if (groups.some(g => g.key === key)) return key;
+  }
+  if (!sec) {
+    const rest = groups.find(g => g.key === 'rest');   // značky před 1. záložkou
+    if (rest) return rest.key;
+  }
+  // Záložka bez značek (nebo mimo záložky) → nic není aktivní, všechny sbalené.
+  return null;
+});
+async function goStripGroup(g) {
+  if (!g || g.page == null) return;
+  // Klepnutí na název záložky = skok na začátek její části; tím se skupina
+  // stane aktuální a rozbalí se (víc stavů si lišta nedrží).
+  if (g.page !== currentPage.value) await gotoPage(g.page);
+}
 function setStripMode(mode) {
   if (stripModeRaw.value === mode) return;
   stripModeRaw.value = mode;
@@ -11242,9 +11315,9 @@ function bmStripOnScroll() {
 }
 // Vycentrovat aktivní záložku v liště; na krajích se posun zastaví o doraz.
 // false = není co centrovat (vše se vejde / .on ještě v DOM není / bez layoutu).
-function bmCenterActive(strip, smooth) {
+function bmCenterActive(strip, smooth, sel = '.bookmark-btn.on') {
   if (!strip || !strip.isConnected) return false;
-  const el = strip.querySelector('.bookmark-btn.on');
+  const el = strip.querySelector(sel);
   if (!el) return false;
   const max = strip.scrollWidth - strip.clientWidth;
   if (max <= 0) return false;
@@ -11288,6 +11361,18 @@ watch(stripActiveId, async (id) => {
   if (!strip) { _bmCenterOnShow = true; return; }
   if (bmCenterActive(strip, true)) _bmCenterOnShow = false;
   else _bmCenterOnShow = true;
+});
+
+// Otevřená skupina značek se posouvá podle toho, kde v notách stojíš — po
+// přechodu do jiné záložky se lišta změní (jiná skupina se rozbalí), takže se
+// musí znovu vycentrovat. Cíl je tlačítko záložky, ne značka (značka uvnitř
+// může být až za okrajem).
+watch(mkStripOpenKey, async (key) => {
+  if (!key || stripMode.value !== 'mk') return;
+  await nextTick();
+  const strip = bmStripEl.value;
+  if (!strip) { _bmCenterOnShow = true; return; }
+  requestAnimationFrame(() => bmCenterActive(strip, true, '.strip-group.on'));
 });
 
 // --- Listování podle záložek (koncertní pořadí) ---
@@ -12066,6 +12151,31 @@ async function deleteBookmark(b) {
 .strip-switch-btn:active { background: rgba(51,46,43,0.8); }
 .strip-switch-btn.on:active { background: var(--accent); }
 .strip-switch-btn svg { display: block; }
+/* Rozbalovací tlačítko záložky v liště značek — jiný tvar než značka, aby se
+   nepletlo: jméno záložky, šipka a počet značek. Otevřená (aktuální) záložka
+   má akcentní obrys; ostatní jsou ztlumené. Ploché, bez hoveru. */
+.strip-group {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+  height: 30px; padding: 0 9px;
+  background: rgba(20,18,16,0.72); border: 1px solid rgba(58,53,50,0.7);
+  border-radius: 12px; color: var(--text-dim);
+  font-size: 0.78rem; font-weight: 600;
+  cursor: pointer; touch-action: manipulation; pointer-events: auto;
+}
+.strip-group.on {
+  border-color: var(--accent); color: var(--text);
+  background: rgba(38,34,32,0.85);
+}
+.strip-group:active { background: rgba(51,46,43,0.9); }
+.strip-group-caret { font-size: 0.7rem; opacity: 0.9; }
+.strip-group-name { max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strip-group-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 3px; border-radius: 8px;
+  background: rgba(255,255,255,0.12); color: var(--text-dim);
+  font-size: 0.68rem; font-weight: 700;
+}
+.strip-group.on .strip-group-n { background: var(--accent); color: #17130f; }
 .bookmark-strip {
   /* Uvnitř .bottom-strip: roste do šířky a sám se posouvá; přepínač zůstává
      na místě (jinak by u dlouhého seznamu odscrolloval z dosahu). */
