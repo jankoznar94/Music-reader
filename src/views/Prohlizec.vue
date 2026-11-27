@@ -434,6 +434,14 @@
          Je to viewport-ový overlay pod lištou, takže kryje celou čtecí plochu
          bez ohledu na to, jak je papír zrovna transformovaný. -->
     <div class="sheet-backdrop" aria-hidden="true" />
+    <!-- POČÍTADLO STRÁNEK I SE SCHOVANOU LIŠTOU (Jan, 27. 11. 2026): malý
+         ukazatel nahoře uprostřed, aby uživatel věděl, kde v notách je, i když
+         čte naplno. Ťuknutí otevře stejné zadání stránky jako počítadlo v liště. -->
+    <button v-if="barHidden && !pie.open && !gm.open" class="tb-page-float"
+            @click.stop="openPageGo" title="Přejít na stránku">
+      {{ withOffset(dispPage(currentPage)) }} / {{ withOffset(totalPages) }}
+    </button>
+
     <!-- Pruhy u okrajů = místo, kde se listuje PRSTEM (jen při čtení).
          Vizuální pomůcka, nedrží dotyk — ten dojde až na .viewer.
          Šířku drží --edge-w, aby vizuál odpovídal přesně tomu, kde listování
@@ -11391,6 +11399,25 @@ async function deleteBookmark(b) {
   .tb-page { padding: 3px 6px; font-size: 0.74rem; }
   .tb-btn.zoom-btn { padding: 0 3px; min-width: calc(var(--tb, 38px) + 0px); }
 }
+/* Počítadlo stránek viditelné i při SCHOVANÉ liště — malý plochý štítek nahoře
+   uprostřed, ať uživatel ví, kde v notách je, i když čte naplno (Jan, 27. 11.
+   2026). Ať zabírá co nejméně místa: 11,5 px, bez stínu a bez efektů, jen
+   tlumený obrys. */
+.tb-page-float {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  top: calc(4px + env(safe-area-inset-top, 0px));
+  z-index: 44;
+  padding: 1px 8px; border-radius: 11px;
+  background: rgba(20, 18, 16, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text-dim); font: inherit;
+  font-size: 11.5px; font-weight: 700; line-height: 1.55;
+  letter-spacing: 0.02em;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  box-shadow: none;
+}
+.tb-page-float:active { background: rgba(40, 36, 32, 0.9); color: var(--text); }
+
 /* Počítadlo stránek — klik otevře ruční zadání stránky */
 .tb-page {
   flex: 0 0 auto; background: transparent; border: 1px solid var(--border);
