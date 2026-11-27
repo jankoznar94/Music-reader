@@ -41,7 +41,15 @@ export async function applyUpdate() {
   // Než appku restartujeme, poznamenáme si, že po startu má prohlížeč skočit
   // na stránku, kde uživatel byl (Jan, 27. 11. 2026). Pozici stránky si
   // Prohlizec ukládá průběžně (localStorage `noty.lastPos`).
-  try { localStorage.setItem('noty.restoreAfterUpdate', String(Date.now())); } catch (e) { /* nic */ }
+  // Kopírujeme ji ale ZVLÁŠŤ (`noty.updatePos`): při startu appky se `lastPos`
+  // přepíše první vykreslenou stránkou dřív, než se stihne obnovit, a návrat
+  // skončil vždy na jedničce (Jan, 27. 11. 2026). `updatePos` je zamrzlá pozice
+  // v okamžiku ťuknutí na Aktualizovat.
+  try {
+    localStorage.setItem('noty.restoreAfterUpdate', String(Date.now()));
+    const pos = localStorage.getItem('noty.lastPos');
+    if (pos) localStorage.setItem('noty.updatePos', pos);
+  } catch (e) { /* nic */ }
   try {
     if ('caches' in window) {
       const keys = await caches.keys();

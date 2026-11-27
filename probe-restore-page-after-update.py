@@ -40,8 +40,9 @@ async def main():
         pos = await h.ev("localStorage.getItem('noty.lastPos')")
         ok("pozice se ukládá", pos is not None and json.loads(pos)["page"] == 2, pos)
 
-        # 3) simulace tlačítka „Aktualizovat“ (značka + reload)
-        await h.ev("localStorage.setItem('noty.restoreAfterUpdate', String(Date.now()))")
+        # 3) simulace tlačítka „Aktualizovat“ (značka + zamrzlá pozice + reload)
+        await h.ev("localStorage.setItem('noty.restoreAfterUpdate', String(Date.now()));"
+                   "localStorage.setItem('noty.updatePos', localStorage.getItem('noty.lastPos'))")
         await h.ev("location.reload()")
         await h.wait_for("!!document.querySelector('.tb-page')", 40, "reload")
         await asyncio.sleep(1.2)
@@ -50,10 +51,17 @@ async def main():
         counter = await h.ev("(() => { const e = document.querySelector('.tb-page');"
                              " return e ? e.textContent.replace(/\\s+/g, ' ').trim() : null })()")
         ok("počítadlo ukazuje 3 / 6", counter and counter.startswith("3 / 6"), counter)
-        ok("značka se spotřebovala",
-           await h.ev("localStorage.getItem('noty.restoreAfterUpdate')") is None, None)
+        # Značka se NEMAŽE hned — jinak by druhý start těsně po aktualizaci
+        # (service worker, pád) spadl na jedničku. Maže ji až listování.
+        ok("značka zůstává pro případ druhého startu",
+           await h.ev("localStorage.getItem('noty.restoreAfterUpdate')") is not None,
+           await h.ev("localStorage.getItem('noty.restoreAfterUpdate')"))
 
-        # 4) druhý reload BEZ značky = zase 1. stránka
+        # 4) listování uživatele značku smaže → další start = 1. stránka
+        await h.ev("window.__barDev.nextPage()")
+        await asyncio.sleep(0.8)
+        ok("listování značku smazalo",
+           await h.ev("localStorage.getItem('noty.restoreAfterUpdate')") is None, None)
         await h.ev("location.reload()")
         await h.wait_for("!!document.querySelector('.tb-page')", 40, "reload2")
         await asyncio.sleep(1.0)

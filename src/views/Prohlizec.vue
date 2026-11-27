@@ -5506,6 +5506,11 @@ function pathD(it) {
 
 // --- Načtení ---
 onMounted(async () => {
+  // Pozici pro návrat po aktualizaci si přečti HNED na začátku — níž se čeká
+  // na PDF a každá změna aktuální stránky by `noty.lastPos` přepsala dřív, než
+  // se stihne obnovit (Jan, 27. 11. 2026: „vrací se vždy na první stránku“).
+  const bootPosRaw = readLocal(POS_KEY);
+  const bootFlagRaw = readLocal(UPDATE_KEY);
   // DIAG (jen dev): zvenčí se dostat k renderu stránky a detekci čar, aby šla
   // změřit skutečná geometrie skenu bez hádání. V produkci se nepřidává.
   if (import.meta.env.DEV) {
@@ -5609,7 +5614,7 @@ onMounted(async () => {
   // 2026). Tlačítko „Aktualizovat“ si před reloadem nechá v localStorage
   // značku; tady se spotřebuje. Bez značky se skladba otvírá jako dřív na
   // první stránce.
-  restoreAfterUpdate();
+  restoreAfterUpdate(bootPosRaw, bootFlagRaw);
   window.addEventListener('resize', onResize);
   // Udržet displej zapnutý, dokud je prohlížeč otevřený (jako jiné appky)
   setupWakeLock();
@@ -5633,29 +5638,51 @@ function measureBar() {
 // obnovuje sama — jinak se skladba otvírá na první stránce jako dřív.
 const POS_KEY = 'noty.lastPos';
 const UPDATE_KEY = 'noty.restoreAfterUpdate';
+const UPD_POS_KEY = 'noty.updatePos';   // pozice zamrzlá při ťuknutí na Aktualizovat
+const readLocal = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const dropLocal = (k) => { try { localStorage.removeItem(k); } catch (e) { /* nic */ } };
+// Během obnovování se stránka mění „sama“ — taková změna není nová pozice
+// uživatele a nesmí smazat značku pro návrat.
+let _posRestoring = false;
 function rememberPosition() {
+  if (_posRestoring) return;
   try {
     localStorage.setItem(POS_KEY, JSON.stringify({ id: song.id, page: currentPage.value, t: Date.now() }));
   } catch (e) { /* soukromý režim */ }
 }
-function restoreAfterUpdate() {
-  let flag = 0;
-  try { flag = Number(localStorage.getItem(UPDATE_KEY) || 0); } catch (e) { return; }
+// `bootPosRaw` / `bootFlagRaw` = hodnoty přečtené na ZAČÁTKU mountu (viz
+// onMounted): při startu se `lastPos` přepíše první vykreslenou stránkou dřív,
+// než se PDF načte, a obnovení pak skončilo vždy na jedničce.
+function restoreAfterUpdate(bootPosRaw, bootFlagRaw) {
+  const flag = Number(bootFlagRaw || 0);
   if (!flag) return;
   if (Date.now() - flag > 5 * 60 * 1000) {   // stará značka (appka mezitím jinde)
-    try { localStorage.removeItem(UPDATE_KEY); } catch (e) { /* nic */ }
+    dropLocal(UPDATE_KEY); dropLocal(UPD_POS_KEY);
     return;
   }
+  // Přednost má pozice zamrzlá při ťuknutí na Aktualizovat; záloha je snímek
+  // `lastPos` z prvního okamžiku startu (starší data, kde `updatePos` nebylo).
   let pos = null;
-  try { pos = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) { pos = null; }
-  try { localStorage.removeItem(UPDATE_KEY); } catch (e) { /* nic */ }
-  if (!pos || pos.id !== song.id) return;
+  try { pos = JSON.parse(readLocal(UPD_POS_KEY) || 'null'); } catch (e) { pos = null; }
+  if (!pos) { try { pos = JSON.parse(bootPosRaw || 'null'); } catch (e) { pos = null; } }
+  if (!pos || pos.id !== song.id) { dropLocal(UPDATE_KEY); dropLocal(UPD_POS_KEY); return; }
   const page = Number(pos.page);
   if (!Number.isInteger(page) || page < 0 || page >= rawPageCount.value) return;
   if (page === currentPage.value) return;
+  _posRestoring = true;
   gotoPage(page, true);
+  nextTick(() => {
+    _posRestoring = false;
+    rememberPosition();   // ať `lastPos` nezůstane na předstartovní hodnotě
+  });
 }
-watch(currentPage, rememberPosition);
+// Značku maže až SKUTEČNÉ listování uživatele. Kdyby se smazala hned při
+// obnovení, druhý start těsně po aktualizaci (service worker, pád, ruční
+// reload) by skončil na jedničce.
+watch(currentPage, () => {
+  rememberPosition();
+  if (!_posRestoring) { dropLocal(UPDATE_KEY); dropLocal(UPD_POS_KEY); }
+});
 
 onUnmounted(() => {
   panelDragEnd();          // nedokončené tažení panelu nesmí nechat viset listenery
