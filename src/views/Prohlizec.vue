@@ -152,6 +152,14 @@
       </div>
     </div>
 
+    <!-- UNIVERZÁLNÍ ZAVÍRACÍ KŘÍŽEK (Jan, listopad 2026): jedno tlačítko
+         v pravém dolním rohu zavře to, co je právě otevřené — nejdřív okno
+         (panely, výběr čísla, umisťování značky/skoku), a když žádné není,
+         ukončí anotační režim. Dřív šel režim vypnout jen dalším ťuknutím
+         na ✏️ a okna zavíralo jen klepnutí mimo ně. -->
+    <button v-if="overlayCloseVisible" class="overlay-close" @click.stop="closeTopOverlay"
+            title="Zavřít">✕</button>
+
     <!-- KRUHOVÝ VÝBĚR VOLEB NÁSTROJE — uprostřed je tlačítko s fajfkou.
          Jeden parametr = koláč kolem fajfky; víc parametrů = SAMOSTATNÉ koláče
          kolem fajfky, každý se svou vybranou hodnotou ve středu. -->
@@ -7833,6 +7841,46 @@ function pieTapSector(pi, i) {
 
 function pieCancel() { pieClose(); }
 
+// Viditelnost univerzálního zavíracího křížku: ukáže se, kdykoli je otevřený
+// anotační režim nebo nějaké okno. Během koláče a nabídky nástrojů ne —
+// ty mají vlastní ťuknutí mimo / fajfku.
+const overlayCloseVisible = computed(() => {
+  if (pie.open || gm.open) return false;
+  return !!(annotMode.value || zoomPanelOpen.value || prefsPanelOpen.value ||
+    pagesPanelOpen.value || pagesListOpen.value || rotPanelOpen.value ||
+    sharePanelOpen.value || sliderOpen.value || mkPanelOpen.value ||
+    jumpMode.value || bookmarkMode.value || barnumMode.value ||
+    mkPickMode.value || jumpPlaceMode.value || jumpTargetMode.value);
+});
+
+// Zavře NEJVRCHNĚJŠÍ otevřenou věc: probíhající výběr/umístění → okno → a když
+// už nic otevřeného není, ukončí anotační režim (Jan, listopad 2026).
+function closeTopOverlay() {
+  if (mkPickMode.value) { cancelMarkPick(); return; }
+  if (jumpPlaceMode.value || jumpTargetMode.value) {
+    jumpPlaceMode.value = false; jumpTargetMode.value = false;
+    jumpPlace.value = null; jumpToMark.value = null;
+    showPlaceHint();
+    return;
+  }
+  if (barPickChoice.value) { barPickChoice.value = null; return; }
+  const anyPanel = zoomPanelOpen.value || prefsPanelOpen.value || pagesPanelOpen.value ||
+    rotPanelOpen.value || sharePanelOpen.value || sliderOpen.value ||
+    mkPanelOpen.value || jumpMode.value || bookmarkMode.value || barnumMode.value;
+  if (anyPanel) {
+    zoomPanelOpen.value = false; prefsPanelOpen.value = false;
+    pagesPanelOpen.value = false; pagesListOpen.value = false;
+    rotPanelOpen.value = false; sharePanelOpen.value = false;
+    sliderOpen.value = false; mkPanelOpen.value = false;
+    jumpMode.value = false; bookmarkMode.value = false;
+    barnumMode.value = false;
+    return;
+  }
+  annotMode.value = false;
+  endEdit();
+  showTopBar();
+}
+
 function pieClose() {
   if (!pie.open) return;
   pie.closing = true;
@@ -12849,6 +12897,23 @@ async function deleteBookmark(b) {
 .pie-check-in { fill: #17130f; stroke: #e7e2dc; stroke-width: 2; }
 /* Žádný hover ani tady — stav se mění až potvrzením (Jan, listopad 2026). */
 .pie-check { fill: none; stroke: #e7e2dc; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Univerzální zavírací křížek — v pravém dolním rohu, vždy na stejném místě.
+   Plochý tmavý kruh s bílým obrysem (stejná řeč jako terč uprostřed koláčů),
+   žádný hover; stav se ukáže jen při stisku. */
+.overlay-close {
+  position: fixed; right: 12px;
+  bottom: calc(58px + env(safe-area-inset-bottom, 0px));
+  z-index: 50;
+  width: 46px; height: 46px; padding: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #17130f; color: #e7e2dc;
+  border: 2px solid rgba(231, 226, 220, 0.85);
+  font-size: 18px; font-weight: 700; line-height: 1;
+  box-shadow: none;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.overlay-close:active { background: #221d19; }
 @keyframes pieIn {
   from { opacity: 0; transform: scale(0.9); }
   to   { opacity: 1; transform: scale(1); }
