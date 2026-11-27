@@ -7423,6 +7423,11 @@ function onGroupDown(e, key) {
     window.setTimeout(() => { if (!gm.open) openGroupPanel(key, el); }, 220);
     return;
   }
+  // Okno skupiny je otevřené, ale lišta ne (otevřelo se z lišty) → ťuknutí na
+  // tlačítko skupiny zavře VŠE. Dřív se v tuhle chvíli nabídka znovu otevřela,
+  // takže druhé ťuknutí neudělalo nic viditelného a „zavřít" šlo až na potřetí
+  // (Jan, 27. 11. 2026: „další kliknutí naopak znovu otevře zoom menu").
+  if (groupPanelsOpen(key)) { closeGroupPanels(key); return; }
   openGroupPanel(key, el);
 }
 
