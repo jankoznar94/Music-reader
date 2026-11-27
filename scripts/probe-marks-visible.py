@@ -116,7 +116,7 @@ async def main():
           s0["pageMarks"] == 0 and not s0["drawn"], str(s0))
 
         # 2) otevřené okno Značek = všechny značky stránky VIDĚT (i s vypnutým přepínačem)
-        await h.ev("document.querySelector('.tb-mark').click()")
+        await h.ev("window.__barDev.openMarks()")  # tlačítko A je dnes v nabídce skupiny
         await h.wait_for("!!document.querySelector('.marks-panel')", 10, "panel")
         await asyncio.sleep(0.4)
         s1 = await h.ev(STATE)
@@ -147,7 +147,7 @@ async def main():
           s4["pageMarks"] == 2 and sorted(set(s4["drawn"])) == ["A", "B"], str(s4))
 
         # 5) zpět na index → po zavření okna zase neviditelné
-        await h.ev("document.querySelector('.tb-mark').click()")
+        await h.ev("window.__barDev.openMarks()")  # tlačítko A je dnes v nabídce skupiny
         await h.wait_for("!!document.querySelector('.marks-panel')", 10, "panel 2")
         await asyncio.sleep(0.4)
         await tap_visible(h)

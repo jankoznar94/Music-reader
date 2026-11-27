@@ -5388,7 +5388,7 @@ const pageItems = computed(() => annotations.value.items.filter(i =>
   // zrovna upravuješ (editingId) — dřív se v Ruce kreslily VŠECHNY a značky pak
   // zůstaly viset v notách i po zavření okna, i když bylo nastaveno „jen index“
   // (Jan, 27. 11. 2026).
-  && (!i.mk || mkVisible.value || mkPanelOpen.value
+  && (!i.mk || mkVisible.value || mkPanelOpen.value || mkPickMode.value
       || (tool.value === 'edit' && editingId.value === i.id))
   // V režimu ČÍSLOVÁNÍ musí být skrytá čísla VIDĚT (jako u nástroje Ruka):
   // jinak uživatel nepozná, co už očísloval a co ne (Jan, Nov 2026).
@@ -8041,7 +8041,7 @@ const overlayCloseVisible = computed(() => {
 // už nic otevřeného není, ukončí anotační režim (Jan, listopad 2026).
 function closeTopOverlay() {
   if (gm.open) { gmClose(); return; }
-  if (mkPickMode.value) { cancelMarkPick(); return; }
+  if (mkPickMode.value) { cancelMarkPick(); showMarksPanelAfterPick(); return; }
   if (jumpPlaceMode.value || jumpTargetMode.value) {
     jumpPlaceMode.value = false; jumpTargetMode.value = false;
     jumpPlace.value = null; jumpToMark.value = null;
@@ -10657,6 +10657,7 @@ function openMarks() {
   pagesPanelOpen.value = false; pagesListOpen.value = false;
   sliderOpen.value = false; sharePanelOpen.value = false;
   endEdit();
+  _mkPanelHiddenForPick = false;
   cancelMarkPick();
   cancelMarkInsert();
   cancelMarkEdit();
@@ -10665,14 +10666,52 @@ async function closeMarks() {
   // Rozepsané přejmenování se při zavření uloží (zavření panelu = potvrzení),
   // stejně jako u záložek.
   if (mkEditingId.value) await commitMarkEdit();
+  _mkPanelHiddenForPick = false;   // zavíráme schválně → nesmí se vrátit
   mkPanelOpen.value = false;
   cancelMarkPick();
   cancelMarkInsert();
 }
+// Okno Značek při výběru místa PŘEKÁŽÍ (přes noty se pak nedá trefit, kam
+// značka patří) — Jan, 27. 11. 2026: „po kliknutí na Přidat značku by mělo
+// zmizet okno se značkami, po vložení se může zase zobrazit“. Skrytí si
+// pamatujeme, aby se po ťuknutí do not okno vrátilo i s polem pro text.
+let _mkPanelHiddenForPick = false;
+function hideMarksPanelForPick() {
+  _mkPanelHiddenForPick = mkPanelOpen.value;
+  if (_mkPanelHiddenForPick) mkPanelOpen.value = false;
+}
+function showMarksPanelAfterPick() {
+  const was = _mkPanelHiddenForPick;
+  _mkPanelHiddenForPick = false;
+  if (was) mkPanelOpen.value = true;
+}
+// HORNÍ LIŠTA při vkládání také překáží (Jan, 27. 11. 2026: „a stejně tak by
+// měla zmizet i horní lišta. Při každém vkládání.“) — na dobu, kdy appka čeká
+// na ťuknutí do not, ji schováme a hned po ťuknutí (nebo zrušení) vrátíme.
+// Kdo ji měl schovanou sám, tomu ji nevracíme. Řídí se to STAVEM režimů, takže
+// pokrývá i všechny cesty zrušení (✕, jiný nástroj, zavření panelu).
+let _barHiddenForPick = false;
+function hideTopBarForPick() {
+  if (barHidden.value) return;          // uživatel ji má schovanou sám
+  _barHiddenForPick = true;
+  barHidden.value = true;
+  try { localStorage.setItem('topbarHidden', '1'); } catch (e) { /* nic */ }
+}
+function showTopBarAfterPick() {
+  if (!_barHiddenForPick) return;
+  _barHiddenForPick = false;
+  barHidden.value = false;
+  try { localStorage.setItem('topbarHidden', '0'); } catch (e) { /* nic */ }
+}
+watch([mkPickMode, jumpPlaceMode, jumpTargetMode], (now) => {
+  if (now.some(Boolean)) hideTopBarForPick();
+  else showTopBarAfterPick();
+});
 function startMarkPick() {
-  if (mkPickMode.value) { cancelMarkPick(); return; }
+  if (mkPickMode.value) { cancelMarkPick(); showMarksPanelAfterPick(); return; }
   mkPickMode.value = true;
   mkInsertAt.value = null;
+  hideMarksPanelForPick();
   // Vrstva musí ťuknutí přijmout, ale BEZ anotačního módu (Jan: „při vkládání
   // značky se zapíná anotační mód, to bych nedělal“). `.annot-layer` dostane
   // `active` (pointer-events: auto) přímo přes mkPickMode — viz :class výše.
@@ -10693,6 +10732,8 @@ function pickMarkAt(p) {
   mkInsertAt.value = { page: currentPage.value, x: Math.round(p.x), y: Math.round(p.y) };
   mkPickMode.value = false;
   mkLabel.value = '';
+  // Okno Značek se vrací — v něm je pole „Co je v notách?“ i tlačítko Uložit.
+  showMarksPanelAfterPick();
   showToast('Opis, co v notách stojí, a ulož', 4000);
   nextTick(() => { const el = mkInputEl.value; if (el) { el.focus(); el.select(); } });
 }

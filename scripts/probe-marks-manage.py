@@ -113,7 +113,7 @@ ROWBOX = r"""
 })(%s)
 """
 
-OPEN_MARKS = "(() => { document.querySelector('.tb-mark').click(); return 1; })()"
+OPEN_MARKS = "(() => { window.__barDev.openMarks(); return 1; })()"  # tlačítko A je dnes v nabídce skupiny
 OPEN_BOOKMARKS = ("(() => { const b = [...document.querySelectorAll('.tb-btn')]"
                   ".find(x => (x.title || '').startsWith('Přidat záložku')); b && b.click(); return !!b; })()")
 CLOSE_PANELS = ("(() => { document.querySelectorAll('.jump-panel .jp-close').forEach(b => b.click()); return 1; })()")

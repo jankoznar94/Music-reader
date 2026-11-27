@@ -78,7 +78,7 @@ async def main():
         await h.open_song(pdf, reset=RESET_DB)
         await asyncio.sleep(1.0)
 
-        await h.ev("document.querySelector('.tb-mark').click()")
+        await h.ev("window.__barDev.openMarks()")  # tlačítko A je dnes v nabídce skupiny
         await h.wait_for("!!document.querySelector('.marks-panel')", 8, "panel Značky")
         s0 = await st(h)
         ok("tlačítko A otevře panel Značky", s0["open"] is True, str(s0))
@@ -120,7 +120,7 @@ async def main():
         await asyncio.sleep(0.6)
         vis_closed = await h.ev("(() => window.__barDev.pageItems.value.filter(i => i && i.mk).length)()")
         ok("se zavřeným oknem jsou zase neviditelný index", vis_closed == 0, str(vis_closed))
-        await h.ev("document.querySelector('.tb-mark').click()")
+        await h.ev("window.__barDev.openMarks()")  # tlačítko A je dnes v nabídce skupiny
         await h.wait_for("!!document.querySelector('.marks-panel')", 8, "panel znovu")
         await asyncio.sleep(0.4)
 
@@ -178,7 +178,7 @@ async def main():
         await asyncio.sleep(0.6)
         # záložky zavřely panel Značky → otevřít znovu
         if not (await st(h)).get("open"):
-            await h.ev("document.querySelector('.tb-mark').click()")
+            await h.ev("window.__barDev.openMarks()")  # tlačítko A je dnes v nabídce skupiny
             await asyncio.sleep(0.5)
         s2 = await st(h)
         print("v části 1:", s2)
