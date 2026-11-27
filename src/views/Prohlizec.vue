@@ -5530,6 +5530,11 @@ onMounted(async () => {
   // Přepočet anotací do soustavy, ve které se právě kreslí (viz rebaseAnnotationRef)
   await rebaseAnnotationRef();
   loading.value = false; // první stránka vykreslena → skrýt loading
+  // Po AKTUALIZACI appky se vrátíme na stránku, kde uživatel byl (Jan, 27. 11.
+  // 2026). Tlačítko „Aktualizovat“ si před reloadem nechá v localStorage
+  // značku; tady se spotřebuje. Bez značky se skladba otvírá jako dřív na
+  // první stránce.
+  restoreAfterUpdate();
   window.addEventListener('resize', onResize);
   // Udržet displej zapnutý, dokud je prohlížeč otevřený (jako jiné appky)
   setupWakeLock();
@@ -5546,6 +5551,36 @@ function measureBar() {
   const b = barEl.value;
   if (b) topBarH.value = Math.round(b.getBoundingClientRect().height);
 }
+
+// --- Návrat na stejnou stránku po aktualizaci -------------------------------
+// Kde uživatel v notách byl, si pamatujeme v localStorage (id skladby + index
+// stránky). Restart appky kvůli aktualizaci je jediná situace, kdy se pozice
+// obnovuje sama — jinak se skladba otvírá na první stránce jako dřív.
+const POS_KEY = 'noty.lastPos';
+const UPDATE_KEY = 'noty.restoreAfterUpdate';
+function rememberPosition() {
+  try {
+    localStorage.setItem(POS_KEY, JSON.stringify({ id: song.id, page: currentPage.value, t: Date.now() }));
+  } catch (e) { /* soukromý režim */ }
+}
+function restoreAfterUpdate() {
+  let flag = 0;
+  try { flag = Number(localStorage.getItem(UPDATE_KEY) || 0); } catch (e) { return; }
+  if (!flag) return;
+  if (Date.now() - flag > 5 * 60 * 1000) {   // stará značka (appka mezitím jinde)
+    try { localStorage.removeItem(UPDATE_KEY); } catch (e) { /* nic */ }
+    return;
+  }
+  let pos = null;
+  try { pos = JSON.parse(localStorage.getItem(POS_KEY) || 'null'); } catch (e) { pos = null; }
+  try { localStorage.removeItem(UPDATE_KEY); } catch (e) { /* nic */ }
+  if (!pos || pos.id !== song.id) return;
+  const page = Number(pos.page);
+  if (!Number.isInteger(page) || page < 0 || page >= rawPageCount.value) return;
+  if (page === currentPage.value) return;
+  gotoPage(page, true);
+}
+watch(currentPage, rememberPosition);
 
 onUnmounted(() => {
   panelDragEnd();          // nedokončené tažení panelu nesmí nechat viset listenery

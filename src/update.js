@@ -38,6 +38,10 @@ export async function checkForUpdate() {
 /** Tlačítko „Aktualizovat“: zahodí cache i SW a načte appku znovu. */
 export async function applyUpdate() {
   updateAvailable.value = false;
+  // Než appku restartujeme, poznamenáme si, že po startu má prohlížeč skočit
+  // na stránku, kde uživatel byl (Jan, 27. 11. 2026). Pozici stránky si
+  // Prohlizec ukládá průběžně (localStorage `noty.lastPos`).
+  try { localStorage.setItem('noty.restoreAfterUpdate', String(Date.now())); } catch (e) { /* nic */ }
   try {
     if ('caches' in window) {
       const keys = await caches.keys();
