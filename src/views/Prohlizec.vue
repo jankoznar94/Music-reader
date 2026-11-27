@@ -158,7 +158,8 @@
          ukončí anotační režim. Dřív šel režim vypnout jen dalším ťuknutím
          na ✏️ a okna zavíralo jen klepnutí mimo ně. -->
     <button v-if="overlayCloseVisible" class="overlay-close" @click.stop="closeTopOverlay"
-            title="Zavřít">✕</button>
+            @pointerdown.stop @pointerup.stop @touchstart.stop="noopTouch"
+            @touchend.stop="noopTouch" title="Zavřít">✕</button>
 
     <!-- KRUHOVÝ VÝBĚR VOLEB NÁSTROJE — uprostřed je tlačítko s fajfkou.
          Jeden parametr = koláč kolem fajfky; víc parametrů = SAMOSTATNÉ koláče
@@ -7300,17 +7301,34 @@ function gmOpen(mode = 'tools', items = [], el = annotBtnEl.value, groupKey = ''
 // jen lištu nechá otevřenou — teprve klepnutí na kolečko otevře okno.
 function onGroupDown(e, key) {
   const el = e.currentTarget;
-  // Druhé ťuknutí na TOTÉŽ tlačítko lištu ZAVŘE (Jan, listopad 2026: „nabídka
-  // pro zoom nejde vypnout opětovným kliknutím“). Jiná skupina ji přepne.
+  // Druhé ťuknutí na TOTÉŽ tlačítko lištu ZAVŘE — a spolu s ní i OKNA, která
+  // k té skupině patří (zoom / rotace / vycentrování), ne jen svislou lištu
+  // (Jan, listopad 2026). Jiná skupina ji přepne.
   if (gm.open) {
     const same = gm.mode === 'panel' && gm.groupKey === key;
     gmClose();
-    if (same) return;
+    if (same) { closeGroupPanels(key); return; }
     window.setTimeout(() => { if (!gm.open) openGroupPanel(key, el); }, 220);
     return;
   }
   openGroupPanel(key, el);
 }
+
+// Která okna patří ke které skupině hlavní lišty — zavírají se s ní.
+function closeGroupPanels(key) {
+  if (key === 'view') {
+    zoomPanelOpen.value = false; rotPanelOpen.value = false; prefsPanelOpen.value = false;
+  } else if (key === 'navig') {
+    bookmarkMode.value = false; mkPanelOpen.value = false;
+    jumpMode.value = false; barnumMode.value = false;
+  }
+}
+function groupPanelsOpen(key) {
+  if (key === 'view') return zoomPanelOpen.value || rotPanelOpen.value || prefsPanelOpen.value;
+  if (key === 'navig') return bookmarkMode.value || mkPanelOpen.value || jumpMode.value || barnumMode.value;
+  return false;
+}
+
 function openGroupPanel(key, el) {
   const items = gmGroupItems(key);
   if (!items.length) return;
@@ -11485,7 +11503,7 @@ async function deleteBookmark(b) {
 /* Hláška o uložení — plochá, teplá, bez glow (Jan: mobilní PWA, žádné efekty).
    Sedí dole nad lištou záložek, aby nepřekážela v čtení not. */
 .viewer-toast {
-  position: fixed; left: 50%; bottom: calc(48px + var(--sab));
+  position: fixed; left: 50%; bottom: calc(112px + var(--sab));
   transform: translateX(-50%);
   z-index: 34;
   background: var(--bg-elev2);
@@ -12913,13 +12931,14 @@ async function deleteBookmark(b) {
 /* Žádný hover ani tady — stav se mění až potvrzením (Jan, listopad 2026). */
 .pie-check { fill: none; stroke: #e7e2dc; stroke-linecap: round; stroke-linejoin: round; }
 
-/* Univerzální zavírací křížek — v pravém dolním rohu, vždy na stejném místě.
+/* Univerzální zavírací křížek — UPROSTŘED dole, mezi šipkami listování
+   (vpravo dole se překrýval s tlačítkem „Další stránka“, Jan listopad 2026).
    Plochý tmavý kruh s bílým obrysem (stejná řeč jako terč uprostřed koláčů),
    žádný hover; stav se ukáže jen při stisku. */
 .overlay-close {
-  position: fixed; right: 12px;
-  bottom: calc(58px + env(safe-area-inset-bottom, 0px));
-  z-index: 50;
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(56px + var(--sab, env(safe-area-inset-bottom, 0px)));
+  z-index: 70;
   width: 46px; height: 46px; padding: 0; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   background: #17130f; color: #e7e2dc;

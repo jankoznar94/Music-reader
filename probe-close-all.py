@@ -48,17 +48,22 @@ async def close_menu(h):
 
 async def pick_group(h, btn_title, item_word):
     """Otevře skupinu v hlavní liště a vybere v ní položku podle slova."""
-    await close_menu(h)
-    b = await rect(h, ".tb-btn[title^='%s']" % btn_title)
-    await h.finger_tap(b["x"], b["y"])
-    await asyncio.sleep(0.7)
-    items = await h.ev("[...document.querySelectorAll('.gm-item')].map(e => e.getAttribute('title') || '')")
-    idx = next((i for i, t in enumerate(items) if item_word.lower() in t.lower()), -1)
-    if idx < 0:
-        raise RuntimeError("položka %r není v %r: %r" % (item_word, btn_title, items))
-    it = await rect(h, ".gm-item", idx)
-    await h.finger_tap(it["x"], it["y"])
-    await asyncio.sleep(0.9)
+    last = None
+    for attempt in range(3):
+        await close_menu(h)
+        await asyncio.sleep(0.35)
+        b = await rect(h, ".tb-btn[title^='%s']" % btn_title)
+        await h.finger_tap(b["x"], b["y"])
+        await asyncio.sleep(0.75)
+        items = await h.ev("[...document.querySelectorAll('.gm-item')].map(e => e.getAttribute('title') || '')")
+        idx = next((i for i, t in enumerate(items) if item_word.lower() in t.lower()), -1)
+        if idx >= 0:
+            it = await rect(h, ".gm-item", idx)
+            await h.finger_tap(it["x"], it["y"])
+            await asyncio.sleep(0.9)
+            return
+        last = items
+    raise RuntimeError("položka %r není v %r: %r" % (item_word, btn_title, last))
 
 
 async def main():
@@ -104,14 +109,33 @@ async def main():
                await h.ev("document.querySelectorAll('.gm-item').length") == 0, None)
         await shot(h, "/tmp/close-menu.png")
 
+        # --- 1b) druhé ťuknutí na skupinu zavře i okna skupiny --------------
+        await pick_group(h, "Zobrazení", "Zvětšení")
+        s = await st(h)
+        ok("okno Zvětšení je zase otevřené", s["zoom"], s)
+        await h.finger_tap(zbtn["x"], zbtn["y"])       # 1. ťuk: otevře nabídku
+        await asyncio.sleep(0.7)
+        ok("nabídka skupiny se otevřela", await h.ev("document.querySelectorAll('.gm-item').length") > 0, None)
+        await h.finger_tap(zbtn["x"], zbtn["y"])       # 2. ťuk: zavře nabídku I okno
+        await asyncio.sleep(0.8)
+        s = await st(h)
+        ok("druhé ťuknutí zavřelo nabídku", await h.ev("document.querySelectorAll('.gm-item').length") == 0, None)
+        ok("druhé ťuknutí zavřelo i okno Zvětšení (ne jen lištu)", not s["zoom"], s)
+        ok("po zavření zmizel i křížek", await rect(h, ".overlay-close") is None, None)
+
         # --- 1) okno Zvětšení: křížek ho zavře ----------------------------
         await pick_group(h, "Zobrazení", "Zvětšení")
         s = await st(h)
         ok("okno Zvětšení je otevřené", s["zoom"], s)
         btn = await rect(h, ".overlay-close")
         ok("křížek je u otevřeného okna", btn is not None, btn)
-        ok("křížek je v pravém dolním rohu",
-           btn and btn["r"] > VW - 30 and btn["b"] > VH - 120, btn)
+        ok("křížek je vodorovně UPROSTŘED",
+           btn and abs((btn["l"] + btn["r"]) / 2 - VW / 2) < 2, btn)
+        nav_r = await h.ev("(() => { const b=[...document.querySelectorAll('.annot-nav-btn')];"
+                           " return b.map(e => { const r = e.getBoundingClientRect();"
+                           " return [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)] }) })()")
+        clashing = btn and any(not (btn["r"] < n[0] or btn["l"] > n[2] or btn["b"] < n[1] or btn["t"] > n[3]) for n in nav_r)
+        ok("křížek nepřekrývá šipky listování", not clashing, {"krizek": btn, "sipky": nav_r})
         ok("křížek má dotykovou plochu ≥ 44 px", btn and btn["w"] >= 44 and btn["h"] >= 44, btn)
         if btn:
             await h.finger_tap(btn["x"], btn["y"])
@@ -140,9 +164,10 @@ async def main():
         ok("anotace běží", s["annot"], s)
         btnA = await rect(h, ".overlay-close")
         ok("v anotaci je křížek vidět", btnA is not None, btnA)
-        nav = await h.ev("(() => { const els=[...document.querySelectorAll('.page-nav button, .page-go')];"
+        nav = await h.ev("(() => { const els=[...document.querySelectorAll('.annot-nav-btn')];"
                          " return els.map(e => { const r = e.getBoundingClientRect();"
                          " return [Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)] }) })()")
+        ok("šipky listování jsou v anotaci vykreslené", len(nav) == 2, nav)
         overlap = btnA and any(not (btnA["r"] < n[0] or btnA["l"] > n[2] or btnA["b"] < n[1] or btnA["t"] > n[3]) for n in nav)
         ok("křížek nepřekrývá stránkování", not overlap, {"krizek": btnA, "navigace": nav})
         await shot(h, "/tmp/close-annot.png")
