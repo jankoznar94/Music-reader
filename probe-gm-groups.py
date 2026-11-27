@@ -66,6 +66,11 @@ async def main():
         await h.open()
         await h.open_song(pdf=m.make_pdf(6), pages=6, reset=False)
         await h.ev("localStorage.setItem('topbarHidden','0')")
+        # lišta se po open_song schová → vrátit přes stav Vue komponenty
+        await h.ev("(() => { const el = document.querySelector('.top-bar');"
+                   " const c = el && el.__vueParentComponent;"
+                   " if (c && c.setupState) c.setupState.barHidden = false; return 1 })()")
+        await asyncio.sleep(0.4)
 
         annot = await rect(h, ".tb-btn[title^='Anotace']")
         # --- 1) lišta nástrojů: puntík + spojka ------------------------------
@@ -204,10 +209,8 @@ async def main():
         st = await gm_state(h)
         ok("klepnutí na kolečko vybralo nástroj",
            (await h.ev("window.__barDev.tool.value")) == "note", await h.ev("window.__barDev.tool.value"))
-        ok("koláč voleb se přitom otevřel", st["pie"], st)
-        hub = await rect(h, ".pie-check-bg")
-        await h.finger_tap(hub["x"], hub["y"])
-        await asyncio.sleep(0.45)
+        ok("nota koláč NEOTEVÍRÁ (rovnou hláška)",
+           not st["pie"] and "not" in (st["hint"] or "").lower(), {"pie": st["pie"], "hint": st["hint"]})
 
         # --- 7) nabídka po ťuknutí se zavře dotykem mimo ----------------------
         await h.ev("window.__barDev.annotMode.value = false")

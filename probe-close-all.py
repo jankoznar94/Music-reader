@@ -77,6 +77,33 @@ async def main():
 
         ok("bez okna křížek není", await rect(h, ".overlay-close") is None, None)
 
+        # --- 0) skupina Zobrazení: nesmí rozsvítit anotaci a jde zavřít ----
+        await close_menu(h)
+        zbtn = await rect(h, ".tb-btn[data-gm-group='view']")
+        await h.finger_tap(zbtn["x"], zbtn["y"])
+        await asyncio.sleep(0.7)
+        menu_items = await h.ev("document.querySelectorAll('.gm-item').length")
+        ok("skupina Zobrazení se otevřela", menu_items > 0, menu_items)
+        annot_on = await h.ev("document.querySelector('.tb-btn[title^=\"Anotace\"]').classList.contains('on')")
+        ok("tlačítko Anotace se NEROZSVÍTÍ kvůli nabídce", not annot_on, annot_on)
+        ok("křížek je i u nabídky skupiny", await rect(h, ".overlay-close") is not None, None)
+        # druhé ťuknutí na totéž tlačítko nabídku zavře
+        await h.finger_tap(zbtn["x"], zbtn["y"])
+        await asyncio.sleep(0.7)
+        ok("druhé ťuknutí na Zobrazení nabídku zavřelo",
+           await h.ev("document.querySelectorAll('.gm-item').length") == 0, None)
+        # a křížek ji taky zavře
+        await h.finger_tap(zbtn["x"], zbtn["y"])
+        await asyncio.sleep(0.7)
+        ok("nabídka se otevřela podruhé", await h.ev("document.querySelectorAll('.gm-item').length") > 0, None)
+        btnM = await rect(h, ".overlay-close")
+        if btnM:
+            await h.finger_tap(btnM["x"], btnM["y"])
+            await asyncio.sleep(0.6)
+            ok("křížek zavřel nabídku skupiny",
+               await h.ev("document.querySelectorAll('.gm-item').length") == 0, None)
+        await shot(h, "/tmp/close-menu.png")
+
         # --- 1) okno Zvětšení: křížek ho zavře ----------------------------
         await pick_group(h, "Zobrazení", "Zvětšení")
         s = await st(h)

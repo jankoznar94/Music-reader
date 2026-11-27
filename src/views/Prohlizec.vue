@@ -66,7 +66,7 @@
              (zapne/vypne anotační režim), aby se ovládání nemátlo. -->
         <button class="tb-btn" ref="annotBtnEl" @click="onAnnotBtnClick"
                 @pointerdown="onAnnotBtnDown" @pointerup="onAnnotBtnUp" @pointercancel="onAnnotBtnUp"
-                :class="{ on: (annotMode && !barnumMode) || gm.open, 'gm-armed': isGestureMode }"
+                :class="{ on: annotMode && !barnumMode, 'gm-armed': isGestureMode }"
                 title="Anotace / listování">✏️</button>
         <!-- ČÍSLOVÁNÍ TAKTŮ SE PŘESUNULO DO SKUPINY „ORIENTACE V NOTÁCH“ vedle
              záložek, značek a skoků (Jan, listopad 2026) — na hlavní liště
@@ -7299,10 +7299,22 @@ function gmOpen(mode = 'tools', items = [], el = annotBtnEl.value, groupKey = ''
 // nemá druhý význam jako ✏️) a prst rovnou vybírá tahem. Puštění bez pohybu
 // jen lištu nechá otevřenou — teprve klepnutí na kolečko otevře okno.
 function onGroupDown(e, key) {
-  if (gm.open) return;
+  const el = e.currentTarget;
+  // Druhé ťuknutí na TOTÉŽ tlačítko lištu ZAVŘE (Jan, listopad 2026: „nabídka
+  // pro zoom nejde vypnout opětovným kliknutím“). Jiná skupina ji přepne.
+  if (gm.open) {
+    const same = gm.mode === 'panel' && gm.groupKey === key;
+    gmClose();
+    if (same) return;
+    window.setTimeout(() => { if (!gm.open) openGroupPanel(key, el); }, 220);
+    return;
+  }
+  openGroupPanel(key, el);
+}
+function openGroupPanel(key, el) {
   const items = gmGroupItems(key);
   if (!items.length) return;
-  gmOpen('panel', items, e.currentTarget, key);
+  gmOpen('panel', items, el, key);
 }
 
 // Nejbližší kolečko lišty podle SVISLÉ polohy (x se ignoruje — prst nemusí
@@ -7845,8 +7857,10 @@ function pieCancel() { pieClose(); }
 // anotační režim nebo nějaké okno. Během koláče a nabídky nástrojů ne —
 // ty mají vlastní ťuknutí mimo / fajfku.
 const overlayCloseVisible = computed(() => {
-  if (pie.open || gm.open) return false;
-  return !!(annotMode.value || zoomPanelOpen.value || prefsPanelOpen.value ||
+  if (pie.open) return false;
+  // Během držení prstu (lišta nástrojů z podržení) křížek nemá smysl.
+  if (gm.open && gm.mode === 'tools') return false;
+  return !!(gm.open || annotMode.value || zoomPanelOpen.value || prefsPanelOpen.value ||
     pagesPanelOpen.value || pagesListOpen.value || rotPanelOpen.value ||
     sharePanelOpen.value || sliderOpen.value || mkPanelOpen.value ||
     jumpMode.value || bookmarkMode.value || barnumMode.value ||
@@ -7856,6 +7870,7 @@ const overlayCloseVisible = computed(() => {
 // Zavře NEJVRCHNĚJŠÍ otevřenou věc: probíhající výběr/umístění → okno → a když
 // už nic otevřeného není, ukončí anotační režim (Jan, listopad 2026).
 function closeTopOverlay() {
+  if (gm.open) { gmClose(); return; }
   if (mkPickMode.value) { cancelMarkPick(); return; }
   if (jumpPlaceMode.value || jumpTargetMode.value) {
     jumpPlaceMode.value = false; jumpTargetMode.value = false;
